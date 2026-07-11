@@ -1,0 +1,30 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  harness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/audit/harness-audit.sh
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - run: cargo check --workspace
+      - run: cargo test --workspace
+      - run: cargo build -p instruments-dsp --target wasm32-unknown-unknown --release
+  typescript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci || npm install
+      - run: npm run typecheck --workspaces --if-present

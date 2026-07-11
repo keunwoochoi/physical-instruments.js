@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>instruments.js playground</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 4rem auto; padding: 0 1rem; }
+    button { font-size: 1.5rem; padding: 1rem 2rem; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>instruments.js playground</h1>
+  <p>The daily does-it-sound-good surface. Comes alive with issue #5 (worklet+WASM pipeline: this button plays a sine) and issue #8 (marimba).</p>
+  <button id="play" disabled>▶ nothing to play yet</button>
+  <script type="module">
+    // Wire to packages/core once createEngine() is real (issue #5).
+    // Must be driven by a user gesture (iOS Safari audio unlock).
+  </script>
+</body>
+</html>

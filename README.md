@@ -1,0 +1,42 @@
+# instruments.js
+
+**Beautiful physical-modeled instruments for the browser.**
+`npm install` → piano, guitar, marimba in tens of kilobytes. No samples. Works offline. One `noteOn()` call. Full multi-track arrangements, one engine.
+
+> **Status: pre-alpha (Phase 0).** Nothing is published to npm yet. The harness, architecture, and roadmap are in place; the first sound (modal mallets) is Q1's exit gate.
+
+```ts
+// The API this library exists to make true (v0 contract, see packages/core):
+import { createEngine } from "instruments.js";
+
+const engine = await createEngine();               // lazy AudioContext, gesture-safe
+const piano = engine.createTrack("piano");
+const bass  = engine.createTrack("bass", { gain: 0.8, pan: -0.2 });
+
+piano.noteOn(60, 96);                              // middle C, velocity 96 — timbre changes, not just volume
+await engine.play(notes);                          // or: play a whole multi-track note list
+const wav = await engine.renderOffline(notes);     // deterministic bounce to WAV
+```
+
+## Why
+
+Everything that sounds good in the browser today is samples (megabytes, CDNs, licenses); everything that is small is a toolchain or sounds like a toy. Physical modeling — digital waveguides, modal synthesis, commuted synthesis — gives velocity-dependent timbre, sympathetic resonance, and expressive control from kilobytes of code. The DSP is proven (STK, Mutable Instruments, Faust); what never existed is the packaging: a permissively-licensed, tone-curated, `noteOn()`-simple library for ordinary web developers. That is this project.
+
+Read `PRINCIPLES.md` for the constitution and `agentic-docs/design/2026-07-11-architecture.md` for the architecture.
+
+## Development
+
+```sh
+rustup update && rustup target add wasm32-unknown-unknown
+npm install
+git config core.hooksPath .githooks   # local quality gate
+cargo check --workspace && npm run typecheck --workspaces --if-present
+scripts/audit/harness-audit.sh
+```
+
+Agent-driven development: start at `AGENTS.md`.
+
+## License
+
+Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
+Third-party porting policy and provenance: `agentic-docs/licensing.md`.

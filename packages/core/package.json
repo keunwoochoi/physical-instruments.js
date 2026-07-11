@@ -1,0 +1,27 @@
+{
+  "name": "instruments.js",
+  "version": "0.0.0",
+  "description": "Beautiful physical-modeled instruments for the browser. No samples, tiny bundle, one noteOn() call.",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "web-audio",
+    "audioworklet",
+    "physical-modeling",
+    "synthesis",
+    "instruments",
+    "midi",
+    "music",
+    "wasm"
+  ]
+}

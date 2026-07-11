@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Local quality gate. Install once: git config core.hooksPath .githooks
+set -e
+branch=$(git symbolic-ref --short -q HEAD || echo detached)
+if [ "$branch" = "main" ] && [ "${ALLOW_MAIN:-0}" != "1" ]; then
+  echo "pre-commit: direct commits to main are blocked (AGENTS.md git rules). Branch first." >&2
+  exit 1
+fi
+exec scripts/audit/harness-audit.sh

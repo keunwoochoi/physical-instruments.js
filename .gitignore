@@ -1,0 +1,8 @@
+node_modules/
+target/
+dist/
+*.wasm
+!evals/**/*.golden.wasm
+.DS_Store
+*.log
+evals/incumbents/renders/

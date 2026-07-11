@@ -1,0 +1,17 @@
+{
+  "name": "@instrumentsjs/instruments",
+  "version": "0.0.0",
+  "description": "Instrument façades, presets, and the GM program map for instruments.js",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}
