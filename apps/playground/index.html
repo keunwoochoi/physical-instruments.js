@@ -98,7 +98,14 @@
     import { demoSong } from "./demo-song.mjs";
 
     const $ = (id) => document.getElementById(id);
-    const status = (t) => ($("status").textContent = t);
+    const status = (t, isError = false) => {
+      const el = $("status");
+      el.textContent = t;
+      el.style.cssText = isError ? "color:#d33;opacity:1;font-weight:600" : "";
+      if (isError) console.error("instruments.js:", t);
+    };
+    window.addEventListener("error", (e) => status(`page error: ${e.message}`, true));
+    window.addEventListener("unhandledrejection", (e) => status(`error: ${e.reason?.message ?? e.reason}`, true));
 
     // size badge: honest number = wasm (transfer-encoded) + core js
     fetch("../../packages/core/wasm/instruments_dsp.wasm").then(async (r) => {
@@ -123,7 +130,7 @@
         engine.onStats((s) => status(`engine live — voices: ${s.activeVoices}`));
         status("engine live — play something");
       } catch (err) {
-        status(`engine failed: ${err.message}`); // loud on failure
+        status(`engine failed: ${err.message}`, true); // loud on failure
         throw err;
       }
     });

@@ -143,13 +143,20 @@ interface WorkletEvent {
   pan?: number;
 }
 
-async function compileWasm(url: string | URL): Promise<WebAssembly.Module> {
+async function fetchWasmBytes(url: string | URL): Promise<ArrayBuffer> {
   const resp = await fetch(url);
   if (!resp.ok) throw new Error(`instruments.js: failed to fetch WASM (${resp.status}) from ${url}`);
-  if ("compileStreaming" in WebAssembly && resp.headers.get("content-type")?.includes("application/wasm")) {
-    return WebAssembly.compileStreaming(Promise.resolve(resp));
-  }
-  return WebAssembly.compile(await resp.arrayBuffer());
+  return resp.arrayBuffer();
+}
+
+/**
+ * Send the engine binary to a processor as raw bytes (compiled inside the worklet).
+ * Never post a WebAssembly.Module: Safari and Chromium-headless silently drop the
+ * clone into `messageerror`, which presents as an engine that never becomes ready.
+ */
+function postInit(port: MessagePort, bytes: ArrayBuffer): void {
+  const copy = bytes.slice(0);
+  port.postMessage({ type: "init", bytes: copy }, [copy]);
 }
 
 function defaultUrls(): { worklet: URL; wasm: URL } {
@@ -169,8 +176,8 @@ export async function createEngine(options: EngineOptions = {}): Promise<Engine>
   const wasmUrl = options.wasmUrl ?? urls.wasm;
   const context = options.context ?? new AudioContext({ latencyHint: "interactive" });
 
-  const [module] = await Promise.all([
-    compileWasm(wasmUrl),
+  const [wasm] = await Promise.all([
+    fetchWasmBytes(wasmUrl),
     context.audioWorklet.addModule(workletUrl),
   ]);
 
@@ -189,8 +196,13 @@ export async function createEngine(options: EngineOptions = {}): Promise<Engine>
       else if (msg.type === "error") reject(new Error(`instruments.js worklet: ${msg.message}`));
       else if (msg.type === "stats" && statsCb) statsCb(msg);
     };
+    // never-silent guards: clone failures and processor crashes must reject loudly
+    node.port.onmessageerror = () =>
+      reject(new Error("instruments.js: worklet message failed to deserialize (structured-clone unsupported)"));
+    node.onprocessorerror = () =>
+      reject(new Error("instruments.js: AudioWorklet processor crashed during construction/render"));
   });
-  node.port.postMessage({ type: "init", module });
+  postInit(node.port, wasm);
 
   let nextTrack = 0;
   const groupTracks = new Map<string, number>();
@@ -296,21 +308,10 @@ export async function createEngine(options: EngineOptions = {}): Promise<Engine>
       const sr = context.sampleRate;
       const off = new OfflineAudioContext(2, Math.ceil(duration * sr), sr);
       await off.audioWorklet.addModule(workletUrl);
-      const offNode = new AudioWorkletNode(off, "instruments-processor", {
-        numberOfInputs: 0,
-        numberOfOutputs: 1,
-        outputChannelCount: [2],
-      });
-      offNode.connect(off.destination);
-      const offReady = new Promise<void>((resolve, reject) => {
-        offNode.port.onmessage = (ev: MessageEvent) => {
-          if (ev.data.type === "ready") resolve();
-          else if (ev.data.type === "error") reject(new Error(ev.data.message));
-        };
-      });
-      offNode.port.postMessage({ type: "init", module });
-      await offReady;
-      // duplicate the group→track mapping locally for the offline instance
+      // An OfflineAudioContext may not service port messages before its render loop
+      // finishes — deliver init bytes AND the full schedule via processorOptions,
+      // which is cloned synchronously at construction.
+      const events: WorkletEvent[] = [];
       const local = new Map<string, number>();
       let localNext = 0;
       for (const n of notes) {
@@ -319,28 +320,36 @@ export async function createEngine(options: EngineOptions = {}): Promise<Engine>
         if (idx === undefined) {
           idx = localNext++;
           local.set(key, idx);
-          offNode.port.postMessage({
-            type: "event",
-            when: 0,
-            kind: "track",
-            track: idx,
+          events.push({
+            type: "event", when: 0, kind: "track", track: idx,
             inst: GROUP_TO_INSTRUMENT[n.isDrum ? "drums" : (n.instrumentGroup ?? "unknown")] ?? 0,
-            gain: 0.8,
-            pan: 0,
+            gain: 0.8, pan: 0,
           });
         }
         const vel = Math.min(127, Math.max(1, n.velocity)) / 127;
-        offNode.port.postMessage({
+        events.push({
           type: "event", when: 0.05 + n.startSeconds, kind: "on", track: idx,
           midi: Math.round(n.midiPitch), vel,
         });
         if (!n.isDrum) {
-          offNode.port.postMessage({
+          events.push({
             type: "event", when: 0.05 + n.endSeconds, kind: "off", track: idx, midi: Math.round(n.midiPitch),
           });
         }
       }
+      const offNode = new AudioWorkletNode(off, "instruments-processor", {
+        numberOfInputs: 0,
+        numberOfOutputs: 1,
+        outputChannelCount: [2],
+        processorOptions: { bytes: wasm.slice(0), events },
+      });
+      let offError: Error | null = null;
+      offNode.port.onmessage = (ev: MessageEvent) => {
+        if (ev.data.type === "error") offError = new Error(`instruments.js worklet: ${ev.data.message}`);
+      };
+      offNode.connect(off.destination);
       const rendered = await off.startRendering();
+      if (offError) throw offError;
       return encodeWav(rendered);
     },
     onStats(cb) {

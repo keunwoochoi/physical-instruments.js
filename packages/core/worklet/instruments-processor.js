@@ -10,7 +10,7 @@
  *   recreated if WASM memory growth replaces the backing ArrayBuffer).
  */
 class InstrumentsProcessor extends AudioWorkletProcessor {
-  constructor() {
+  constructor(options) {
     super();
     this.exports = null;
     this.engine = 0;
@@ -20,13 +20,30 @@ class InstrumentsProcessor extends AudioWorkletProcessor {
     this.queue = [];
     this.framesBehind = 0;
     this.port.onmessage = (ev) => this.onMessage(ev.data);
+    // Offline rendering path: an OfflineAudioContext may not service port messages
+    // before its render loop finishes, so init bytes + the full event schedule can be
+    // delivered via processorOptions — cloned synchronously at construction.
+    const po = options && options.processorOptions;
+    if (po && po.bytes) {
+      this.onMessage({ type: "init", bytes: po.bytes });
+      if (Array.isArray(po.events)) {
+        this.queue = po.events.slice().sort((a, b) => a.when - b.when);
+      }
+    }
   }
 
   onMessage(msg) {
     switch (msg.type) {
+      case "ping":
+        this.port.postMessage({ type: "pong" });
+        break;
       case "init": {
         try {
-          const instance = new WebAssembly.Instance(msg.module, {});
+          // Raw bytes, always: structured-cloning a WebAssembly.Module into an
+          // AudioWorklet silently fails on Safari and Chromium headless (messageerror,
+          // not error). Sync compile is legal off the main thread and costs ~1 ms here.
+          const module = new WebAssembly.Module(msg.bytes);
+          const instance = new WebAssembly.Instance(module, {});
           this.exports = instance.exports;
           this.engine = this.exports.ij_engine_new(sampleRate);
           this.port.postMessage({ type: "ready", sampleRate });

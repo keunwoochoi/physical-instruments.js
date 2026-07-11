@@ -17,6 +17,7 @@
     "audit:harness": "scripts/audit/harness-audit.sh"
   },
   "devDependencies": {
+    "playwright": "^1.61.1",
     "typescript": "^5.5.0"
   }
 }
