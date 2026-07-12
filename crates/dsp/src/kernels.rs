@@ -4242,6 +4242,26 @@ pub struct DrumVoice {
     sl_r2: f32,
     sl_y1: f32,
     sl_y2: f32,
+    /// LF noise bed (r4): shell-wall + dense high-order head modes + room LF —
+    /// the broadband floor under a real kick's discrete partials (close-mic
+    /// refs read 40-300 Hz spectral flatness 0.03-0.10 and tone/noise ≈ -3…+2
+    /// dB where the r3 model had literally zero noise after beater contact →
+    /// autocorr pitch salience pinned at 1.00 = the owner's "tonality").
+    /// lfn = one-pole LP state, lfn_c its coefficient, lfn_env·lfn_dec the
+    /// bed's own decay envelope. Band-limited by construction (LP'd white).
+    lfn: f32,
+    /// second LP stage (12 dB/oct): one pole leaked audible 1-5 kHz hiss into
+    /// the felt-dark jazz kick (it3: overall K-weighted logmel rose while the
+    /// LF-zoom view improved)
+    lfn2: f32,
+    lfn_c: f32,
+    lfn_env: f32,
+    lfn_dec: f32,
+    /// body-sine gain (kick kind, 1.0 elsewhere): a feathered jazz stroke
+    /// drives the head into a modal MIX, not one clean fundamental — the DRS
+    /// soft ref holds the undertone at -1.7 dB rel fund and its dominant
+    /// partial drifts window-to-window
+    sine_g: f32,
     modal: ModalVoice,
     has_modal: bool,
     cym: CymbalVoice,
@@ -4291,6 +4311,12 @@ impl DrumVoice {
             sl_r2: 0.0,
             sl_y1: 0.0,
             sl_y2: 0.0,
+            lfn: 0.0,
+            lfn2: 0.0,
+            lfn_c: 0.0,
+            lfn_env: 0.0,
+            lfn_dec: 0.0,
+            sine_g: 1.0,
             modal: ModalVoice::start(200.0, 0.0, sr, &[], 1.0, 0.0, 0.0, seed),
             has_modal: false,
             cym: CymbalVoice::new(seed),
@@ -4343,7 +4369,9 @@ impl DrumVoice {
                         // feathering law: jazz players live at pp — measured
                         // DRS layers span only ~10.6 LU (soft->hard), i.e.
                         // amp is ~linear in vel, NOT the rock/pop supralinear
-                        v.amp = 0.85 * vel.powf(1.05);
+                        // (r4: x(1.30-0.30v) refunds the sine_g duck's ~1.6 LU cost at
+                        // pp so the measured feathering span stays ~16 LU)
+                        v.amp = 0.85 * vel.powf(1.05) * (1.30 - 0.30 * vel);
                         // felt click: tiny and dark (2-6 kHz sits ~-33 dB
                         // under LF in the refs' first 30 ms)
                         v.click = 0.06 + 0.30 * vel * vel;
@@ -4360,6 +4388,21 @@ impl DrumVoice {
                         let phi = core::f32::consts::PI * Lcg(seed ^ 0x51a9 | 1).next();
                         v.sl_y1 = a * (phi - w).sin();
                         v.sl_y2 = a * (phi - 2.0 * w).sin();
+                        // LF noise bed (r4 "very subtle" verdict): the DRS
+                        // close-mic floor is even stronger than pop's ref
+                        // (tone/noise +1.6…+2.2 dB, LF flatness 0.03-0.08) —
+                        // darker (140 Hz) and longer (0.5 s: open shell)
+                        v.lfn_c = 1.0 - (-core::f32::consts::TAU * 140.0 / sr).exp();
+                        v.lfn_env = 3.4 * (0.85 + 0.15 * vel);
+                        // bed decays WITH the drum (amplitude-dependent
+                        // damping law above): a fixed 0.5 s bed died under
+                        // the pp fundamental (t60 0.72) and left the feathered
+                        // tail a naked sine again (it3 measurement)
+                        v.lfn_dec = t60_gain(0.74 - 0.24 * vel, sr);
+                        // feathered strokes read as a modal mix, not one
+                        // clean fundamental: duck the body sine at pp (the
+                        // undertone/partner cluster below rises to meet it)
+                        v.sine_g = 0.62 + 0.38 * vel;
                         v.has_modal = true;
                         v.modal = ModalVoice::start(
                             f1,
@@ -4367,15 +4410,31 @@ impl DrumVoice {
                             sr,
                             &[
                                 // undertone: soft-forward (soft ref holds it
-                                // at -1.7 dB rel fund; hard at -13)
+                                // at -1.7 dB rel fund; hard at -13) — r4 trim:
+                                // at pp it matched the fundamental and the two
+                                // sines locked a "crazy clear" pitch (owner);
+                                // salience mean 0.87 vs the DRS ref's 0.70
+                                // …and it is the LONG survivor: the DRS
+                                // tail wanders BELOW the fundamental (pitch
+                                // track 52->44->40 Hz over 0.1-0.4 s), so the
+                                // 0.6 s two-stage ring is this inharmonic air
+                                // mode, not a clean near-fundamental sine
                                 ModeDef {
                                     ratio: 0.66,
-                                    amp: 0.5 * (1.2 - 0.7 * vel),
-                                    t60: 0.50,
+                                    amp: 0.55 * (1.15 - 0.6 * vel),
+                                    t60: 0.95,
                                 },
                                 // resonant-head partner: the open two-stage
-                                // tail (rings past 0.6 s at every velocity)
-                                ModeDef { ratio: 1.04, amp: 0.48, t60: 1.45 - 0.40 * vel },
+                                // tail (rings past 0.6 s at every velocity).
+                                // r4: detuned off the fundamental (1.04->1.035
+                                // = a slow unlocked beat) and reined in from
+                                // t60 1.45-0.40v — a feathered stroke rang a
+                                // clean 79 Hz sine for 1.3 s
+                                ModeDef {
+                                    ratio: 1.035,
+                                    amp: 0.55 * (1.25 - 0.5 * vel),
+                                    t60: 0.95 - 0.28 * vel,
+                                },
                                 // overtone ladder measured on the ff DRS hit
                                 // (101/125/145/174/209 Hz over 76): the open
                                 // heads hold these within -8..-25 dB of the
@@ -4482,7 +4541,8 @@ impl DrumVoice {
                         v.life = (0.75 * sr) as u64;
                     }
                     KitStyle::Pop => {
-                        // unchanged r3 fit (owner: pop matched its reference)
+                        // r3 fit + r4 tonality trim only (owner 2026-07-12:
+                        // "kick: reduce the tonality" — the thump/click stay)
                         let f1 = 54.0;
                         v.freq = f1 * (1.10 + 0.22 * vel);
                         v.freq_end = f1;
@@ -4504,13 +4564,33 @@ impl DrumVoice {
                         let phi = core::f32::consts::PI * Lcg(seed ^ 0x51a9 | 1).next();
                         v.sl_y1 = a * (phi - w).sin();
                         v.sl_y2 = a * (phi - 2.0 * w).sin();
+                        // LF noise bed: fc ~420 Hz (the overhead-mic'd CC0 ref
+                        // hears brighter kit/room rustle than a close mic —
+                        // the darker 170 Hz bed measurably WORSENED the fit),
+                        // t60 ~0.35 s — the floor the ref keeps under its
+                        // partials (tone/noise -3.5 dB; r3 had literally none)
+                        v.lfn_c = 1.0 - (-core::f32::consts::TAU * 420.0 / sr).exp();
+                        // near-flat velocity law: the ref's SOFT hit is the
+                        // less tonal one (salience 0.55 vs 0.71 hard) — a
+                        // light stroke excites the fundamental less cleanly,
+                        // it does not remove the shell/room floor
+                        v.lfn_env = 1.5 * (0.85 + 0.15 * vel);
+                        v.lfn_dec = t60_gain(0.35, sr);
                         v.has_modal = true;
                         v.modal = ModalVoice::start(
                             f1,
                             vel,
                             sr,
                             &[
-                                ModeDef { ratio: 1.04, amp: 0.30, t60: 0.50 },
+                                // r4 tonality trim: the resonant-head partner
+                                // rang a CLEAN 56 Hz sine for half a second
+                                // after the thump died (autocorr salience 1.00
+                                // at 100-400 ms vs the CC0 ref's 0.71;
+                                // tone/noise +10.4 dB vs the ref's -3.5).
+                                // Damped 0.50->0.26 s, 0.30->0.22, detuned
+                                // 1.04->1.046 so the residue beats against the
+                                // fundamental instead of locking one pitch.
+                                ModeDef { ratio: 1.046, amp: 0.22, t60: 0.26 },
                                 ModeDef { ratio: 1.58, amp: 0.5, t60: 0.055 * open },
                                 ModeDef { ratio: 3.4, amp: 0.28, t60: 0.035 * open },
                             ],
@@ -4777,7 +4857,7 @@ impl DrumVoice {
                     } else {
                         1.0
                     };
-                    s = (core::f32::consts::TAU * self.phase).sin() * self.env * atk;
+                    s = (core::f32::consts::TAU * self.phase).sin() * self.env * atk * self.sine_g;
                     // beater-contact click: velocity-shaped gain (click) through
                     // a velocity-opened lowpass (hp/hp_c), modulated by the
                     // contact FORCE pulse sin²(π·ph) — noise exists only while
@@ -4807,6 +4887,15 @@ impl DrumVoice {
                     self.sl_y2 = self.sl_y1;
                     self.sl_y1 = y;
                     s += y;
+                    // LF noise bed (r4 de-pitching): dark broadband floor under
+                    // the partials — see field docs. Runs on its own envelope.
+                    if self.lfn_env > 1e-5 {
+                        let n = self.rng.next();
+                        self.lfn += self.lfn_c * (n - self.lfn);
+                        self.lfn2 += self.lfn_c * (self.lfn - self.lfn2);
+                        s += self.lfn2 * self.lfn_env;
+                        self.lfn_env *= self.lfn_dec;
+                    }
                 }
                 DrumKind::Cymbal => s = 0.0, // handled by early return above
                 DrumKind::Noise => {
@@ -4838,6 +4927,9 @@ impl DrumVoice {
         self.env = flush_denormal(self.env);
         self.sl_y1 = flush_denormal(self.sl_y1);
         self.sl_y2 = flush_denormal(self.sl_y2);
+        self.lfn = flush_denormal(self.lfn);
+        self.lfn2 = flush_denormal(self.lfn2);
+        self.lfn_env = flush_denormal(self.lfn_env);
         if self.has_modal {
             self.modal.render(out);
         }
