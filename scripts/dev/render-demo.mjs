@@ -157,9 +157,10 @@ if (process.argv.includes("--bench") || process.argv.includes("--bench-808")) {
   const quanta = 4000; // ~10.7 s
   for (let i = 0; i < quanta; i++) {
     if (i % 8 === 0) { // dense retriggering across tracks
+      const hit = Math.floor(i / 8);
       x.ij_note_on(p, 0, 48 + (i % 36), 0.9);
       x.ij_note_on(p, 1, 28 + (i % 24), 0.9);
-      x.ij_note_on(p, 2, [36, 38, 42, 46][i % 4], 1.0);
+      x.ij_note_on(p, 2, [36, 38, 42, 46][hit % 4], 1.0);
       x.ij_note_on(p, 3, 52 + (i % 24), 0.8);
     }
     x.ij_process(p, Q);
