@@ -11,12 +11,14 @@ import sys
 from pathlib import Path
 
 import jsonschema
+import soundfile as sf
 
 import loop_metrics
 
 
 ROOT = Path(__file__).resolve().parents[2]
 CASE_SCHEMA = ROOT / "evals" / "cases" / "schema-v1.json"
+ITERATION_SCHEMA = ROOT / "evals" / "cases" / "iteration-schema-v1.json"
 SHIPPED_WASM = ROOT / "packages" / "core" / "wasm" / "instruments_dsp.wasm"
 BUILT_WASM = ROOT / "target" / "wasm32-unknown-unknown" / "release" / "instruments_dsp.wasm"
 KNOWN_AXES = {"mr_stft", "attack", "decay", "partials", "lufs", "tail", "release", "velocity_loudness"}
@@ -39,6 +41,12 @@ def write_json(path, value):
     with open(path, "w") as f:
         json.dump(value, f, indent=2, sort_keys=True)
         f.write("\n")
+
+
+def validate_iteration(iteration):
+    schema = read_json(ITERATION_SCHEMA)
+    jsonschema.Draft202012Validator.check_schema(schema)
+    jsonschema.validate(iteration, schema)
 
 
 def git(*args):
@@ -108,6 +116,11 @@ def resolve_cases(manifest, reference_root):
             missing.append(f"{case['id']}: {ref}")
             continue
         corpus = loop_metrics.manifest_lookup(str(ref)) or {}
+        info = sf.info(ref)
+        if info.frames <= 0 or info.channels not in (1, 2):
+            raise ValueError(f"{case['id']}: reference must decode as non-empty mono/stereo audio: {ref}")
+        if corpus.get("sr") and info.samplerate != corpus["sr"]:
+            raise ValueError(f"{case['id']}: reference sample rate {info.samplerate} contradicts corpus contract {corpus['sr']}: {ref}")
         invalid = corpus.get("invalid_axes", {})
         conflict = sorted(set(case["analysis"]["required_axes"]) & set(invalid))
         if conflict:
@@ -187,6 +200,55 @@ def markdown_summary(iteration):
     return "\n".join(lines)
 
 
+def seal_iteration(out):
+    excluded = {".complete", "evidence-digests.json"}
+    files = sorted(path for path in out.rglob("*") if path.is_file() and path.name not in excluded)
+    digests = {str(path.relative_to(out)): sha256(path) for path in files}
+    write_json(out / "evidence-digests.json", {"schema_version": "1.0.0", "files": digests})
+    (out / ".complete").write_text(sha256(out / "evidence-digests.json") + "\n")
+
+
+def verify_iteration(out):
+    out = Path(out).resolve()
+    complete = out / ".complete"
+    digest_path = out / "evidence-digests.json"
+    if not complete.is_file() or not digest_path.is_file():
+        raise ValueError("iteration is not sealed")
+    if complete.read_text().strip() != sha256(digest_path):
+        raise ValueError("completion digest does not match evidence-digests.json")
+    evidence = read_json(digest_path)
+    expected = evidence.get("files", {})
+    actual_paths = sorted(path for path in out.rglob("*") if path.is_file() and path.name not in {".complete", "evidence-digests.json"})
+    actual = {str(path.relative_to(out)) for path in actual_paths}
+    if actual != set(expected):
+        raise ValueError(f"iteration file set changed: expected={sorted(expected)}, actual={sorted(actual)}")
+    for rel, digest in expected.items():
+        path = (out / rel).resolve()
+        try:
+            path.relative_to(out)
+        except ValueError as exc:
+            raise ValueError(f"unsafe evidence path: {rel}") from exc
+        if sha256(path) != digest:
+            raise ValueError(f"evidence digest mismatch: {rel}")
+    iteration = read_json(out / "iteration.json")
+    validate_iteration(iteration)
+    for case in iteration["cases"]:
+        loop_metrics.validate_report(read_json(out / case["report"]))
+    return iteration
+
+
+def run_drift(baseline, out):
+    log_path = out / "drift.log"
+    proc = subprocess.run(
+        [str(ROOT / "scripts" / "dev" / "drift-check.sh"), str(Path(baseline).resolve()), str(out / "drift-renders")],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+    )
+    log_path.write_text(proc.stdout + proc.stderr)
+    return {"status": "pass" if proc.returncode == 0 else "fail", "log": "drift.log"}
+
+
 def run_campaign(args):
     manifest_path = Path(args.manifest).resolve()
     manifest = validate_manifest(manifest_path)
@@ -237,15 +299,7 @@ def run_campaign(args):
 
     drift = {"status": "not_evaluated"}
     if args.drift_baseline:
-        log_path = out / "drift.log"
-        proc = subprocess.run(
-            [str(ROOT / "scripts" / "dev" / "drift-check.sh"), str(Path(args.drift_baseline).resolve()), str(out / "drift-renders")],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-        )
-        log_path.write_text(proc.stdout + proc.stderr)
-        drift = {"status": "pass" if proc.returncode == 0 else "fail", "log": "drift.log"}
+        drift = run_drift(args.drift_baseline, out)
 
     classes = {case["classification"] for case in cases}
     if "untrusted" in classes:
@@ -270,17 +324,19 @@ def run_campaign(args):
         "metric_version": loop_metrics.METRIC_VERSION, "drift": drift, "cases": cases,
         "baseline_dir": str(baseline_dir) if baseline_dir else None,
     }
+    validate_iteration(iteration)
     write_json(out / "iteration.json", iteration)
     (out / "summary.md").write_text(markdown_summary(iteration))
 
     audition = None
     if baseline_dir and classification in {"candidate", "listening_required"} and (baseline_dir / "renders").is_dir():
         audition = out / "audition.html"
-        subprocess.run(["node", str(ROOT / "scripts" / "dev" / "ab-page.mjs"), str(baseline_dir / "renders"), str(out / "renders"), str(audition)], cwd=ROOT, check=True)
+        subprocess.run(["node", str(ROOT / "scripts" / "dev" / "ab-page.mjs"), str(baseline_dir / "renders"), str(out / "renders"), str(audition)], cwd=ROOT, check=True, text=True, capture_output=True)
     if audition:
         iteration["audition"] = "audition.html"
+        validate_iteration(iteration)
         write_json(out / "iteration.json", iteration)
-    (out / ".complete").write_text(sha256(out / "iteration.json") + "\n")
+    seal_iteration(out)
     print(json.dumps({"out": str(out), "family": manifest["family"], "classification": classification, "cases": len(cases), "audition": str(audition) if audition else None}))
     return 0 if classification not in {"untrusted", "regressed"} else 1
 
@@ -290,16 +346,24 @@ def parse_args(argv=None):
     sub = parser.add_subparsers(dest="command", required=True)
     validate = sub.add_parser("validate")
     validate.add_argument("manifest")
+    verify = sub.add_parser("verify")
+    verify.add_argument("iteration")
+    def add_run_options(command):
+        command.add_argument("--reference-root", required=True)
+        command.add_argument("--out", required=True)
+        command.add_argument("--hypothesis", required=True)
+        command.add_argument("--changed-component", required=True)
+        command.add_argument("--baseline-dir")
+        command.add_argument("--drift-baseline")
+        command.add_argument("--allow-dirty", action="store_true")
+        command.add_argument("--skip-wasm-verify", action="store_true")
     run = sub.add_parser("run")
     run.add_argument("manifest")
-    run.add_argument("--reference-root", required=True)
-    run.add_argument("--out", required=True)
-    run.add_argument("--hypothesis", required=True)
-    run.add_argument("--changed-component", required=True)
-    run.add_argument("--baseline-dir")
-    run.add_argument("--drift-baseline")
-    run.add_argument("--allow-dirty", action="store_true")
-    run.add_argument("--skip-wasm-verify", action="store_true")
+    add_run_options(run)
+    pilot = sub.add_parser("pilot")
+    pilot.add_argument("--manifest-dir", default=str(ROOT / "evals" / "cases"))
+    pilot.add_argument("--families", nargs="+", default=["piano", "drums", "guitars", "bass"])
+    add_run_options(pilot)
     return parser.parse_args(argv)
 
 
@@ -309,6 +373,25 @@ def main(argv=None):
         manifest = validate_manifest(Path(args.manifest))
         print(json.dumps({"valid": True, "family": manifest["family"], "cases": len(manifest["cases"])}))
         return 0
+    if args.command == "verify":
+        iteration = verify_iteration(args.iteration)
+        print(json.dumps({"valid": True, "family": iteration["family"], "classification": iteration["classification"], "cases": len(iteration["cases"])}))
+        return 0
+    if args.command == "pilot":
+        root_out = Path(args.out).resolve()
+        results = []
+        for family in args.families:
+            child = argparse.Namespace(**vars(args))
+            child.command = "run"
+            child.manifest = str(Path(args.manifest_dir).resolve() / f"{family}.json")
+            child.out = str(root_out / family)
+            child.baseline_dir = str(Path(args.baseline_dir).resolve() / family) if args.baseline_dir else None
+            code = run_campaign(child)
+            iteration = verify_iteration(child.out)
+            results.append({"family": family, "classification": iteration["classification"], "exit_code": code})
+        write_json(root_out / "pilot.json", {"schema_version": "1.0.0", "results": results})
+        print(json.dumps({"out": str(root_out), "results": results}))
+        return 1 if any(result["exit_code"] for result in results) else 0
     return run_campaign(args)
 
 

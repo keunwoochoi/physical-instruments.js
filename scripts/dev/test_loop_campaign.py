@@ -10,6 +10,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -56,7 +57,7 @@ class ManifestTests(unittest.TestCase):
 
     def test_all_committed_family_manifests_validate(self):
         for path in sorted((ROOT / "evals" / "cases").glob("*.json")):
-            if path.name != "schema-v1.json":
+            if "schema-v1" not in path.name:
                 loaded = loop_campaign.validate_manifest(path)
                 self.assertGreaterEqual(len(loaded["cases"]), 2, path)
 
@@ -90,7 +91,9 @@ class ManifestTests(unittest.TestCase):
             root = Path(d)
             ref = root / "references" / "guitar-acoustic" / "canonical" / "reference.wav"
             ref.parent.mkdir(parents=True)
-            shutil.copyfile(GOLDEN_REFERENCE, ref)
+            audio, sr = loop_campaign.loop_metrics.load_mono(GOLDEN_REFERENCE)
+            audio = loop_campaign.loop_metrics.resample_to(audio, sr, 16000)
+            loop_campaign.sf.write(ref, audio, 16000, subtype="FLOAT")
             path = self.write_manifest(d, value)
             loaded = loop_campaign.validate_manifest(path)
             with self.assertRaisesRegex(ValueError, "invalid corpus axes"):
@@ -143,6 +146,7 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual(len(iteration["cases"]), 2)
             self.assertTrue((out / ".complete").is_file())
             self.assertTrue((out / "summary.md").is_file())
+            self.assertEqual(loop_campaign.verify_iteration(out)["family"], "test")
             for item in iteration["cases"]:
                 report = json.loads((out / item["report"]).read_text())
                 self.assertEqual(report["metric_version"], loop_campaign.loop_metrics.METRIC_VERSION)
@@ -151,6 +155,27 @@ class EndToEndTests(unittest.TestCase):
             with self.assertRaisesRegex(FileExistsError, "not empty"):
                 with contextlib.redirect_stdout(io.StringIO()):
                     loop_campaign.run_campaign(args)
+
+            out2 = root / "iteration-2"
+            args2 = copy.copy(args)
+            args2.out = str(out2)
+            args2.baseline_dir = str(out)
+            args2.drift_baseline = str(root / "accepted-drift")
+            def fake_drift(_baseline, drift_out):
+                (drift_out / "drift.log").write_text("synthetic pass\n")
+                return {"status": "pass", "log": "drift.log"}
+            with mock.patch.object(loop_campaign, "run_drift", side_effect=fake_drift):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(loop_campaign.run_campaign(args2), 0)
+            second = loop_campaign.verify_iteration(out2)
+            self.assertEqual(second["classification"], "listening_required")
+            self.assertEqual(second["drift"]["status"], "pass")
+            self.assertTrue((out2 / "audition.html").is_file())
+
+            with open(out2 / "summary.md", "a") as f:
+                f.write("tamper\n")
+            with self.assertRaisesRegex(ValueError, "digest mismatch"):
+                loop_campaign.verify_iteration(out2)
 
 
 if __name__ == "__main__":

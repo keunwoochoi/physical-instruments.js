@@ -19,6 +19,7 @@ Human gates per roadmap: AB n≥5 (Q1) → ABX vs smplr (Q2) → MUSHRA "Good" b
 python3 -m pip install -r scripts/dev/requirements-loop.txt
 npm run loop:validate -- evals/cases/piano.json
 npm run loop:run -- evals/cases/piano.json --reference-root /path/to/scratchpad --out /path/to/immutable-iteration --hypothesis "physical hypothesis" --changed-component "PianoVoice soundboard" --drift-baseline /path/to/accepted-auditions
+npm run loop:pilot -- --reference-root /path/to/scratchpad --out /path/to/pilot --hypothesis "validate the full campaign path" --changed-component "none"
 ```
 
 The runner refuses missing references, absent held-out cases, corpus-axis contradictions, dirty source by default, stale shipped WASM, incompatible metric versions, and non-empty iteration directories. It records source/WASM/manifest/reference/render digests and never generates an audition after a red trust gate or failed drift gate.

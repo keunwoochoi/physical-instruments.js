@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://instruments.js/evals/cases/iteration-schema-v1.json",
+  "title": "instruments.js loop iteration v1",
+  "type": "object",
+  "required": ["schema_version", "created_utc", "family", "hypothesis", "changed_component", "classification", "source", "wasm", "manifest", "metric_version", "drift", "cases", "baseline_dir"],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "created_utc": { "type": "string", "format": "date-time" },
+    "family": { "type": "string" },
+    "hypothesis": { "type": "string", "minLength": 1 },
+    "changed_component": { "type": "string", "minLength": 1 },
+    "classification": { "enum": ["untrusted", "regressed", "candidate", "listening_required", "incomplete"] },
+    "source": {
+      "type": "object",
+      "required": ["commit", "dirty"],
+      "properties": {
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "dirty": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "wasm": { "type": "object", "required": ["status", "shipped_sha256"] },
+    "manifest": { "type": "object", "required": ["path", "sha256", "schema_sha256"] },
+    "metric_version": { "type": "string" },
+    "drift": { "type": "object", "required": ["status"] },
+    "cases": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "required": ["id", "role", "reference", "reference_sha256", "render_sha256", "render_metadata", "report", "trusted", "mr_stft_mean", "classification", "baseline", "corpus"],
+        "properties": {
+          "id": { "type": "string" },
+          "role": { "enum": ["tune", "held_out", "listening_only", "artifact_anchor"] },
+          "reference_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "render_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "report": { "type": "string", "pattern": "^reports/[a-z0-9-]+\\.json$" },
+          "trusted": { "type": "boolean" },
+          "mr_stft_mean": { "type": "number", "minimum": 0 },
+          "classification": { "enum": ["untrusted", "regressed", "candidate", "listening_required"] },
+          "baseline": { "type": ["object", "null"] },
+          "corpus": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "baseline_dir": { "type": ["string", "null"] },
+    "audition": { "type": "string" }
+  }
+}
