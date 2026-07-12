@@ -2167,6 +2167,61 @@ const PIANO_CAL_DETUNE_C: [f32; PIANO_CAL_N] = [0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.
 const PIANO_CAL_PLATEAU_DB: [f32; PIANO_CAL_N] = [-10.35, -3.875, 0.0, -7.05, -22.93, -19.29, -19.08, -12.2, -4.975, -12.8, -19.0, -17.94, -18.42, -15.9, -18.02, -17.63, -17.43, 0.0, -13.0, -2.175, 0.0, 0.0, -4.9, -2.0];
 const PIANO_CAL_STRIKE_Q: [f32; PIANO_CAL_N] = [0.12, 0.12, 0.12, 0.12, 0.124, 0.12, 0.124, 0.12, 0.12, 0.12, 0.12, 0.12, 0.12, 0.098, 0.098, 0.1033, 0.1033, 0.09917, 0.09083, 0.08667, 0.0825, 0.07833, 0.07417, 0.07];
 
+// ---------------------------------------------------------------------------
+// P3 string nonlinearity (2026-07-12, Keunwoo: "non-linearity of the string's
+// harmonics. boundary effect").
+//
+// A struck string at playing amplitude is not a linear resonator: the
+// nonlinear tension term couples transverse motion to the LONGITUDINAL
+// direction with a force quadratic in the transverse slope, and the bridge
+// (the boundary) transduces that longitudinal force into sound — phantom
+// partials at sums of transverse partial pairs f_i+f_j (Conklin, JASA 1999;
+// Bank & Sujbert, JASA 2005). Measured on the Salamander ff layers, the
+// phantom energy is not a flat quadratic spray: it CONCENTRATES at a per-key
+// formant — the longitudinal mode region — whose center rises ~1.5 kHz (deep
+// bass) → ~5.8 kHz (A4) while falling from ~26·f0 to ~13·f0 in ratio terms
+// (the c_L/c_T signature). The table below holds the measured dominant
+// phantom-cluster frequency per anchor key (scratchpad piano-p3/phan.py,
+// dominant f_i+f_j clusters on v16 layers); the voice runs one second-order
+// resonator there, driven by the squared transverse bridge signal, plus a
+// low-weight broadband forced-response floor.
+//
+// Measured NON-findings, kept out by evidence (piano-p3 baseline):
+//  - tension-modulation glide: Salamander p2/p3 early-vs-late tracks read
+//    ≤ ~2.5 cents at every fit key and B/f0 are velocity-independent
+//    (ΔB ≤ 3%, Δf0 ≤ 1 cent pp→ff) — the guitar-style per-voice tension
+//    glide is NOT warranted on the piano.
+//  - Fletcher-1964 clamped-boundary inharmonicity correction: exact
+//    clamped-clamped eigenvalues (numeric characteristic-equation solve)
+//    refit against the measured A5–C7 partials shrink the hinged-law
+//    residuals by only −2…+3% (noise): the correction is absorbed by the
+//    (f0, B) refit at measurable n. No engine cost.
+const PIANO_LONG_N: usize = 10;
+const PIANO_LONG_MIDI: [f32; PIANO_LONG_N] =
+    [24.0, 30.0, 33.0, 36.0, 42.0, 48.0, 54.0, 60.0, 63.0, 69.0];
+const PIANO_LONG_HZ: [f32; PIANO_LONG_N] =
+    [1522.0, 1204.0, 1435.0, 1640.0, 2227.0, 2491.0, 3300.0, 3422.0, 4077.0, 5799.0];
+/// Per-key phantom-level trim (dB) on the WHOLE phantom path (formant
+/// resonator + broadband floor), fitted against the refs' formant-projection
+/// table (iterated; bounded — C3's + window compensates a LINEAR parent
+/// deficit around 2.5 kHz that is P1/P2 territory, logged in the P3 report).
+const PIANO_LONG_DB: [f32; PIANO_LONG_N] =
+    [-4.0, -3.0, 5.0, 14.0, 14.0, 4.0, -2.0, 1.0, -6.0, -16.0];
+
+/// Anchor interpolation over an arbitrary (midi, value) table (clamped ends).
+fn piano_anchor_interp(midi: f32, xs: &[f32], ys: &[f32]) -> f32 {
+    if midi <= xs[0] {
+        return ys[0];
+    }
+    for i in 0..xs.len() - 1 {
+        if midi <= xs[i + 1] {
+            let t = (midi - xs[i]) / (xs[i + 1] - xs[i]);
+            return ys[i] + t * (ys[i + 1] - ys[i]);
+        }
+    }
+    ys[ys.len() - 1]
+}
+
 /// Linear interpolation over the calibration anchors (clamped at the ends).
 fn piano_cal(midi: f32, table: &[f32; PIANO_CAL_N]) -> f32 {
     if midi <= PIANO_CAL_MIDI[0] {
@@ -2402,6 +2457,25 @@ pub struct PianoVoice {
     ph_c: f32,
     ph_lp1: f32,
     ph_lp2: f32,
+    // P3 longitudinal-mode resonator (see PIANO_LONG_* block): second-order
+    // resonator at the per-key measured phantom-formant frequency, driven by
+    // the squared transverse bridge signal — the free/forced longitudinal
+    // response the bridge transduces (Bank & Sujbert 2005). Exact-peak
+    // normalized at design time so both deploy sample rates radiate the same
+    // formant level. Band-limited by construction: the resonator is
+    // narrowband and its center is capped ≤ 0.35·sr.
+    lg_a1: f32,
+    lg_r2: f32,
+    lg_g: f32,
+    lg_y1: f32,
+    lg_y2: f32,
+    // broadband forced-response floor: relative weight + a bounding one-pole
+    // lowpass (~7 kHz) — squaring doubles bandwidth, the LP owns the top end
+    ph_fw: f32,
+    ph_c3: f32,
+    ph_lp3: f32,
+    /// inverse drive-saturation scale (1/D); 0 = no saturation
+    ph_isat: f32,
     // air/radiation rolloff: fixed one-pole LP ~10 kHz. The 44.1 kHz VSCO
     // check caught the render +17 dB above 8 kHz (NSynth's 16 kHz refs are
     // blind there): board directivity + air absorption kill the top octave.
@@ -2663,24 +2737,59 @@ impl PianoVoice {
             rad_c: 1.0 - (-core::f32::consts::TAU * (0.35 * f0).max(88.0) / sr).exp(),
             rad_lp: 0.0,
             rad_lp2: 0.0,
-            // gain: register-tapered (off above key≈0.55) and velocity-curved —
-            // the s² source alone gave pp phantoms ~11 dB hotter relative to
-            // their soft references (felt at pp is too soft to pump the
-            // longitudinal direction; Conklin hears phantoms "at forte")
+            // gain: register-tapered (off above key≈0.62 — Salamander A4 ff
+            // still holds its dominant phantom at −58 dB rel peak) with a
+            // GENTLE velocity factor. P3 measurement: the discrete phantom
+            // clusters grow ~6–16 dB mf→ff in the refs, which the s² source
+            // provides by itself (parent amplitude squared); the old
+            // 0.05+0.95v² gain curve DOUBLE-counted velocity (render grew
+            // 31–42 dB mf→ff where Salamander says 16). The remaining linear
+            // factor keeps pp phantoms soft (Conklin hears phantoms "at
+            // forte"; refs' pp clusters sit near the floor).
+            // Velocity factor (0.04+0.96v): the s² source scales the
+            // rel-peak phantom axis ~linearly with in-loop amplitude
+            // (≈ −6 dB mf→ff intrinsic); the refs' formant-projection table
+            // demands ~30–45 dB pp→ff spread in the bass (pp phantoms are
+            // essentially floor — Conklin hears phantoms "at forte") while
+            // mf sits only ~3–6 dB under ff, which a LINEAR gain-in-velocity
+            // with a small floor reproduces; v² double-counted (it2/it3
+            // measurement, scratchpad piano-p3).
             ph_gain: {
-                let reg = ((0.55 - key) / 0.55).clamp(0.0, 1.0);
-                // velocity curve steepened 0.25+0.75v² → 0.05+0.95v² (P1):
-                // the calibrated shorter bass contact raised the pp LINEAR
-                // content in the phantom band, diluting superlinearity to
-                // 1.33× where Salamander F#1 v16/v4 measures 1.68× — and
-                // Conklin hears phantoms "at forte"; pp phantoms were the
-                // r1 excess anyway (they now essentially vanish at pp,
-                // which is what the recordings say).
-                6.0 * reg * reg * (0.05 + 0.95 * vel * vel)
+                let reg = ((0.62 - key) / 0.62).clamp(0.0, 1.0);
+                6.0 * reg * (0.04 + 0.96 * vel)
             },
             ph_c: 1.0 - (-core::f32::consts::TAU * (6.0 * f0).min(0.1 * sr) / sr).exp(),
             ph_lp1: 0.0,
             ph_lp2: 0.0,
+            lg_a1: 0.0,
+            lg_r2: 0.0,
+            lg_g: 0.0,
+            lg_y1: 0.0,
+            lg_y2: 0.0,
+            // 0.5 -> 0.35 (it10): the broadband floor polluted the C2/D#2
+            // attack third on the K-weighted log-mel while the formant axis
+            // read calibrated — refs keep the between-cluster floor lower.
+            ph_fw: 0.35,
+            ph_c3: 1.0 - (-core::f32::consts::TAU * (7_000.0f32).min(0.3 * sr) / sr).exp(),
+            ph_lp3: 0.0,
+            // Per-key drive-saturation scale, fitted to the refs' velocity
+            // ladders (piano-p3): all wound-bass keys show a threshold-then-
+            // saturate shape — near-floor at v1, a 25–35 dB jump by v4, then
+            // 3–5 dB/layer (F#1 v7→v16 = +5.3 dB where the unsaturated
+            // quadratic renders +12) — while mid keys stay sub-knee until ff
+            // (C4 v7→v16 = +21.7 dB). Knee ≈ the v≈0.25 drive in the bass,
+            // reached only at ff by C4.
+            // Two-segment log-linear in key: ~450 through the wound bass
+            // (key ≤ .19), falling fast to ~70 by A2 (.28) — its ladder reads
+            // v7→v16 = +15 dB, only lightly saturated — then to ~22 by C4.
+            ph_isat: {
+                let l = if key < 0.28 {
+                    2.75 - 0.90 * ((key - 0.21) / 0.07).clamp(0.0, 1.0)
+                } else {
+                    1.85 - 0.50 * ((key - 0.28) / 0.17).clamp(0.0, 1.0)
+                };
+                10f32.powf(l)
+            },
             air_c: 1.0 - (-core::f32::consts::TAU * (10_000.0f32).min(0.4 * sr) / sr).exp(),
             air_lp: 0.0,
             br_b0: 1.0,
@@ -2725,6 +2834,24 @@ impl PianoVoice {
             v.br_b2 = (1.0 - alpha * a) / a0;
             v.br_a1 = -2.0 * w0.cos() / a0;
             v.br_a2 = (1.0 - alpha / a) / a0;
+        }
+        // P3 longitudinal resonator design (see PIANO_LONG_* block): center at
+        // the per-key measured phantom formant, Q ≈ 12 (cluster width read off
+        // the refs' dominant-vs-neighbor phantom levels: F#1 14 dB down at
+        // −17% detune, C2 11 dB at −12% → Q ~ 12–16; longitudinal modes are
+        // heavily damped, the resonator is a formant, not a ringer). Gain is
+        // exact-peak-normalized: |D(e^{jw0})| = (1−r)·√(1−2r·cos2w0+r²).
+        if v.ph_gain > 0.0 {
+            let f_long = piano_anchor_interp(mkey, &PIANO_LONG_MIDI, &PIANO_LONG_HZ)
+                .min(0.35 * sr);
+            let trim = piano_anchor_interp(mkey, &PIANO_LONG_MIDI, &PIANO_LONG_DB);
+            let wl = core::f32::consts::TAU * f_long / sr;
+            let rl = (-core::f32::consts::PI * (f_long / 12.0) / sr).exp();
+            let peak = (1.0 - rl) * (1.0 - 2.0 * rl * (2.0 * wl).cos() + rl * rl).sqrt();
+            v.lg_a1 = 2.0 * rl * wl.cos();
+            v.lg_r2 = rl * rl;
+            v.lg_g = 2.0 * peak;
+            v.ph_gain *= 10f32.powf(trim / 20.0);
         }
         let knock = 0.6 * vel * (1.0 - 0.55 * key);
         let mut jrng = Lcg(seed.wrapping_mul(0x9E37) | 1);
@@ -2831,7 +2958,22 @@ impl PianoVoice {
                 self.ph_lp1 += self.ph_c * (s2 - self.ph_lp1);
                 let h1 = s2 - self.ph_lp1;
                 self.ph_lp2 += self.ph_c * (h1 - self.ph_lp2);
-                s += self.ph_gain * (h1 - self.ph_lp2);
+                let d0 = h1 - self.ph_lp2;
+                // longitudinal drive saturation: the refs' phantom growth
+                // SATURATES with amplitude (D#2 v4->v13 spread 6 dB vs the
+                // unsaturated quadratic's 24; longitudinal displacement is
+                // physically bounded). Rational soft-sat: quadratic regime
+                // for small drive, compressed at deep-bass ff amplitudes.
+                let drive = d0 / (1.0 + d0.abs() * self.ph_isat);
+                // longitudinal-mode formant (P3, Bank & Sujbert): the bridge
+                // transduces the string's longitudinal response — free ringing
+                // near the mode plus forced phantoms shaped by its resonance
+                let yl = self.lg_a1 * self.lg_y1 - self.lg_r2 * self.lg_y2 + self.lg_g * drive;
+                self.lg_y2 = self.lg_y1;
+                self.lg_y1 = yl;
+                // broadband forced floor, top end bounded by the ~7 kHz pole
+                self.ph_lp3 += self.ph_c3 * (drive - self.ph_lp3);
+                s += self.ph_gain * (self.ph_fw * self.ph_lp3 + yl);
             }
             // air/radiation top-octave rolloff (see field docs)
             self.air_lp += self.air_c * (s - self.air_lp);
@@ -2889,6 +3031,9 @@ impl PianoVoice {
         self.br_z2 = flush_denormal(self.br_z2);
         self.ph_lp1 = flush_denormal(self.ph_lp1);
         self.ph_lp2 = flush_denormal(self.ph_lp2);
+        self.ph_lp3 = flush_denormal(self.ph_lp3);
+        self.lg_y1 = flush_denormal(self.lg_y1);
+        self.lg_y2 = flush_denormal(self.lg_y2);
         self.age += out.len() as u64;
         self.age < self.life
     }
@@ -5654,6 +5799,51 @@ mod tests {
         }
     }
 
+    /// P3 longitudinal formant (Bank & Sujbert 2005): the 6+7 pair-sum
+    /// phantom cluster at C4 ff sits in the interpartial gap near 13.2·f0
+    /// (the per-key formant table's C4 anchor) — assert the cluster is
+    /// present at ff, grows strongly against pp (Conklin: phantoms at
+    /// forte), and radiates at the SAME level at both deploy sample rates
+    /// (the resonator design is exact-peak-normalized; measured parity
+    /// 0.015 dB, gate 2 dB).
+    #[test]
+    fn piano_ff_formant_phantom_cluster_present_and_rate_stable() {
+        let mut ratios = [0.0f32; 4];
+        for (si, sr) in [44_100.0f32, 48_000.0].iter().enumerate() {
+            let sr = *sr;
+            let f0_et = midi_to_hz(60.0);
+            let b = 10.0f32.powf(-3.086); // C4 calibrated inharmonicity
+            let f0 = f0_et * (3.475f32 / 1200.0).exp2(); // calibrated tuning
+            // predicted 6+7 phantom: f6+f7 = 13.23 f0, safely between the
+            // stretched f12 (12.69 f0) and f13 (13.87 f0)
+            let fsum = f0 * (6.0 * (1.0 + 36.0 * b).sqrt() + 7.0 * (1.0 + 49.0 * b).sqrt());
+            let mut freqs = [0.0f32; 7];
+            for (i, f) in freqs.iter_mut().enumerate() {
+                *f = fsum * ((i as f32 - 3.0) * 10.0 / 1200.0).exp2();
+            }
+            let mut lo = [0.0f32; 30];
+            for (i, f) in lo.iter_mut().enumerate() {
+                *f = 2.0 * f0 + (2.5 * f0) * (i as f32) / 29.0;
+            }
+            for (vi, vel) in [0.2f32, 1.0].iter().enumerate() {
+                let out = render_piano(60, *vel, sr, 1.0, None);
+                let (a, bnd) = ((0.1 * sr) as usize, (0.6 * sr) as usize);
+                ratios[si * 2 + vi] = band_energy(&out[a..bnd], sr, &freqs)
+                    / band_energy(&out[a..bnd], sr, &lo).max(1e-12);
+            }
+        }
+        for (si, sr) in [44_100.0f32, 48_000.0].iter().enumerate() {
+            let (pp, ff) = (ratios[si * 2], ratios[si * 2 + 1]);
+            assert!(ff > 2.5e-4, "sr {sr}: formant cluster missing at ff ({ff})");
+            assert!(ff > 4.0 * pp, "sr {sr}: cluster not forte-dominant (ff {ff} pp {pp})");
+        }
+        let parity_db = 10.0 * (ratios[1] / ratios[3]).log10();
+        assert!(
+            parity_db.abs() < 2.0,
+            "44.1k/48k formant parity broken: {parity_db} dB"
+        );
+    }
+
     /// Phantom partials (Conklin 1999): an ff bass note must carry MUCH more
     /// energy around partials 10–12 than pp, beyond the linear model's
     /// velocity-brightening — the quadratic tension tap is what provides it.
@@ -5692,10 +5882,15 @@ mod tests {
         // across rounds; the tap itself unchanged) — the gate now sits
         // decisively above the ph_gain=0 null and below the calibration
         // jitter floor, guarding the MECHANISM rather than the calibration
-        // state. Honest gap on record: Salamander F#1 v16/v4 shows 1.68 on
-        // the FFT-band version of this axis, and the render's ABSOLUTE
-        // phantom-band/low-band ratio runs ~5× the reference — the pp
-        // excitation spectrum shape is a P2 (hammer pulse/knock voicing) item.
+        // state. Honest gap on record (P1, re-measured after P3): Salamander
+        // F#1 v16/v4 shows 1.68 on the FFT-band version of this axis; the
+        // render reads 1.20 (P1: 1.33) and its ABSOLUTE phantom-band/low-band
+        // ratio runs ~5.6× the reference (P1: ~5×) — P3 measurement located
+        // this band (9.5–12.5·f0 ≈ 437–575 Hz at F#1) BELOW the longitudinal
+        // formant (1204 Hz), where the excess is LINEAR pp/mf excitation
+        // shape, a P2 (hammer pulse/knock voicing) item; the physically
+        // dominant phantom clusters at/above the formant are calibrated to
+        // ±3 dB across velocity by the P3 tables (scratchpad piano-p3).
         assert!(
             r_ff > 1.15 * r_pp,
             "phantom band should grow superlinearly with velocity: ff {r_ff} vs pp {r_pp}"
