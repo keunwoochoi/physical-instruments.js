@@ -130,6 +130,10 @@ impl TrackBus {
 /// All buffers are allocated ONCE at max capacity in `new`; switching types
 /// only rewrites lengths/gains and clears state — the audio path and the
 /// control path are both allocation-free.
+/// Pre-delays are deliberately generous (room 22 / plate 14 / spring 14 /
+/// hall 45 ms; Keunwoo 2026-07-13): the wet onset must sit AFTER the dry
+/// transient or fast attacks (piano especially) smear. Pre buffer is sized
+/// for the longest (hall) with headroom.
 pub const REVERB_OFF: u32 = 0;
 pub const REVERB_ROOM: u32 = 1;
 pub const REVERB_HALL: u32 = 2;
@@ -172,7 +176,7 @@ impl Reverb {
             kind: REVERB_ROOM,
             sr,
             wet: 1.0,
-            pre: vec![0.0; ms(40.0)],
+            pre: vec![0.0; ms(60.0)],
             pre_len: 3,
             pre_pos: 0,
             apd: [vec![0.0; ms(10.0)], vec![0.0; ms(10.0)]],
@@ -220,7 +224,7 @@ impl Reverb {
         }
         let c = match kind {
             REVERB_HALL => Cfg {
-                pre: 24.0,
+                pre: 45.0,
                 apd_g: 0.6,
                 apd_ms: [5.3, 8.9],
                 taps_ms: [19.3, 29.1, 41.9, 57.7, 71.3, 88.9],
@@ -233,7 +237,7 @@ impl Reverb {
                 wet: 0.9,
             },
             REVERB_PLATE => Cfg {
-                pre: 4.0,
+                pre: 14.0,
                 apd_g: 0.7,
                 apd_ms: [4.7, 7.3],
                 taps_ms: [0.0; 6],
@@ -246,7 +250,7 @@ impl Reverb {
                 wet: 1.0,
             },
             REVERB_SPRING => Cfg {
-                pre: 7.0,
+                pre: 14.0,
                 apd_g: 0.5,
                 apd_ms: [3.1, 5.9],
                 taps_ms: [0.0; 6],
@@ -260,7 +264,7 @@ impl Reverb {
             },
             // Room is also the fallback for unknown kinds
             _ => Cfg {
-                pre: 11.0,
+                pre: 22.0,
                 apd_g: 0.0,
                 apd_ms: [5.0, 8.0],
                 taps_ms: [13.1, 19.7, 26.3, 34.9, 43.7, 52.9],
@@ -1739,13 +1743,16 @@ mod tests {
         dry.note_on(0, 60, 0.8);
         wet.process(128);
         dry.process(128);
-        // pre-delay (11 ms) means the first block is identical wet vs dry…
+        // pre-delay (22 ms) means the first block is identical wet vs dry…
         for i in 0..128 {
             assert_eq!(wet.out_l[i], dry.out_l[i]);
         }
-        // …after the pre-delay the wet engine must differ (the room is real)
+        // …after pre-delay + the earliest tap the wet engine must differ (the
+        // room is real). Window covers room pre 22 ms + tap 13 ms ≈ 35 ms with
+        // margin (the 2026-07-13 pre-delay bump pushed the wet onset past the
+        // old 13-block window — that was the whole point of the change).
         let mut differs = false;
-        for _ in 0..12 {
+        for _ in 0..40 {
             wet.process(128);
             dry.process(128);
             for i in 0..128 {

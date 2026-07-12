@@ -295,19 +295,19 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
     match inst {
         Instrument::Marimba => 2.1,       // reference
         Instrument::Vibraphone => 4.9,    // was -30.5 LUFS
-        Instrument::Glockenspiel => 27.6, // room-stage re-bake 2026-07-12 (was 30.0)
+        Instrument::Glockenspiel => 30.6, // reverb pre-delay re-bake 2026-07-13 (x1.11)
         Instrument::MusicBox => 14.8,     // was -35.6 LUFS
-        Instrument::Guitar => 0.159,       // body-round 0.181 x room 0.88 (verify by sweep)
-        Instrument::Bass => 1.81,         // bass-r2 1.91 x room 0.95 (verify by sweep)
+        Instrument::Guitar => 0.184,       // reverb pre-delay re-bake 2026-07-13 (x1.16)
+        Instrument::Bass => 1.97,         // reverb pre-delay re-bake 2026-07-13 (x1.09)
         Instrument::EPiano => 1.48,       // room-stage re-bake 2026-07-12 (was 1.54)
         Instrument::Drums => 0.58,        // drums r4 0.61 x room 0.95 (verify by sweep)
-        Instrument::SynthPad => 0.47,     // room-stage re-bake 2026-07-12 (was 0.50)
+        Instrument::SynthPad => 0.51,     // reverb pre-delay re-bake 2026-07-13 (x1.08)
         Instrument::Piano => 0.066, // P1 per-key calibration re-bake (per-key LUFS trims raised the mid; was -14.9 LUFS at 0.130, x0.51 per measure-loudness)
         Instrument::GuitarSteel => 0.364,   // body-round 0.387 x room 0.94 (verify by sweep)
-        Instrument::GuitarElectric => 0.385, // room-stage re-bake 2026-07-12 (was 0.41)
-        Instrument::GuitarDistorted => 0.127, // room-stage re-bake 2026-07-12 (was 0.132; amp-round history in log)
+        Instrument::GuitarElectric => 0.416, // reverb pre-delay re-bake 2026-07-13 (x1.08)
+        Instrument::GuitarDistorted => 0.135, // reverb pre-delay re-bake 2026-07-13 (x1.06)
         Instrument::DrumsRock => 0.38,      // drums r4 0.41 x room 0.93 (verify by sweep)
-        Instrument::DrumsJazz => 0.48,      // drums r4 0.56 x room 0.86 (verify by sweep)
+        Instrument::DrumsJazz => 0.56,      // reverb pre-delay re-bake 2026-07-13 (x1.17)
     }
 }
 
