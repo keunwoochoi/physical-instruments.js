@@ -156,13 +156,13 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
         Instrument::Vibraphone => 4.9,    // was -30.5 LUFS
         Instrument::Glockenspiel => 28.0, // was -39.6 LUFS (tiny raw kernel level)
         Instrument::MusicBox => 14.8,     // was -35.6 LUFS
-        Instrument::Guitar => 0.85,       // was -26.7 LUFS
+        Instrument::Guitar => 0.20,       // re-baked 2026-07-11 (acoustic rework ran -13.3 LUFS at 0.85)
         Instrument::Bass => 0.70,         // was -25.3 LUFS
         Instrument::EPiano => 1.47,       // was -26.6 LUFS
         Instrument::Drums => 0.61,        // was -27.4 LUFS
         Instrument::SynthPad => 0.48,     // was -26.5 LUFS
         Instrument::Piano => 0.11,          // v3 hammer runs hot; measured -13.5 LUFS pre-correction
-        Instrument::GuitarSteel => 0.76,    // was -25.2 LUFS
+        Instrument::GuitarSteel => 0.52,    // re-baked 2026-07-11 (acoustic rework ran -22.9 LUFS at 0.76)
         Instrument::GuitarElectric => 1.5,  // was -31.7 LUFS
         Instrument::GuitarDistorted => 0.57, // was -27.3 LUFS
     }
@@ -713,8 +713,17 @@ impl PluckVoice {
                 v.buf2[i] = tmp[src] - mean;
             }
         }
-        // env² normalization so tm response is amplitude-independent
-        v.tm_norm = 1.0 / (p.level * p.level).max(1e-6);
+        // Tension mod follows the STRING displacement power (excitation shape is
+        // peak-normalized ~1); the string is maximally elongated at release, so
+        // the glide starts sharp and settles as the note decays.
+        v.tm_norm = 1.0;
+        if v.tm_dev > 0.0 {
+            v.tm_env = 1.0;
+            let f1 = (frac1 - v.tm_dev).clamp(0.1, 1.5);
+            v.ap_c = (1.0 - f1) / (1.0 + f1);
+            let f2 = (frac2 - v.tm_dev).clamp(0.1, 1.5);
+            v.ap2_c = (1.0 - f2) / (1.0 + f2);
+        }
         v
     }
 
@@ -1543,12 +1552,16 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
                 pol_detune_cents: 2.2,
                 pol_t60_ratio: 0.55,
                 disp_c: 0.0,
+                // no tension glide: nylon refs show none, and the glide beat
+                // against the polarization detune measurably hurt C5
                 tm_cents: 0.0,
                 // displacement tap: the NSynth nylon sources are fundamental-
                 // dominant in mid/high register; low-register h2 emphasis comes
                 // from the body's T1 mode, not a global force tilt
                 br_rho: 0.0,
-                level: 0.5 * (0.35 + 0.65 * vel),
+                // register slope ~12 dB/key (within-source NSynth slope is
+                // ~9 dB/key; cross-source fits inflate it); mild velocity curve
+                level: 0.5 * (0.55 + 0.45 * vel) * (1.4 * key.min(0.9)).exp(),
             };
             Kernel::Pluck(PluckVoice::start_acoustic(&p, sr, seed))
         }
@@ -1604,9 +1617,12 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
                 pol_detune_cents: 1.5,
                 pol_t60_ratio: 0.55,
                 disp_c: 0.0,
-                tm_cents: 0.0,
+                // hard low plucks start a few cents sharp and settle — the steel
+                // "twang" onset (Tolonen/Välimäki/Karjalainen 2000); NSynth refs
+                // show ≤3 cents, so this stays subtle
+                tm_cents: 4.0,
                 br_rho: 0.995,
-                level: 0.5 * (0.35 + 0.65 * vel),
+                level: 0.5 * (0.55 + 0.45 * vel) * (0.83 * key).exp(),
             };
             Kernel::Pluck(PluckVoice::start_acoustic(&p, sr, seed))
         }
@@ -1616,6 +1632,96 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
             let key = ((midi as f32) - 40.0) / 44.0;
             let t60 = (7.5 - 3.0 * key).clamp(2.0, 7.5);
             Kernel::Pluck(PluckVoice::start(f0, vel, sr, t60, 0.42, 0.12, seed))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn render_pluck(inst: Instrument, midi: u32, vel: f32, sr: f32, secs: f32) -> Vec<f32> {
+        let mut k = start_voice(inst, midi, vel, sr, 12345);
+        let total = (secs * sr) as usize;
+        let mut out = vec![0.0f32; total];
+        for chunk in out.chunks_mut(128) {
+            if let Kernel::Pluck(p) = &mut k {
+                p.render(chunk);
+            }
+        }
+        out
+    }
+
+    fn autocorr_pitch(x: &[f32], sr: f32, lo: f32, hi: f32) -> f32 {
+        let min_lag = (sr / hi) as usize;
+        let max_lag = ((sr / lo) as usize).min(x.len() / 2);
+        let n = x.len() - max_lag;
+        let corr = |lag: usize| -> f32 { (0..n).map(|i| x[i] * x[i + lag]).sum() };
+        let mut best_lag = min_lag;
+        let mut best = f32::NEG_INFINITY;
+        for lag in min_lag..=max_lag {
+            let c = corr(lag);
+            if c > best {
+                best = c;
+                best_lag = lag;
+            }
+        }
+        let (a, b, c) = (corr(best_lag - 1), corr(best_lag), corr(best_lag + 1));
+        let denom = a - 2.0 * b + c;
+        let delta = if denom.abs() > 1e-9 { 0.5 * (a - c) / denom } else { 0.0 };
+        sr / (best_lag as f32 + delta.clamp(-0.5, 0.5))
+    }
+
+    /// Steel-string tuning at both deploy sample rates (the acoustic constructor
+    /// has its own delay budget: exact loop-lowpass phase delay + tension-mod
+    /// fraction bias) — protocol: delay math changes need 44.1k AND 48k coverage.
+    #[test]
+    fn steel_e3_in_tune_both_rates_and_velocities() {
+        for sr in [44_100.0f32, 48_000.0f32] {
+            for vel in [0.25f32, 1.0f32] {
+                let out = render_pluck(Instrument::GuitarSteel, 52, vel, sr, 1.0);
+                let tail = &out[(0.5 * sr) as usize..];
+                let f = autocorr_pitch(tail, sr, 100.0, 400.0);
+                let want = midi_to_hz(52.0);
+                assert!(
+                    (f - want).abs() < want * 0.015,
+                    "sr={sr} vel={vel}: {f} Hz, want {want}"
+                );
+            }
+        }
+    }
+
+    /// Guards the per-period loss calibration: a nylon E2 must actually decay
+    /// (the per-sample t60_gain bug made guitar envelopes flat for seconds).
+    #[test]
+    fn nylon_e2_decays_like_its_t60() {
+        let sr = 48_000.0f32;
+        let out = render_pluck(Instrument::Guitar, 40, 0.8, sr, 3.5);
+        let rms = |a: &[f32]| (a.iter().map(|s| s * s).sum::<f32>() / a.len() as f32).sqrt();
+        let early = rms(&out[(0.2 * sr) as usize..(0.7 * sr) as usize]);
+        let late = rms(&out[(2.8 * sr) as usize..(3.3 * sr) as usize]);
+        let drop_db = 20.0 * (early / late.max(1e-9)).log10();
+        // t60_f0 = 8 s → fundamental alone drops ~19.5 dB over 2.6 s; brighter
+        // partials decay faster, so demand at least ~12 dB and at most ~45 dB
+        assert!(
+            (12.0..45.0).contains(&drop_db),
+            "E2 envelope drop {drop_db} dB over 2.6 s (want physical decay)"
+        );
+    }
+
+    /// The acoustic loop must be stable everywhere: loss ≤ 1 by construction
+    /// even where the requested loop filter is darker than the sustain target.
+    #[test]
+    fn acoustic_loop_gain_never_exceeds_unity() {
+        for midi in [28u32, 40, 52, 64, 76, 88] {
+            for vel in [0.1f32, 1.0] {
+                for inst in [Instrument::Guitar, Instrument::GuitarSteel] {
+                    if let Kernel::Pluck(p) = start_voice(inst, midi, vel, 48_000.0, 7) {
+                        assert!(p.loss <= 1.0, "{inst:?} midi={midi} loss={}", p.loss);
+                        assert!(p.loss2 <= 1.0, "{inst:?} midi={midi} loss2={}", p.loss2);
+                    }
+                }
+            }
         }
     }
 }
