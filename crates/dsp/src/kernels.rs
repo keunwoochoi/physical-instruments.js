@@ -472,6 +472,12 @@ struct StringLoop {
     dc_y1: f32,
 }
 
+/// In-loop DC-blocker pole (~3 Hz at 48 k). Shared by `tick` and the delay budget:
+/// the blocker's phase LEAD at f0 shortens the effective loop delay and must be
+/// compensated or every string plays sharp (worst in the bass, where the old 19 Hz
+/// blocker left A1 audibly sharp — found while fixing its fundamental damping).
+const DC_POLE: f32 = 0.9996;
+
 impl StringLoop {
     /// `detune_cents` shifts this string against the nominal pitch (unison beating).
     fn new(f0: f32, detune_cents: f32, sr: f32, t60: f32, lp_c: f32, disp_c: f32) -> Self {
@@ -481,7 +487,13 @@ impl StringLoop {
         // without the dispersion term the stiff strings would all play flat).
         let lp_delay = (1.0 - lp_c) / lp_c;
         let disp_delay = 2.0 * (1.0 - disp_c) / (1.0 + disp_c);
-        let total = (sr / f - lp_delay - disp_delay).max(3.0);
+        // DC blocker H(z) = (1−z⁻¹)/(1−Rz⁻¹): exact phase lead at ω, in samples
+        // (lead = negative group delay contribution → ADD to the target length).
+        let w = core::f32::consts::TAU * f / sr;
+        let dc_lead = ((core::f32::consts::PI - w) / 2.0
+            - (DC_POLE * w.sin()).atan2(1.0 - DC_POLE * w.cos()))
+            / w;
+        let total = (sr / f - lp_delay - disp_delay + dc_lead).max(3.0);
         let len = ((total - 0.5).floor() as usize).clamp(2, PLUCK_BUF - 1);
         let frac = (total - len as f32).clamp(0.1, 1.5);
         Self {
@@ -533,8 +545,13 @@ impl StringLoop {
         let ap = self.ap_c * (d2 - self.ap_y1) + self.ap_x1;
         self.ap_x1 = d2;
         self.ap_y1 = ap;
-        // DC blocker (loop must not carry the hammer's unipolar injection)
-        let dc = ap - self.dc_x1 + 0.9975 * self.dc_y1;
+        // DC blocker (loop must not carry the hammer's unipolar injection).
+        // Pole 0.9996 ≈ 3 Hz at 48 k: in-loop, a 19 Hz blocker (old 0.9975) costs
+        // −0.6 dB PER ROUND TRIP at 49 Hz (−30 dB/s on A1's fundamental) and −12 dB/s
+        // at C3 — it was silently eating every bass fundamental (measured 2026-07-11:
+        // C3 partial 1 sat 13 dB below the NSynth reference). 3 Hz still drains the
+        // hammer's DC pedestal (τ ≈ 70 ms) at negligible fundamental cost (<1 dB/s).
+        let dc = ap - self.dc_x1 + DC_POLE * self.dc_y1;
         self.dc_x1 = ap;
         self.dc_y1 = dc;
         self.buf[self.pos] = dc * self.loss;

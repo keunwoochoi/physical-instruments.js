@@ -566,6 +566,44 @@ mod tests {
         sr / (best_lag as f32 + delta.clamp(-0.5, 0.5))
     }
 
+    /// Spectral-peak pitch estimate (Goertzel scan + parabolic refinement).
+    /// The autocorrelation estimator collapses on near-sinusoidal tails (its peak
+    /// region goes flat and noise picks the lag — observed 2026-07-11 when the piano's
+    /// restored fundamental left a ~pure 440 Hz tail and ACF reported 450 Hz while the
+    /// FFT peak sat at 440.08). A windowed spectral peak has no such failure mode.
+    fn spectral_pitch(x: &[f32], sr: f32, lo: f32, hi: f32) -> f32 {
+        let n = x.len();
+        let hann = |i: usize| 0.5 - 0.5 * (core::f32::consts::TAU * i as f32 / n as f32).cos();
+        let power = |f: f32| -> f32 {
+            // Goertzel with Hann window
+            let w = core::f32::consts::TAU * f / sr;
+            let c = 2.0 * w.cos();
+            let (mut s1, mut s2) = (0.0f32, 0.0f32);
+            for (i, &v) in x.iter().enumerate() {
+                let s0 = v * hann(i) + c * s1 - s2;
+                s2 = s1;
+                s1 = s0;
+            }
+            s1 * s1 + s2 * s2 - c * s1 * s2
+        };
+        let step = 1.0f32;
+        let mut best_f = lo;
+        let mut best = f32::NEG_INFINITY;
+        let mut f = lo;
+        while f <= hi {
+            let p = power(f);
+            if p > best {
+                best = p;
+                best_f = f;
+            }
+            f += step;
+        }
+        let (a, b, c) = (power(best_f - step), best, power(best_f + step));
+        let denom = a - 2.0 * b + c;
+        let delta = if denom.abs() > 1e-9 { 0.5 * (a - c) / denom } else { 0.0 };
+        best_f + delta.clamp(-0.5, 0.5) * step
+    }
+
     #[test]
     fn denormals_are_flushed() {
         assert_eq!(flush_denormal(1.0e-30), 0.0);
@@ -670,12 +708,24 @@ mod tests {
                 e.note_on(0, 69, vel); // A4
                 let out = render_seconds(&mut e, 0.7);
                 let tail = &out[(0.3 * sr) as usize..(0.6 * sr) as usize];
-                let f_est = estimate_pitch(tail, sr, 200.0, 900.0);
+                let f_est = spectral_pitch(tail, sr, 400.0, 480.0);
                 assert!(
-                    (f_est - 440.0).abs() < 440.0 * 0.015,
+                    (f_est - 440.0).abs() < 440.0 * 0.006,
                     "sr={sr} vel={vel}: estimated {f_est} Hz, want 440"
                 );
             }
+            // Bass register: the in-loop DC blocker's phase lead grows as f0 falls
+            // (uncompensated it left A1 audibly sharp); A2 = 110 Hz guards the fix.
+            let mut e = Engine::new(sr);
+            e.set_track(0, Instrument::Piano, 0.8, 0.0);
+            e.note_on(0, 45, 0.7);
+            let out = render_seconds(&mut e, 0.7);
+            let tail = &out[(0.3 * sr) as usize..(0.6 * sr) as usize];
+            let f_est = spectral_pitch(tail, sr, 95.0, 125.0);
+            assert!(
+                (f_est - 110.0).abs() < 110.0 * 0.006,
+                "sr={sr} A2: estimated {f_est} Hz, want 110"
+            );
         }
     }
 
