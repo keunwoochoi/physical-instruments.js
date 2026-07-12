@@ -407,13 +407,17 @@ pub struct ModalVoice {
     /// hammer flight: samples between key action and string contact — the
     /// refs' tone peaks 2–17 ms AFTER the action knock starts (slower at pp)
     ep_wait: u32,
-    /// key-action knock as DISPLACEMENT (frame shifts on key bottoming, the
-    /// pickup differentiates it into the refs' coherent LF onset swell —
-    /// measured centroid 90–300 Hz, near-zero zero-crossings pre-peak):
-    /// raised-cosine bump added into s before the flux curve
+    /// key-action knock (refs: coherent LF onset swell, centroid 90–300 Hz,
+    /// near-zero zero-crossings pre-peak, peaking 10–17 ms in). Two paths:
+    /// act_amp = raised-cosine displacement bump into the flux curve (gap
+    /// modulation → the ff "spit"), act_gain = direct mechanical path to the
+    /// output (case/frame), a squared-raised-cosine LF hump whose level is
+    /// independent of pickup geometry (it9/10: gap-path level shifts with
+    /// ep_off and kept flipping the crest gate)
     act_pos: u32,
     act_len: u32,
     act_amp: f32,
+    act_gain: f32,
     rng: Lcg,
     life: u64,
     age: u64,
@@ -466,6 +470,7 @@ impl ModalVoice {
             act_pos: 0,
             act_len: 0,
             act_amp: 0.0,
+            act_gain: 0.0,
             rng: Lcg(seed | 1),
             life: 0,
             age: 0,
@@ -529,7 +534,10 @@ impl ModalVoice {
         // measured onset blooms: a1ff peaks ~17 ms, ab3 ~10–12 ms, db5ff
         // ~2.3 ms after onset — a fixed-ms contact can't do all three.
         let contact_ms = (900.0 / f0) * (1.6 - 0.9 * vel).max(0.45);
-        let contact_ms = contact_ms.clamp(0.45, 25.0);
+        // it8: the returning element throws the hammer off — contact cannot
+        // exceed ~a period (beyond that the drive decoheres and pp notes
+        // lost both level and bark: measured h2 −31 dB vs the refs' −21)
+        let contact_ms = contact_ms.min(1150.0 / f0).clamp(0.45, 25.0);
         let mut v = Self::start(f0, vel, sr, &[], 1.0, 0.0, 0.0, seed);
         v.pulse_len = ((contact_ms * 1e-3 * sr) as u32).max(2);
         v.pulse_amp = vel;
@@ -537,8 +545,15 @@ impl ModalVoice {
         let defs = [
             (f0, 1.0, t60_tine),
             // tonebar aftersound: sings past the tine, slightly mistuned →
-            // the slow beat the refs keep at ~1–3 dB depth, 0.5–1 Hz
-            (f0 + 0.9, 0.22, t60_tine * 2.0),
+            // the slow beat the refs keep at ~1–3 dB depth, 0.5–1 Hz.
+            // it7: the coupling weakens up the map (short tonebars, heavier
+            // relative damping) — a key-flat 0.22/2.0× read 20 dB beat depth
+            // at C#5 where the refs read ~1.5 dB
+            (
+                f0 + 0.9,
+                0.22 * (1.1 - 0.85 * key).max(0.2),
+                t60_tine * (2.0 - 0.8 * key),
+            ),
             // tine mode 2: fast bell ping on the attack
             (f0 * 6.3, 0.10 + 0.10 * vel, (0.9 - 0.6 * key).max(0.15)),
         ];
@@ -560,13 +575,19 @@ impl ModalVoice {
         }
         v.life = ((max_t60 * 1.2 + 0.05) * sr) as u64;
         // pickup drive: THE velocity→timbre axis. Key-tracked down the top
-        // octaves — same guard law as the old tanh drive (tine harmonics of a
-        // high f0 would fold past Nyquist; the refs' top octaves measure
-        // near-sinusoidal anyway: g5 h2 ≈ −21 dB even at ff).
-        v.ep_amp = 2.0 * (1.2 - key).clamp(0.25, 1.0);
+        // octaves — same guard idea as the old tanh drive (tine harmonics of
+        // a high f0 would fold past Nyquist; the refs' top octaves measure
+        // near-sinusoidal anyway: g5 h2 ≈ −21 dB even at ff). it6: linear key
+        // law refit to the refs' DEEP-FOLD ff spectra (ab3ff keeps h5 within
+        // −5 dB of h1; a1ff puts the whole comb ABOVE h1) — the old clamp
+        // capped the low keys at u≈1.7, which can't fold
+        v.ep_amp = (3.6 - 2.8 * key).clamp(0.8, 3.6);
         // rest offset in flux-width units (the Rhodes "timbre screw"):
-        // asymmetry ⇒ even harmonics grow with amplitude
-        v.ep_off = 0.55;
+        // asymmetry ⇒ even harmonics grow with amplitude. it9: small-signal
+        // h2/h1 ∝ |2a²−1|/2a — 0.55 sat near the Gaussian inflection (a=1/√2)
+        // where the curvature term cancels and pp read 7 dB too clean; 0.42
+        // restores the refs' pp bark, ff (deep fold) is insensitive to a
+        v.ep_off = 0.42;
         let slope = 2.0 * v.ep_off * (-(v.ep_off * v.ep_off)).exp();
         let level = 0.22 * (0.3 + 0.7 * vel);
         v.ep_gain = level / (slope * v.ep_amp * (core::f32::consts::TAU * f0 / sr));
@@ -582,8 +603,12 @@ impl ModalVoice {
         // heavier low-key action rises slower (a1ff ref knock peaks ~17 ms)
         v.act_len = (((wait_ms + 13.0 * (2.0 - key)) * 1e-3 * sr) as u32).max(8);
         // knock/tone ratio is ~velocity-flat in the refs (ab3 thunk −14.9 dB
-        // at pp vs −12.6 at ff) → the knock scales LINEARLY with velocity
-        v.act_amp = 0.28 * vel * (1.35 - 0.8 * key);
+        // at pp vs −12.6 at ff) → the knock scales LINEARLY with velocity.
+        // Gap-mod bump sized to stay on the slope side of the flux peak
+        // (past it the knock folds into a sharp double-humped onset, it9);
+        // the audible knock level rides the direct path (act_gain) instead.
+        v.act_amp = 0.16 * vel * (1.35 - 0.8 * key);
+        v.act_gain = 0.05 * vel * (1.35 - 0.8 * key);
         v
     }
 
@@ -614,16 +639,19 @@ impl ModalVoice {
                 s += y;
             }
             // key-bottoming knock: frame displacement bump under the tine —
-            // the pickup differentiates it into the refs' LF onset swell and
-            // it momentarily shifts the flux operating point (the ff "spit")
+            // shifts the flux operating point (the ff "spit") — plus the
+            // direct mechanical path (LF hump, see act_gain)
+            let mut knock = 0.0;
             if self.act_pos < self.act_len {
                 let ph = self.act_pos as f32 * act_inv;
-                s += self.act_amp * 0.5 * (1.0 - (core::f32::consts::TAU * ph).cos());
+                let bump = 0.5 * (1.0 - (core::f32::consts::TAU * ph).cos());
+                s += self.act_amp * bump;
+                knock = self.act_gain * bump;
                 self.act_pos += 1;
             }
             let d = s * self.ep_amp - self.ep_off;
             let flux = (-(d * d).min(25.0)).exp();
-            let mut y = (flux - self.ep_flux1) * self.ep_gain;
+            let mut y = (flux - self.ep_flux1) * self.ep_gain + knock;
             self.ep_flux1 = flux;
             if self.th_env > 1e-6 {
                 // thunk/felt: LP noise burst added post-pickup (frame → coil)
