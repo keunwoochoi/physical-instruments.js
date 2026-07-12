@@ -130,8 +130,8 @@ export interface Engine {
   /** Play a full (possibly multi-track) timeline. Resolves when playback finishes. */
   play(notes: readonly NoteEvent[], options?: PlayOptions): Promise<void>;
   stop(): void;
-  /** Deterministic offline bounce → 16-bit stereo WAV bytes (same options as play). */
-  renderOffline(notes: readonly NoteEvent[], options?: PlayOptions): Promise<Uint8Array>;
+  /** Deterministic offline bounce → stereo WAV bytes (16-bit PCM, or float32 via options). */
+  renderOffline(notes: readonly NoteEvent[], options?: RenderOptions): Promise<Uint8Array>;
   onStats(cb: (stats: EngineStats) => void): void;
   dispose(): Promise<void>;
 }
@@ -174,6 +174,13 @@ export interface PlayOptions {
   pedals?: readonly PedalEvent[];
   /** Per-family mix (gain/pan) for auto-created tracks, e.g. {"drums": {gain: 0.6}}. */
   tracks?: Readonly<Record<string, TrackOptions>>;
+}
+
+export interface RenderOptions extends PlayOptions {
+  /** Encode 32-bit float WAV instead of 16-bit PCM. */
+  float32?: boolean;
+  /** Progress callback (0..1), roughly once per rendered second. */
+  onProgress?: (fraction: number) => void;
 }
 
 async function fetchWasmBytes(url: string | URL): Promise<ArrayBuffer> {
@@ -407,9 +414,20 @@ export async function createEngine(options: EngineOptions = {}): Promise<Engine>
         if (ev.data.type === "error") offError = new Error(`instruments.js worklet: ${ev.data.message}`);
       };
       offNode.connect(off.destination);
+      // progress via suspend/resume checkpoints (~1 s apart)
+      const onProgress = (options as RenderOptions).onProgress;
+      if (onProgress) {
+        for (let t = 1; t < duration; t += 1) {
+          void off.suspend(t).then(() => {
+            onProgress(Math.min(1, t / duration));
+            void off.resume();
+          });
+        }
+      }
       const rendered = await off.startRendering();
       if (offError) throw offError;
-      return encodeWav(rendered);
+      onProgress?.(1);
+      return encodeWav(rendered, (options as RenderOptions).float32 === true);
     },
     onStats(cb) {
       statsCb = cb;
@@ -424,11 +442,12 @@ export async function createEngine(options: EngineOptions = {}): Promise<Engine>
   return engine;
 }
 
-/** Encode an AudioBuffer as 16-bit PCM WAV. */
-export function encodeWav(buf: AudioBuffer): Uint8Array {
+/** Encode an AudioBuffer as WAV — 16-bit PCM (default) or 32-bit float. */
+export function encodeWav(buf: AudioBuffer, float32 = false): Uint8Array {
   const ch = Math.min(2, buf.numberOfChannels);
   const frames = buf.length;
-  const dataLen = frames * ch * 2;
+  const bytes = float32 ? 4 : 2;
+  const dataLen = frames * ch * bytes;
   const out = new ArrayBuffer(44 + dataLen);
   const v = new DataView(out);
   const str = (o: number, s: string) => {
@@ -439,12 +458,12 @@ export function encodeWav(buf: AudioBuffer): Uint8Array {
   str(8, "WAVE");
   str(12, "fmt ");
   v.setUint32(16, 16, true);
-  v.setUint16(20, 1, true);
+  v.setUint16(20, float32 ? 3 : 1, true); // 3 = IEEE float
   v.setUint16(22, ch, true);
   v.setUint32(24, buf.sampleRate, true);
-  v.setUint32(28, buf.sampleRate * ch * 2, true);
-  v.setUint16(32, ch * 2, true);
-  v.setUint16(34, 16, true);
+  v.setUint32(28, buf.sampleRate * ch * bytes, true);
+  v.setUint16(32, ch * bytes, true);
+  v.setUint16(34, bytes * 8, true);
   str(36, "data");
   v.setUint32(40, dataLen, true);
   const chans = [] as Float32Array[];
@@ -452,9 +471,14 @@ export function encodeWav(buf: AudioBuffer): Uint8Array {
   let o = 44;
   for (let i = 0; i < frames; i++) {
     for (let c = 0; c < ch; c++) {
-      const s = Math.max(-1, Math.min(1, chans[c]![i]!));
-      v.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-      o += 2;
+      const s = chans[c]![i]!;
+      if (float32) {
+        v.setFloat32(o, s, true);
+      } else {
+        const q = Math.max(-1, Math.min(1, s));
+        v.setInt16(o, q < 0 ? q * 0x8000 : q * 0x7fff, true);
+      }
+      o += bytes;
     }
   }
   return new Uint8Array(out);
