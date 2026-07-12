@@ -3413,29 +3413,35 @@ impl DrumVoice {
                 v.decay = t60_gain(dec, sr);
                 v.hp_c = 1.0 - (-core::f32::consts::TAU * hp_hz / sr).exp();
                 v.lp_c = 1.0 - (-core::f32::consts::TAU * lp_hz / sr).exp();
-                // velocity lives HERE (wires floor + span) and in the shell's
-                // modal excitation — not in v.amp, or the wires pick up a
-                // second vel factor and soft hits lose their relative wire
-                // brightness (the CC0 soft snare is wire-forward)
-                v.amp = if matches!(kit, KitStyle::Rock) { 1.25 } else { 0.95 };
+                // velocity mostly lives HERE (wires floor + span) and in the
+                // shell's modal excitation — plus a mild global dynamic factor
+                // (refs span ~22 dB vl6→vl34; wires-only gave 8) that keeps
+                // the wire/shell balance (soft hits stay wire-forward, as in
+                // the CC0 soft snare). Rock anchored louder: the backbeat must
+                // move air (owner r2: "too weak").
+                let dyn_g = 0.30 + 0.70 * vel;
+                v.amp = if matches!(kit, KitStyle::Rock) { 1.45 } else { 0.95 } * dyn_g;
                 v.noise_amt = n0 + nv * vel;
                 v.has_modal = true;
                 let dl = dec / 0.14; // shell ring scales with the kit's looseness
+                // dyn_g on every mode amp = same global dynamic factor as the
+                // wires: keeps the soft-hit wire/shell balance while widening
+                // the total span (mg is the strike pulse LENGTH — don't scale it)
                 v.modal = ModalVoice::start(
                     shell,
                     vel,
                     sr,
                     &[
-                        ModeDef { ratio: 1.0, amp: 1.0, t60: 0.11 * dl },
-                        ModeDef { ratio: 1.55, amp: 0.6, t60: 0.08 * dl },
-                        ModeDef { ratio: 2.1, amp: 0.3, t60: 0.06 * dl },
+                        ModeDef { ratio: 1.0, amp: 1.0 * dyn_g, t60: 0.11 * dl },
+                        ModeDef { ratio: 1.55, amp: 0.6 * dyn_g, t60: 0.08 * dl },
+                        ModeDef { ratio: 2.1, amp: 0.3 * dyn_g, t60: 0.06 * dl },
                         // coupled-head "crack" modes: the ring at 400–1300 Hz
                         // ((2,1)/(0,2)/(3,1)-family, air-load stretched) that
                         // the refs hold +14…+23 dB over LF — strongly velocity
                         // -grown (ModalVoice brightens uppers ~vel^(1+))
-                        ModeDef { ratio: 2.65, amp: 0.55, t60: 0.055 * dl },
-                        ModeDef { ratio: 3.3, amp: 0.50, t60: 0.045 * dl },
-                        ModeDef { ratio: 4.4, amp: 0.35, t60: 0.035 * dl },
+                        ModeDef { ratio: 2.65, amp: 0.55 * dyn_g, t60: 0.055 * dl },
+                        ModeDef { ratio: 3.3, amp: 0.50 * dyn_g, t60: 0.045 * dl },
+                        ModeDef { ratio: 4.4, amp: 0.35 * dyn_g, t60: 0.035 * dl },
                     ],
                     mg,
                     0.0,
