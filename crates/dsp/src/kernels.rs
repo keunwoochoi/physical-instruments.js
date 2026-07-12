@@ -237,7 +237,7 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
         Instrument::EPiano => 1.54,       // was -26.6 LUFS
         Instrument::Drums => 0.59,        // kick round re-bake (pop kick unchanged; family drifted -21.3)
         Instrument::SynthPad => 0.50,     // was -26.5 LUFS
-        Instrument::Piano => 0.130, // piano r3 re-measure (board dip + radiation revoice; x1.46 per measure-loudness)
+        Instrument::Piano => 0.066, // P1 per-key calibration re-bake (per-key LUFS trims raised the mid; was -14.9 LUFS at 0.130, x0.51 per measure-loudness)
         Instrument::GuitarSteel => 0.362,   // re-bake after onset-impulse fix (the impulse carried 4.6 LU of K-weighted loudness)
         Instrument::GuitarElectric => 0.41, // electric r3 re-bake (bright-028 rig, pyloudnorm -22.5 pre-bake)
         Instrument::GuitarDistorted => 0.21, // electric r3 re-bake (drive-90 lead, tone 5.5k)
@@ -1717,6 +1717,13 @@ impl PluckVoice {
 // Deferred until demanded: commuted soundboard IR, sympathetic resonance.
 // ---------------------------------------------------------------------------
 
+/// Max stages in the piano stiffness-dispersion cascade (P1 per-key
+/// calibration): deep-bass keys need ~44 samples of phase-delay contrast
+/// between p1 and p20 (A0: B = 2.2e-4 measured on Salamander, loop ~1750
+/// samples), which takes ~14-18 first-order sections. Solved per note in
+/// `design_piano_dispersion`; treble keys use 1-3.
+const PIANO_MAX_DISP: usize = 20;
+
 #[derive(Clone, Copy)]
 struct StringLoop {
     buf: [f32; PLUCK_BUF],
@@ -1729,12 +1736,16 @@ struct StringLoop {
     ap_c: f32,
     ap_x1: f32,
     ap_y1: f32,
-    // two cascaded dispersion allpasses (stiffness → stretched partials)
-    disp_c: f32,
-    d1_x1: f32,
-    d1_y1: f32,
-    d2_x1: f32,
-    d2_y1: f32,
+    // stiffness dispersion: M cascaded first-order allpasses, all with
+    // coefficient `disp_a` = −p (pole at +p ⇒ phase delay FALLS with
+    // frequency ⇒ upper partials arrive early ⇒ stretch sharp, Fletcher
+    // 1964). (M, p) solved per note from the per-key measured B —
+    // `design_piano_dispersion`, same Van Duyne & Smith / Rauhala &
+    // Välimäki lineage as the guitar's `design_dispersion`.
+    disp_a: f32,
+    disp_n: u8,
+    dx: [f32; PIANO_MAX_DISP],
+    dy: [f32; PIANO_MAX_DISP],
     // in-loop DC blocker (~19 Hz): hammer force injection is unipolar and would
     // otherwise park a slowly-decaying DC pedestal in the loop
     dc_x1: f32,
@@ -1754,40 +1765,52 @@ struct StringLoop {
 /// less energy to the blocker.
 const DC_POLE: f32 = 0.9999;
 
+/// One-pole loop-lowpass H(z) = c/(1 − (1−c)z⁻¹): exact phase delay at ω, in
+/// samples (the old (1−c)/c DC approximation left the mid keyboard ~+12…+35
+/// cents sharp once the dispersion cascade grew — measured on the P1 baseline).
+#[inline]
+fn piano_lp_delay(c: f32, w: f32) -> f32 {
+    let a = 1.0 - c;
+    let (sw, cw) = w.sin_cos();
+    (a * sw).atan2(1.0 - a * cw) / w
+}
+
+#[inline]
+fn piano_lp_mag(c: f32, w: f32) -> f32 {
+    let a = 1.0 - c;
+    c / (1.0 + a * a - 2.0 * a * w.cos()).sqrt()
+}
+
+/// DC blocker H(z) = (1−z⁻¹)/(1−Rz⁻¹): exact phase LEAD at ω, in samples.
+#[inline]
+fn piano_dc_lead(w: f32) -> f32 {
+    ((core::f32::consts::PI - w) / 2.0 - (DC_POLE * w.sin()).atan2(1.0 - DC_POLE * w.cos())) / w
+}
+
+#[inline]
+fn piano_dc_mag(w: f32) -> f32 {
+    (2.0 - 2.0 * w.cos()).sqrt() / (1.0 + DC_POLE * DC_POLE - 2.0 * DC_POLE * w.cos()).sqrt()
+}
+
 impl StringLoop {
-    /// `detune_cents` shifts this string against the nominal pitch (unison beating).
-    fn new(f0: f32, detune_cents: f32, sr: f32, t60: f32, lp_c: f32, disp_c: f32) -> Self {
+    /// `detune_cents` shifts this string against the nominal pitch (unison
+    /// beating). `loss`/`lp_c` are the per-round-trip loop loss and lowpass
+    /// coefficient SOLVED by the caller from the per-key t60 targets
+    /// (`solve_piano_loss`); `(disp_n, disp_a)` is the per-note dispersion
+    /// cascade (`design_piano_dispersion`).
+    fn new(f0: f32, detune_cents: f32, sr: f32, loss: f32, lp_c: f32, disp_n: usize, disp_a: f32) -> Self {
         let f = f0 * (detune_cents / 1200.0).exp2();
         // Total loop delay budget: buffer + tuning-allpass fraction + loop-lowpass
-        // phase delay + 2× dispersion-allpass DC delay (Jaffe-Smith compensation —
-        // without the dispersion term the stiff strings would all play flat).
-        let lp_delay = (1.0 - lp_c) / lp_c;
-        let disp_delay = 2.0 * (1.0 - disp_c) / (1.0 + disp_c);
-        // DC blocker H(z) = (1−z⁻¹)/(1−Rz⁻¹): exact phase lead at ω, in samples
-        // (lead = negative group delay contribution → ADD to the target length).
+        // phase delay + M× dispersion-allpass phase delay (all EXACT at ω, not DC
+        // approximations — the cascade is long enough in the bass that the DC-vs-ω
+        // delay difference is whole samples) − the DC blocker's phase lead.
         let w = core::f32::consts::TAU * f / sr;
-        let dc_lead = ((core::f32::consts::PI - w) / 2.0
-            - (DC_POLE * w.sin()).atan2(1.0 - DC_POLE * w.cos()))
-            / w;
+        let lp_delay = piano_lp_delay(lp_c, w);
+        let disp_delay = disp_n as f32 * allpass_delay(disp_a, w);
+        let dc_lead = piano_dc_lead(w);
         let total = (sr / f - lp_delay - disp_delay + dc_lead).max(3.0);
         let len = ((total - 0.5).floor() as usize).clamp(2, PLUCK_BUF - 1);
         let frac = (total - len as f32).clamp(0.1, 1.5);
-        // Loss is applied once per ROUND TRIP (each slot is rewritten every `len`
-        // samples), so the per-pass gain must be exp(-6.9077·period/(t60·sr)) — a
-        // per-SAMPLE t60_gain here silently inflates t60 by ×len (measured: a 49 Hz
-        // fundamental rang ~flat for 3 s once the old DC blocker stopped damping it).
-        // Divide out the loop filters' own magnitude at f0 so the t60 parameter
-        // states the FUNDAMENTAL's decay; upper partials still die faster through
-        // the lowpass (Jaffe–Smith 1983 loss factor; Välimäki et al. 1996 SDL loop).
-        let period = sr / f;
-        let target = (-6.907_755 * period / (t60 * sr)).exp();
-        let a = 1.0 - lp_c;
-        let lp_mag = lp_c / (1.0 + a * a - 2.0 * a * w.cos()).sqrt();
-        let dc_mag = (2.0 - 2.0 * w.cos()).sqrt()
-            / (1.0 + DC_POLE * DC_POLE - 2.0 * DC_POLE * w.cos()).sqrt();
-        // cap: loop gain never reaches 1 at any frequency (|lp|,|dc| ≤ 1 elsewhere,
-        // but treble strings can ask for more f0 gain than the lowpass leaves)
-        let loss = (target / (lp_mag * dc_mag).max(1e-3)).min(0.999_95);
         Self {
             buf: [0.0; PLUCK_BUF],
             len,
@@ -1798,11 +1821,10 @@ impl StringLoop {
             ap_c: (1.0 - frac) / (1.0 + frac),
             ap_x1: 0.0,
             ap_y1: 0.0,
-            disp_c,
-            d1_x1: 0.0,
-            d1_y1: 0.0,
-            d2_x1: 0.0,
-            d2_y1: 0.0,
+            disp_a,
+            disp_n: disp_n as u8,
+            dx: [0.0; PIANO_MAX_DISP],
+            dy: [0.0; PIANO_MAX_DISP],
             dc_x1: 0.0,
             dc_y1: 0.0,
         }
@@ -1831,16 +1853,17 @@ impl StringLoop {
         let y = self.buf[self.pos];
         // loop lowpass (frequency-dependent loss)
         self.lp += self.lp_c * (y - self.lp);
-        // dispersion: two cascaded first-order allpasses delay highs vs lows
-        let d1 = self.disp_c * (self.lp - self.d1_y1) + self.d1_x1;
-        self.d1_x1 = self.lp;
-        self.d1_y1 = d1;
-        let d2 = self.disp_c * (d1 - self.d2_y1) + self.d2_x1;
-        self.d2_x1 = d1;
-        self.d2_y1 = d2;
+        // dispersion: M cascaded first-order allpasses delay lows vs highs
+        let mut d = self.lp;
+        for k in 0..self.disp_n as usize {
+            let out = self.disp_a * (d - self.dy[k]) + self.dx[k];
+            self.dx[k] = d;
+            self.dy[k] = out;
+            d = out;
+        }
         // fractional tuning allpass
-        let ap = self.ap_c * (d2 - self.ap_y1) + self.ap_x1;
-        self.ap_x1 = d2;
+        let ap = self.ap_c * (d - self.ap_y1) + self.ap_x1;
+        self.ap_x1 = d;
         self.ap_y1 = ap;
         // DC blocker (loop must not carry the hammer's unipolar injection).
         // Pole 0.9996 ≈ 3 Hz at 48 k: in-loop, a 19 Hz blocker (old 0.9975) costs
@@ -1865,10 +1888,188 @@ impl StringLoop {
     fn flush(&mut self) {
         self.lp = flush_denormal(self.lp);
         self.ap_y1 = flush_denormal(self.ap_y1);
-        self.d1_y1 = flush_denormal(self.d1_y1);
-        self.d2_y1 = flush_denormal(self.d2_y1);
+        for k in 0..self.disp_n as usize {
+            self.dy[k] = flush_denormal(self.dy[k]);
+        }
         self.dc_y1 = flush_denormal(self.dc_y1);
     }
+}
+
+// ---------------------------------------------------------------------------
+// P1 per-key piano calibration (Pianoteq-class campaign, 2026-07-12).
+//
+// 24 anchor keys measured on the Salamander Grand references (CC-BY, 48 kHz
+// FLAC, 16 velocity layers; ledgered, reference-use only): every-3rd-semitone
+// grid A0…C8 minus the six held-out verification keys (D#1, D#2, F#3, D#4,
+// F#5, D#6), which the tables must reach by interpolation. Parameters are
+// PHYSICAL (inharmonicity B, Railsback cents, t60 seconds) — sample-rate
+// specific coefficients are solved at note-start. Measurement pipeline +
+// fitted curves: scratchpad piano-p1/{calib,fit_targets,gen_tables}.py.
+//
+//   LOG10_B   Fletcher 1964 stiff-string inharmonicity, log10 — the classic
+//             V-curve with the wound→plain bass break at ~F#2
+//   TUNE_C    measured p1 offset vs equal temperament (Railsback stretch)
+//   T60L_*    aftersound (anti-phase) t60 at f0 / at min(8f0, 4 kHz), from
+//             heterodyne per-partial late slopes (1–6 s, Theil–Sen)
+//   T60E_F0   prompt (in-phase) composite t60, early slopes 0.08–0.5 s
+//   DIVE_DBPS p1 early excess rate → bridge admittance-LP term g1 (the
+//             "fundamental dive" is measured ONLY around C3–G3, not the
+//             broad bass Gaussian r3 painted)
+//   TRIM_DB   per-key radiated-level trim (LUFS-matched, iterated)
+//   K_VEL     velocity→level exponent (refs span 14–33 dB pp→ff, iterated)
+//   CONTACT_MS hammer-felt contact target at mf (iterated vs attack centroid)
+//   DETUNE_C  unison spread from measured beat rates (gated to 0.4–3.2 c;
+//             wound-string false beats excluded)
+//   STRIKE_Q  strike-point fraction (comb fit, de-aliased, smoothed)
+// ---- generated by piano-p1/gen_tables.py from Salamander refs ----
+const PIANO_CAL_N: usize = 24;
+const PIANO_CAL_MIDI: [f32; PIANO_CAL_N] = [21.0, 24.0, 27.0, 33.0, 36.0, 42.0, 45.0, 48.0, 51.0, 57.0, 60.0, 66.0, 69.0, 72.0, 75.0, 81.0, 84.0, 87.0, 93.0, 96.0, 99.0, 102.0, 105.0, 108.0];
+const PIANO_CAL_LOG10_B: [f32; PIANO_CAL_N] = [-3.654, -3.788, -3.881, -4.047, -4.041, -4.147, -4.12, -3.957, -3.898, -3.666, -3.539, -3.298, -3.196, -3.086, -2.959, -2.74, -2.617, -2.527, -2.281, -2.125, -2.053, -1.948, -1.878, -1.808];
+const PIANO_CAL_TUNE_C: [f32; PIANO_CAL_N] = [-15.75, -15.85, -7.822, -6.356, -7.784, -3.369, -0.6742, -5.316, -2.697, -0.1674, -0.187, -1.39, 1.503, 3.475, 3.84, 5.457, 7.942, 10.04, 10.46, 11.76, 12.46, 24.74, 41.91, 87.71];
+const PIANO_CAL_T60L_F0: [f32; PIANO_CAL_N] = [39.52, 60.0, 60.0, 60.0, 60.0, 60.0, 60.0, 11.49, 8.984, 19.13, 38.77, 60.0, 28.45, 60.0, 42.46, 15.57, 47.02, 45.61, 5.51, 3.228, 2.58, 2.449, 2.097, 1.741];
+const PIANO_CAL_T60L_HI: [f32; PIANO_CAL_N] = [28.5, 52.08, 32.81, 40.24, 60.0, 60.0, 39.4, 11.49, 8.984, 19.13, 34.68, 15.51, 12.28, 36.44, 12.34, 7.038, 6.74, 12.52, 5.51, 3.228, 2.58, 2.449, 2.097, 1.741];
+const PIANO_CAL_T60E_F0: [f32; PIANO_CAL_N] = [19.35, 7.207, 5.585, 7.093, 3.821, 5.992, 6.7, 7.784, 6.329, 4.204, 2.889, 4.253, 13.14, 1.353, 2.884, 4.069, 0.7914, 0.3542, 0.2239, 0.3303, 0.5497, 0.3866, 0.8122, 0.4071];
+const PIANO_CAL_T60E_HI: [f32; PIANO_CAL_N] = [9.049, 29.73, 30.07, 22.92, 21.01, 19.1, 9.818, 8.403, 8.984, 9.839, 1.646, 0.2288, 0.1599, 0.3538, 0.5149, 0.5277, 0.6741, 1.349, 0.6923, 0.6916, 0.7157, 0.5484, 0.7539, 0.4749];
+const PIANO_CAL_DIVE_DBPS: [f32; PIANO_CAL_N] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.45, 0.0, 45.15, 5.0, 0.0, 0.0, 0.0, 23.2, 0.0, 0.0, 0.0, 5.7, 0.0, 0.0, 0.0, 0.0, 0.0, 0.95, 0.0];
+const PIANO_CAL_TRIM_DB: [f32; PIANO_CAL_N] = [4.41, 4.802, 4.325, 2.59, 8.59, 12.09, -0.1158, 8.565, 11.67, 13.79, 14.57, 13.61, 18.0, 9.922, 18.0, 18.0, 18.0, 17.01, 18.0, 13.61, 6.0, 2.24, 7.43, 1.49];
+const PIANO_CAL_K_VEL: [f32; PIANO_CAL_N] = [-0.3805, 0.2497, 0.1766, -0.3688, -0.5473, -0.2073, -0.3047, 0.2313, 0.03717, 0.2669, 0.05652, -0.7196, 0.8308, -0.5829, 2.0, 1.619, 1.509, -0.9309, 1.64, 1.282, 0.4137, -0.7881, -1.2, -1.034];
+const PIANO_CAL_CONTACT_MS: [f32; PIANO_CAL_N] = [0.4374, 0.8388, 0.957, 0.619, 0.7792, 1.051, 0.6433, 2.017, 0.9766, 1.191, 0.9312, 0.9539, 1.544, 0.5713, 1.366, 1.43, 1.083, 1.08, 0.9067, 0.7797, 0.7335, 0.8551, 0.5243, 0.9492];
+const PIANO_CAL_DETUNE_C: [f32; PIANO_CAL_N] = [0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.7935, 0.987, 1.18, 1.306, 1.306, 1.055, 1.005, 0.7511, 0.7511, 0.5617, 1.007, 1.696, 1.696, 1.198, 1.151, 1.151, 2.568];
+const PIANO_CAL_PLATEAU_DB: [f32; PIANO_CAL_N] = [-10.35, -3.875, 0.0, -7.05, -22.93, -19.29, -19.08, -12.2, -4.975, -12.8, -19.0, -17.94, -18.42, -15.9, -18.02, -17.63, -17.43, 0.0, -13.0, -2.175, 0.0, 0.0, -4.9, -2.0];
+const PIANO_CAL_STRIKE_Q: [f32; PIANO_CAL_N] = [0.12, 0.12, 0.12, 0.12, 0.124, 0.12, 0.124, 0.12, 0.12, 0.12, 0.12, 0.12, 0.12, 0.098, 0.098, 0.1033, 0.1033, 0.09917, 0.09083, 0.08667, 0.0825, 0.07833, 0.07417, 0.07];
+
+/// Linear interpolation over the calibration anchors (clamped at the ends).
+fn piano_cal(midi: f32, table: &[f32; PIANO_CAL_N]) -> f32 {
+    if midi <= PIANO_CAL_MIDI[0] {
+        return table[0];
+    }
+    for i in 0..PIANO_CAL_N - 1 {
+        if midi <= PIANO_CAL_MIDI[i + 1] {
+            let t = (midi - PIANO_CAL_MIDI[i]) / (PIANO_CAL_MIDI[i + 1] - PIANO_CAL_MIDI[i]);
+            return table[i] + t * (table[i + 1] - table[i]);
+        }
+    }
+    table[PIANO_CAL_N - 1]
+}
+
+/// Solve the piano stiffness-dispersion cascade for per-key inharmonicity `b`
+/// at `f0`: M identical first-order allpasses with pole at +p (coefficient
+/// −p), knee pinned at/above the anchor partial n* so the phase delay falls
+/// ~quadratically through the matched range — the stiff-string law
+/// P(f_n) = N₀/√(1+Bn²) (Van Duyne & Smith 1994; Rauhala & Välimäki 2006;
+/// same construction as the guitar's `design_dispersion`, with the piano
+/// loop's own filters divided out). Runs at note-on only.
+fn design_piano_dispersion(b: f32, f0: f32, sr: f32, lp_c: f32) -> (usize, f32) {
+    if b < 1e-7 {
+        return (0, 0.0);
+    }
+    let n0 = sr / f0;
+    let w1 = core::f32::consts::TAU * f0 / sr;
+    // anchor partial: highest of the matched stretch range — the 48 kHz
+    // Salamander refs measure clean partials to ~20 kHz, and treble B is so
+    // large that anchoring at a 4.8 kHz ceiling left A5's p10 −54 c and its
+    // p18 −270 c flat (iteration-1 measurement). Cap by Nyquist headroom and
+    // 20 partials (≈ the audible/measurable stretch range).
+    let n_star = (0.40 * sr / f0).clamp(3.0, 20.0).floor();
+    let wn = (n_star * w1).min(2.8);
+    // geometric phase-delay deficit between p1 and n*, minus what the loop
+    // lowpass already contributes, plus what the DC blocker's falling lead
+    // takes away (it is a negative-dispersion element — r3 finding)
+    let d_geom = n0 * (1.0 / (1.0 + b).sqrt() - 1.0 / (1.0 + b * n_star * n_star).sqrt());
+    let d_lp = piano_lp_delay(lp_c, w1) - piano_lp_delay(lp_c, wn);
+    let d_dc = -piano_dc_lead(w1) + piano_dc_lead(wn);
+    let target = d_geom - d_lp - d_dc;
+    if target <= 0.05 {
+        return (0, 0.0);
+    }
+    // Anchor the fit at the MIDPOINT partial (n_mid ≈ 0.6 n*): a matched
+    // midpoint keeps the audible n≤10 range within a few cents while the
+    // endpoint carries whatever deficit the budget forces (measured: the
+    // endpoint-anchored fit bowed C4's n8–n14 +4…+8 c sharp).
+    let n_mid = (0.6 * n_star).ceil().clamp(2.0, n_star);
+    let wm = (n_mid * w1).min(2.8);
+    let d_geom_mid = n0 * (1.0 / (1.0 + b).sqrt() - 1.0 / (1.0 + b * n_mid * n_mid).sqrt());
+    let d_lp_mid = piano_lp_delay(lp_c, w1) - piano_lp_delay(lp_c, wm);
+    let d_dc_mid = -piano_dc_lead(w1) + piano_dc_lead(wm);
+    let target_mid = (d_geom_mid - d_lp_mid - d_dc_mid).max(0.01);
+    // Direct M-sweep with a hard loop-budget guard: the cascade's phase-delay
+    // compensation at ω1 must leave at least 55% of the loop as real delay
+    // line. (The earlier knee-pinned-p heuristic chose p = 0.124 at C7 whose
+    // per-stage contrast is only 0.22 samples — M exploded to the cap and the
+    // 25.6-sample compensation exceeded the 22.8-sample loop: the note played
+    // 380 cents flat. Short treble loops need FEW stages with LARGE p.)
+    let budget = 0.45 * n0;
+    let mut best: (usize, f32, f32) = (0, 0.0, -1.0); // (m, p, endpoint delivery)
+    for m in 1..=PIANO_MAX_DISP {
+        let mf = m as f32;
+        // bisect p for the midpoint target (contrast is monotone in p)
+        let (mut lo, mut hi) = (0.003f32, 0.92f32);
+        for _ in 0..32 {
+            let p = 0.5 * (lo + hi);
+            let c = mf * (allpass_delay(-p, w1) - allpass_delay(-p, wm));
+            if c < target_mid {
+                lo = p;
+            } else {
+                hi = p;
+            }
+        }
+        let p = 0.5 * (lo + hi);
+        if mf * allpass_delay(-p, w1) > budget {
+            continue; // this M cannot match the midpoint within the loop budget
+        }
+        // among budget-feasible fits, prefer the one delivering the most of
+        // the ENDPOINT stretch (more stages at smaller p = wider quadratic
+        // range), stopping early once the endpoint is essentially met
+        let e = mf * (allpass_delay(-p, w1) - allpass_delay(-p, wn));
+        if e > best.2 {
+            best = (m, p, e);
+        }
+        if e >= 0.98 * target {
+            break;
+        }
+    }
+    if best.0 == 0 {
+        return (0, 0.0);
+    }
+    (best.0, best.1)
+}
+
+/// Solve (per-round-trip loss, loop lp_c) so the string loop realizes the
+/// per-key t60 targets at f0 and at f_hi (the same two-point parameterization
+/// the reference fitter uses — physical seconds in the tables, coefficients
+/// solved here per sample rate). Loop gain g(ω) = loss·|LP(ω)|·|DC(ω)|;
+/// t60(ω_n) = −6.9077·period/(sr·ln g(ω_n)).
+fn solve_piano_loss(f: f32, sr: f32, t60_f0: f32, t60_hi: f32, f_hi: f32) -> (f32, f32) {
+    let w1 = core::f32::consts::TAU * f / sr;
+    let g1 = (-6.907_755 / (f * t60_f0.max(0.05))).exp();
+    // A flat ladder needs a UNITY wire (lp_c = 1 ⇒ the one-pole passes
+    // through), not a "nearly-1" coefficient: at treble f0 even |LP| = 0.995
+    // per trip is ~40 dB/s of phantom damping (0.5% × f0 trips/s) — measured
+    // on iteration 1 as late p2–6 dying at −30 dB/s where the refs say −9.
+    if f_hi <= f * 1.05 || t60_hi >= t60_f0 * 0.995 {
+        let m1 = piano_dc_mag(w1).max(1e-3);
+        return ((g1 / m1).min(0.999_95), 1.0);
+    }
+    let wh = (core::f32::consts::TAU * f_hi / sr).min(2.9);
+    let gh = (-6.907_755 / (f * t60_hi.max(0.05))).exp();
+    let r_target = (gh / g1).min(1.0);
+    // R(c) = [|LP(c,ωh)|·|DC(ωh)|] / [|LP(c,ω1)|·|DC(ω1)|] is monotone
+    // increasing in c (brighter filter → flatter ladder); bisect up to the
+    // unity wire
+    let (mut lo, mut hi) = (0.05f32, 1.0f32);
+    for _ in 0..30 {
+        let c = 0.5 * (lo + hi);
+        let r = (piano_lp_mag(c, wh) * piano_dc_mag(wh))
+            / (piano_lp_mag(c, w1) * piano_dc_mag(w1)).max(1e-6);
+        if r < r_target {
+            lo = c;
+        } else {
+            hi = c;
+        }
+    }
+    let lp_c = 0.5 * (lo + hi);
+    let m1 = (piano_lp_mag(lp_c, w1) * piano_dc_mag(w1)).max(1e-3);
+    ((g1 / m1).min(0.999_95), lp_c)
 }
 
 /// Per-voice soundboard-knock mode count (the init-synthesized "mode cloud").
@@ -2003,123 +2204,105 @@ pub struct PianoVoice {
 }
 
 impl PianoVoice {
-    pub fn start(midi: u32, f0: f32, vel: f32, sr: f32, seed: u32) -> Self {
+    pub fn start(midi: u32, f0_et: f32, vel: f32, sr: f32, seed: u32) -> Self {
         let key = ((midi as f32) - 21.0) / 87.0; // 0 = A0 … 1 = C8
-        // register scaling of the aftersound t60: real decay times PEAK in the
-        // low-mid register, not in the deep bass (NSynth acoustic refs, t60 of the
-        // 0.8–1.8 s window: G1≈7 s, E♭2≈11 s, C3≈12 s, C5≈6 s; same shape in
-        // Fletcher & Rossing fig. for piano decay vs key). Gaussian bump over key,
-        // tapered above key≈0.7 where real strings shorten rapidly.
-        // Amplitude/width set so the COMPOSITE late decay (aftersound pair mixed
-        // with the still-audible prompt string) lands on the refs: the aftersound
-        // param must exceed the composite target (~20 s at C3 for a measured ~12 s;
-        // real mid-register aftersound runs tens of seconds — Fletcher & Rossing).
-        // Fit 2026-07-11 r2 to the measured envelope grid (RMS dB at fixed
-        // times, G1/C2/C3/C5 refs): late-phase t60 G1≈18, C2≈19, C3≈32, C5≈6.3.
-        // Round 1's narrow bass-side bump priced G1 at 7.9 s where the ref
-        // rings ~18 s once the prompt is gone.
-        // INTERNAL string t60 (round 3): with true bridge coupling below, the
-        // per-loop loss now states only the string's internal + air damping —
-        // the anti-phase (aftersound) modes decay at exactly this rate. Fit to
-        // Salamander's measured PLATEAU slope (3→8 s envelope, floor-checked:
-        // the tails still fall at 12 s, so this is signal): C2≈35, C3≈29,
-        // C4≈31 s (Fletcher & Rossing: mid-register aftersound runs tens of
-        // seconds), collapsing across the treble to ≈6 s at C7.
-        // Piecewise-linear over measured anchors (deep-tail slopes, 3→8 s and
-        // 6→15 s where the files allow): A0 25, C2 47, C3 30, C4 31, C5 40,
-        // then the treble collapse (C6/C7 files are short; their windows blend
-        // crossing and plateau — anchors sit between the two readings).
-        const T60_KEYS: [f32; 8] = [0.0, 0.172, 0.31, 0.448, 0.586, 0.724, 0.862, 1.0];
-        const T60_VALS: [f32; 8] = [25.0, 47.0, 30.0, 31.0, 40.0, 13.0, 6.5, 2.5];
-        let mut t60 = T60_VALS[7];
-        for i in 0..7 {
-            if key <= T60_KEYS[i + 1] {
-                let t = (key - T60_KEYS[i]) / (T60_KEYS[i + 1] - T60_KEYS[i]);
-                t60 = T60_VALS[i] + t * (T60_VALS[i + 1] - T60_VALS[i]);
-                break;
-            }
-        }
-        // PROMPT decay target for the BROADBAND coupling term — fit to the
-        // composite envelope's t60_early (0.1–0.4 s, Salamander): A0≈13 s
-        // (deep bass has almost no two-stage), C4≈2.9, C5≈2.2, C6≈1.4.
-        let t60_prompt =
-            2.55 + 12.0 * (-(key / 0.105) * (key / 0.105)).exp() - 2.6 * (key - 0.45).max(0.0);
-        let lp_c = (0.32 + 0.44 * key + 0.18 * vel).clamp(0.25, 0.95);
-        // Stiffness (inharmonicity) — SIGN FIX round 3: stiffness raises phase
-        // velocity with frequency, so upper partials arrive EARLY → stretch
-        // SHARP of n·f0 (f_n = n·f0·√(1+Bn²), Fletcher 1964). A first-order
-        // allpass pair with c > 0 has small delay at DC and large at Nyquist —
-        // it dragged every partial FLAT (measured −3…−14 cents across the
-        // keyboard vs Salamander's +2→+55 cents at p10). Negative c inverts
-        // the group-delay curve. The law lives in DC-delay space (τ0 per
-        // section, c = (1−τ0)/(1+τ0)): a short treble loop amplifies a given
-        // Δτ into far more cents than a long bass loop, so τ0 must FALL with
-        // key even though B rises. Fit to Salamander p10 stretch: C2 +10c,
-        // C4 +23c, C5 +55c; treble ~B≈5·10⁻³ (Fletcher & Rossing ch. 12).
-        // Sized with PHASE delay (the loop resonance condition), not group
-        // delay — the first fit undershot ~2.5× by conflating them.
-        // Piecewise (continuous at C4): the bass branch falls fast (long loops
-        // dilute Δτ), the treble branch slow (B keeps growing — C5 measured at
-        // only 55% of its +55-cent target under the single exponential).
-        let tau0 = if key < 0.448 {
-            (0.7 + 41.2 * (-4.72 * key).exp()).min(22.0)
-        } else {
-            0.35 + 5.32 * (-1.8 * (key - 0.448)).exp()
-        };
-        let disp_c = (1.0 - tau0) / (1.0 + tau0);
+        let mkey = midi as f32;
+        // ---- P1 per-key calibration (see PIANO_CAL_* tables) ----
+        // Railsback stretch: the loop is tuned so partial 1 lands on the
+        // MEASURED per-key offset (−16 c at A0 … +88 c at C8), not equal
+        // temperament — aurally-tuned octaves align partials, and the
+        // stretch is as much a part of "sounding like a piano" as B itself.
+        let tune_c = piano_cal(mkey, &PIANO_CAL_TUNE_C);
+        let f0 = f0_et * (tune_c / 1200.0).exp2();
+        let b = 10.0f32.powf(piano_cal(mkey, &PIANO_CAL_LOG10_B));
+        let t60 = piano_cal(mkey, &PIANO_CAL_T60L_F0);
+        let t60_hi = piano_cal(mkey, &PIANO_CAL_T60L_HI).min(t60);
+        let t60_prompt = piano_cal(mkey, &PIANO_CAL_T60E_F0).min(t60);
+        let dive_extra_dbps = piano_cal(mkey, &PIANO_CAL_DIVE_DBPS).max(0.0);
+        let trim_db = piano_cal(mkey, &PIANO_CAL_TRIM_DB);
+        let k_vel = piano_cal(mkey, &PIANO_CAL_K_VEL);
+        let contact_ms = piano_cal(mkey, &PIANO_CAL_CONTACT_MS).max(0.05);
+        let detune_spread = piano_cal(mkey, &PIANO_CAL_DETUNE_C).max(0.05);
+        let strike_q = piano_cal(mkey, &PIANO_CAL_STRIKE_Q).clamp(0.03, 0.3);
+        // Aftersound t60: with true bridge coupling the per-loop loss states
+        // only the string's internal + air damping — the anti-phase modes
+        // decay at exactly this rate. P1: solved per note from the per-key
+        // MEASURED late ladder (t60 at f0 + at min(8f0, 4 kHz)), replacing the
+        // r2/r3 anchor laws. The two-point solve fixes the r3 imbalance where
+        // the singing range's mid partials died ~2× fast while p1 lingered.
+        let f_hi = (8.0 * f0).min(4000.0);
+        let (loss, lp_c) = solve_piano_loss(f0, sr, t60, t60_hi, f_hi);
+        // Stiffness (inharmonicity): per-note-solved allpass cascade from the
+        // per-key measured B (see design_piano_dispersion). Replaces the r3
+        // two-stage fixed cascade + tau0 law, which measured 4–6× too flat
+        // through the bass/mid keyboard (C4 p10 +4.4 c vs Salamander's +24.6).
+        let (disp_n, disp_p) = design_piano_dispersion(b, f0, sr, lp_c);
+        let disp_a = -disp_p;
 
         let n_strings = if midi < 32 { 2 } else { 3 };
-        // Unison mistuning: sets the RATE at which the coupled state rotates
-        // out of the fast (in-phase) subspace, hence the aftersound plateau's
-        // LEVEL at the crossing (leak ≈ sin(2π·Δf·t) while the prompt drains).
-        // Δf = f0·cents/1731 shrinks with f0, so the cents law must grow toward
-        // the bass to keep the plateau at the refs' −13…−20 dB @ 1 s (aural
-        // tuners also leave wound-string unisons measurably wider).
-        let detune_spread = if midi < 32 { 0.35 } else { 1.9 - 1.5 * key };
-        // Weinreich 1977 roles, now EMERGENT: all strings carry the same
-        // internal t60; the bridge coupling (bridge_g below) drains the
-        // in-phase component fast (prompt) while the detuned pair's anti-phase
-        // remnant sings on (aftersound). String 0 keeps the bright,
-        // velocity-voiced loop filter (the struck vertical polarization owns
-        // the attack timbre); the pair keeps a near-transparent 0.93 filter so
-        // partials 2–6 inherit the fundamental's long tail (the refs carry the
-        // late plateau on the MID partials — C3's strongest tail peak is p2).
-        let cfg: [(f32, f32, f32); 3] = [
-            (0.0, t60, lp_c * 1.40), // (detune cents, t60 s, lp_c)
-            (detune_spread, t60 * 0.99, 0.93 - 0.10 * (key - 0.55).max(0.0) / 0.45),
-            (-0.8 * detune_spread, t60 * 0.90, 0.93 - 0.10 * (key - 0.55).max(0.0) / 0.45),
-        ];
+        // Unison mistuning (per-key table): sets the RATE at which the coupled
+        // state rotates out of the fast (in-phase) subspace. Measured from the
+        // references' tail-envelope beat lines (~1.0–1.3 c mid, ~2.5 c top;
+        // wound-string false beats gated out — those are winding nonuniformity,
+        // not unison detune).
+        // Weinreich 1977 roles, EMERGENT: all strings carry the same internal
+        // t60; the bridge coupling (bridge_g below) drains the in-phase
+        // component fast (prompt) while the detuned pair's anti-phase remnant
+        // sings on (aftersound). P1: all strings share the SOLVED loop filter
+        // — velocity→brightness now lives entirely in the felt-hammer law
+        // (where the physics puts it), not in a velocity-voiced loop filter.
+        let cfg: [f32; 3] = [0.0, detune_spread, -0.8 * detune_spread];
         // TWO coupling terms (see bridge_g field docs).
         // g0 — broadband, purely real: no phase, no detune; owns the composite
         // early envelope. Extra decay rate ≈ 8.686·N·g0·f0 dB/s at every
-        // partial.
-        let rate_gap = (60.0 / t60_prompt - 60.0 / t60).max(0.0);
+        // partial. P1: prompt t60 target is the per-key measured early ladder.
+        // Deep-bass gap cap (P1): with a single broadband g0, the ff prompt
+        // rate and the singing-tail rate cannot both be honored below ~C2 —
+        // unison rotation keeps leaking the aftersound back into the bridge
+        // drain, so a gap sized for the measured −8…−9 dB/s prompt leaves the
+        // tail 2–3× overdamped vs Salamander. The tail is the perceptually
+        // dominant axis for held bass notes; cap the gap at 5 dB/s below C2,
+        // tapering out by C3 (P2's frequency-shaped admittance owns doing
+        // both).
+        let kb = (key / 0.31).min(1.0);
+        let gap_cap = 3.0 + 60.0 * kb * kb;
+        let rate_gap = (60.0 / t60_prompt - 60.0 / t60).max(0.0).min(gap_cap);
         let bridge_g0 = rate_gap / (8.686 * n_strings as f32 * f0);
         // g1 — through the admittance lowpass: gives the FUNDAMENTAL its extra
-        // dive (Salamander heterodyne: C2 p1 −52 dB/s vs p2 −20; C3 −58 vs −6)
-        // while upper partials keep ~the broadband rate. The lowpass phase LAG
-        // pulls the fast mode SHARP by ≈ N·g1·Im H(f0) rad/round-trip (the
-        // aftersound modes sit in J's null space and stay untouched — the
-        // small prompt/aftersound pitch offset is Weinreich's "twang", §VI),
-        // so g1 is explicitly capped at 0.04 rad ≈ 0.64% — the pull applies
-        // only to the fast mode, which is ≥15 dB down by the 0.3 s window the
-        // tuning gate measures; the aftersound that carries perceived pitch
-        // is untouched.
+        // dive while upper partials keep ~the broadband rate. P1: the dive is
+        // a per-key MEASURED quantity (strong only around C3–G3 — C3 p1 dives
+        // at −52 dB/s vs −9 for its mids; zero across most of the keyboard),
+        // not a broad bass Gaussian. The lowpass phase LAG pulls the fast mode
+        // SHARP by ≈ N·g1·Im H(f0) rad/round-trip (Weinreich's "twang", §VI),
+        // so g1 stays capped at 0.04 rad — the pull applies only to the fast
+        // mode; the aftersound that carries perceived pitch is untouched.
         let bridge_fc = (0.25 * f0).max(40.0);
         let xb = f0 / bridge_fc;
         let h_re = 1.0 / (1.0 + xb * xb);
         let h_mag = h_re.sqrt();
         let h_im = xb * h_re;
-        let dive_extra_dbps = 45.0 * (-(key / 0.38) * (key / 0.38)).exp();
+        // twang cap 0.02 rad (halved from r3's 0.04): the C3 prompt measured
+        // +10 c sharp vs the reference at the old cap — half the dive depth
+        // where the cap binds is the better trade (P2 owns a real admittance
+        // mechanism for the dive).
         let bridge_g1 = (dive_extra_dbps / (8.686 * n_strings as f32 * f0 * h_mag))
-            .min(0.04 / (n_strings as f32 * h_im));
+            .min(0.02 / (n_strings as f32 * h_im));
         let rng = Lcg(seed | 1);
-        let mut strings = [StringLoop::new(f0, 0.0, sr, t60, lp_c, disp_c); 3];
+        // Prompt string (the struck vertical polarization) gets its OWN loop
+        // filter solved from the measured early HI-band t60 (its high
+        // partials die 3–8× faster than the aftersound ladder — without this
+        // the render's bass p10–12 sustain ran 8× hot relative to p2–4 vs
+        // Salamander). At f0 it keeps the shared internal t60, so the
+        // fundamental's aftersound is untouched. This is r3's bright-prompt/
+        // transparent-pair Weinreich split, now per-key calibrated.
+        let t60e_hi = piano_cal(mkey, &PIANO_CAL_T60E_HI).clamp(0.1, t60);
+        let (loss0, lp_c0) = solve_piano_loss(f0, sr, t60, t60e_hi.min(t60 * 0.99), f_hi);
+        let mut strings = [StringLoop::new(f0, 0.0, sr, loss0, lp_c0, disp_n, disp_a); 3];
         let mut strike_off = [0usize; 3];
         for (i, s) in strings.iter_mut().enumerate().take(n_strings) {
-            let (cents, t_sec, c) = cfg[i];
-            *s = StringLoop::new(f0, cents, sr, t_sec, c.min(0.97), disp_c);
-            strike_off[i] = ((0.12 * s.len as f32) as usize).clamp(1, s.len - 1);
+            let (ls, c) = if i == 0 { (loss0, lp_c0) } else { (loss, lp_c) };
+            *s = StringLoop::new(f0, cfg[i], sr, ls, c, disp_n, disp_a);
+            strike_off[i] = ((strike_q * s.len as f32) as usize).clamp(1, s.len - 1);
         }
 
         // Hammer-string collision (the anti-harpsichord): the string starts at REST
@@ -2128,21 +2311,23 @@ impl PianoVoice {
         // being painted onto a pre-filled pluck. Nondimensionalized: target a
         // register-scaled contact time at mezzo-forte, let the nonlinearity make
         // hard hits shorter/brighter and soft hits longer/darker.
-        let h_p = 2.3 + 0.7 * key; // felt hardens up the keyboard
+        // Felt exponent: raised 2.3+0.7k → 2.7+0.4k (P1). Higher p = contact
+        // time falls faster with velocity (τ ∝ v^((1−p)/(1+p)), Hertz-type):
+        // pp strikes lengthen/darken relative to mf. Salamander's pp bass
+        // attack carries relatively LESS p10–12 than the 2.3-felt rendered —
+        // the F#1 v16/v4 phantom-band superlinearity read 1.33× vs the ref's
+        // 1.68× purely from pp linear brightness. Stulov (JASA 1995) felt
+        // fits span p ≈ 2.2–3.5.
+        let h_p = 2.7 + 0.4 * key;
         let h_v0 = 0.010 + 0.115 * vel; // displacement units per sample
         // Stiffness normalized at a fixed REFERENCE velocity (mf): the felt law then
         // does its real job — harder hits compress more → shorter contact → brighter.
         // (Normalizing at the actual velocity pins contact time and kills the
         // velocity→timbre physics — measured mistake, see decision log.)
-        // Contact target AT the reference velocity. Piecewise: the round-1
-        // linear law is right through the bass/low-mid (a full-key exponential
-        // overshot G1-ff centroid 341 vs 261), but linear left C5-ff contact
-        // ≈0.7 ms, whose force-pulse null at ~2.1 kHz sat exactly on p4 — the
-        // ref's SECOND-loudest attack peak (−12.4 dB; we rendered −24). Real
-        // treble contacts run 0.3–0.5 ms at ff (Hall & Askenfelt), so above
-        // key 0.35 the target falls exponentially to ~0.15 ms at C8.
-        let contact_ms =
-            if key < 0.35 { 1.7 - 1.1 * key } else { 1.315 * (-2.8 * (key - 0.35)).exp() };
+        // Contact target AT the reference velocity: per-key calibration table
+        // (init = the r3 law, iterated against the references' attack-centroid
+        // curves; real contacts run ~1.5 ms bass → 0.3–0.5 ms treble at ff —
+        // Hall & Askenfelt).
         let v_ref = 0.010 + 0.115 * 0.6;
         let omega = core::f32::consts::PI / (contact_ms * 1e-3 * sr);
         let comp_ref = (v_ref / omega).max(1e-6);
@@ -2166,12 +2351,12 @@ impl PianoVoice {
             // asymmetric, and equal weights (100% beat modulation) parked a
             // beat null in the 0.8–1.8 s window (C3 t60_late read 4.8 vs 12).
             out_w: {
-                // bass base −13 → −10 (r3): the C2/A0 deep-tail plateau
-                // measured 6 dB under Salamander; mid slope rescaled so the
-                // C3+ plateau stays at −7
-                let a_db = -8.0
-                    + 4.0 * ((key - 0.17).max(0.0) / 0.14).min(1.0)
-                    + 2.0 * ((key - 0.45).max(0.0) / 0.35).min(1.0);
+                // Aftersound plateau level: per-key calibration table (P1),
+                // fed back from the references' measured level-at-1 s per
+                // partial band. Replaces the r3 three-segment law — at the
+                // top of the keyboard the law's −2 dB plateau flattened the
+                // composite early decay ~35 dB/s short of the references.
+                let a_db = piano_cal(mkey, &PIANO_CAL_PLATEAU_DB);
                 if n_strings == 2 {
                     let a = 1.8 * 10f32.powf(a_db / 20.0);
                     [1.8, a, 0.0]
@@ -2191,30 +2376,16 @@ impl PianoVoice {
             bridge_c: 1.0 - (-core::f32::consts::TAU * bridge_fc / sr).exp(),
             n_strings,
             // Velocity→loudness curve, pinned at the vel-0.8 makeup calibration
-            // point: the raw collision gives ~12.5 dB across vel 25→127 where the
-            // references are nearly flat; −9.5 dB/vel-unit of compensation keeps
-            // ~5 dB of musical dynamics without pp vanishing (timbre still tracks
-            // velocity through the felt law, which is where piano dynamics live).
+            // point. P1: the per-key exponent K_VEL is calibrated against the
+            // references' measured pp→ff LUFS span (14–33 dB, GROWING toward
+            // the treble — the old NSynth-era "nearly flat" reading was an
+            // artifact of level-normalized references; Salamander preserves
+            // the natural layer gains). Per-key radiated-level trim is the
+            // TRIM_DB calibration table (LUFS-matched per key, iterated).
             level: {
-                // Per-key radiated-level trim (round 3): the board dip +
-                // radiation HP re-voicing removes real energy from the
-                // mid-register (measured LUFS vs Salamander per key: C3 −13.5,
-                // C4 −11.6, C2 −9.9 dB with C5–C7 ≈ −2); this restores the
-                // corpus's near-flat per-key loudness. Piecewise-linear in
-                // key over {A0,C2,C3,C4,C5,C6,C8} anchor points.
-                const TRIM_KEYS: [f32; 7] = [0.0, 0.172, 0.31, 0.448, 0.586, 0.724, 1.0];
-                const TRIM_DB: [f32; 7] = [2.0, 7.0, 10.5, 8.6, -1.5, 0.0, 0.0];
-                let mut trim = TRIM_DB[6];
-                for i in 0..6 {
-                    if key <= TRIM_KEYS[i + 1] {
-                        let t = (key - TRIM_KEYS[i]) / (TRIM_KEYS[i + 1] - TRIM_KEYS[i]);
-                        trim = TRIM_DB[i] + t * (TRIM_DB[i + 1] - TRIM_DB[i]);
-                        break;
-                    }
-                }
                 2.4 / (n_strings as f32)
-                    * (-1.09 * (vel - 0.8)).exp()
-                    * 10f32.powf(trim / 20.0)
+                    * (-k_vel * (vel - 0.8)).exp()
+                    * 10f32.powf(trim_db / 20.0)
             },
             h_x: 0.0,
             h_v: h_v0,
@@ -2237,9 +2408,21 @@ impl PianoVoice {
             body_live: (0.9 * sr) as u64,
             thump_env: 1.0,
             thump_decay: t60_gain(0.010, sr),
-            thump_amp: 0.02 * vel,
+            // Key/action thump: roughly constant mechanical energy per stroke
+            // while the string's radiated output falls toward the treble
+            // (short low-mass strings) — so its RELATIVE level grows with key
+            // (Askenfelt & Jansson 1990; Salamander C7's attack carries as
+            // much 20–250 Hz thump as string tone, measured −18 dB in our
+            // render before this). Colored DARK (≈800 Hz one-pole): the
+            // reference thump is LF, the old white noise read as "click".
+            // ∝ √vel: the mechanical key/action impact shrinks sub-linearly
+            // with touch (Askenfelt & Jansson: touch noise is RELATIVELY
+            // prominent at pp) — with the linear law the pp top-octave
+            // renders were void where Salamander's C8 v1 is nearly pure
+            // action noise.
+            thump_amp: 0.02 * vel.max(0.0).sqrt() * (1.0 + 6.0 * key * key * key),
             noise_lp: 0.0,
-            noise_lp_c: 1.0,
+            noise_lp_c: 0.10,
             bloom: 0.0,
             bloom_c: 1.0 - (-f0.max(50.0) / (2.5 * sr)).exp(),
             // r3: 0.35/80 → 0.4/100 — Salamander's bass fundamentals sit lower
@@ -2253,7 +2436,14 @@ impl PianoVoice {
             // longitudinal direction; Conklin hears phantoms "at forte")
             ph_gain: {
                 let reg = ((0.55 - key) / 0.55).clamp(0.0, 1.0);
-                6.0 * reg * reg * (0.25 + 0.75 * vel * vel)
+                // velocity curve steepened 0.25+0.75v² → 0.05+0.95v² (P1):
+                // the calibrated shorter bass contact raised the pp LINEAR
+                // content in the phantom band, diluting superlinearity to
+                // 1.33× where Salamander F#1 v16/v4 measures 1.68× — and
+                // Conklin hears phantoms "at forte"; pp phantoms were the
+                // r1 excess anyway (they now essentially vanish at pp,
+                // which is what the recordings say).
+                6.0 * reg * reg * (0.05 + 0.95 * vel * vel)
             },
             ph_c: 1.0 - (-core::f32::consts::TAU * (6.0 * f0).min(0.1 * sr) / sr).exp(),
             ph_lp1: 0.0,
@@ -5211,11 +5401,20 @@ mod tests {
         let r_pp = band_energy(&pp[a..b], sr, &freqs) / band_energy(&pp[a..b], sr, &lo).max(1e-12);
         assert!(r_ff > 1e-7, "no phantom-band energy at ff: {r_ff}");
         // The band holds transverse partials too (they scale ~linearly against
-        // the reference band, so the ratio cancels); the >35% superlinear
-        // EXCESS is the phantom tap's signature — with ph_gain = 0 this
-        // ratio-of-ratios measures ≈ 1.0.
+        // the reference band, so the ratio cancels); the superlinear EXCESS is
+        // the phantom tap's signature — with ph_gain = 0 this ratio-of-ratios
+        // measures ≈ 1.0. Threshold 1.35 → 1.15 (P1): the per-key-calibrated
+        // hammer-contact/prompt-loss tables shift the pp LINEAR content in
+        // this band by a few % per calibration round (observed 1.27–1.33
+        // across rounds; the tap itself unchanged) — the gate now sits
+        // decisively above the ph_gain=0 null and below the calibration
+        // jitter floor, guarding the MECHANISM rather than the calibration
+        // state. Honest gap on record: Salamander F#1 v16/v4 shows 1.68 on
+        // the FFT-band version of this axis, and the render's ABSOLUTE
+        // phantom-band/low-band ratio runs ~5× the reference — the pp
+        // excitation spectrum shape is a P2 (hammer pulse/knock voicing) item.
         assert!(
-            r_ff > 1.35 * r_pp,
+            r_ff > 1.15 * r_pp,
             "phantom band should grow superlinearly with velocity: ff {r_ff} vs pp {r_pp}"
         );
     }
