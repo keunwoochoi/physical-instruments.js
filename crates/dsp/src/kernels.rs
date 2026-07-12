@@ -414,6 +414,76 @@ impl PluckVoice {
         v
     }
 
+    /// Electric solid-body voicing (GuitarElectric / GuitarDistorted only — the
+    /// acoustic `start` laws above are untouched). Differences, physically:
+    /// - Loss is dominated by the bridge/internal damping (`loss`), NOT the loop
+    ///   lowpass: a solid body radiates almost nothing, so t60 is long and nearly
+    ///   register-flat (NSynth guitar_electronic refs: t60_early ≈ 3.4–4.8 s from
+    ///   E1 to C5). The loop lowpass applies once per round trip (f0 times/sec),
+    ///   so its per-pass attenuation must shrink as f0 rises or trebles die —
+    ///   key-track lp_c toward 1.0 up the neck (Jaffe & Smith 1983 loss scaling).
+    pub fn start_electric(midi: u32, f0: f32, vel: f32, sr: f32, seed: u32) -> Self {
+        let key = ((midi as f32) - 40.0) / 44.0; // 0 = E2 … 1 = C6
+        let t60 = 4.0;
+        // per-pass brightness: gentle at the bottom, nearly lossless loop on top
+        let lp_c = (0.60 + 0.42 * key + 0.06 * vel).clamp(0.35, 0.985);
+        let lp_delay = (1.0 - lp_c) / lp_c;
+        let period = sr / f0;
+        let total = (period - lp_delay).max(3.0);
+        let len = ((total - 0.5).floor() as usize).clamp(2, PLUCK_BUF - 1);
+        let frac = (total - len as f32).clamp(0.1, 1.5);
+        let ap_c = (1.0 - frac) / (1.0 + frac);
+        let mut v = Self {
+            buf: [0.0; PLUCK_BUF],
+            len,
+            pos: 0,
+            lp: 0.0,
+            lp_c,
+            // Loop loss is applied once per ROUND TRIP (f0 times a second), not per
+            // sample — the per-period gain for a wanted t60 is g = 10^(−3·P/t60)
+            // (Jaffe & Smith 1983), i.e. t60_gain evaluated at rate f0, not sr.
+            // (t60_gain(t60, sr) here would leave the fundamental ringing ~sr/f0
+            //  times too long — measured 40 s instead of 4 s at f0 = 87 Hz.)
+            loss: t60_gain(t60, f0),
+            ap_c,
+            ap_x1: 0.0,
+            ap_y1: 0.0,
+            level: 0.5 * (0.35 + 0.65 * vel),
+            life: ((t60 * 1.5) * sr) as u64,
+            age: 0,
+            sr,
+        };
+        // excitation: a pick pluck is a released displacement triangle ≈ 1/n²
+        // harmonic tilt (−12 dB/oct; Smith PASP, pluck excitation), so shape the
+        // noise with TWO cascaded one-pole lowpasses. Velocity moves the corner
+        // (flesh-soft ≈ 200 Hz → hard plectrum ≈ 1.6 kHz), matching the NSynth
+        // refs where the spectral knee scales with velocity but the cliff stays.
+        let pick_pos = 0.28;
+        let mut rng = Lcg(seed | 1);
+        let fc = 180.0 + 1450.0 * vel * vel;
+        let exc_c = 1.0 - (-core::f32::consts::TAU * fc / sr).exp();
+        let mut lp1 = 0.0f32;
+        let mut lp = 0.0f32;
+        let mut tmp = [0.0f32; PLUCK_BUF];
+        for t in tmp.iter_mut().take(len) {
+            lp1 += exc_c * (rng.next() - lp1);
+            lp += exc_c * (lp1 - lp);
+            *t = lp;
+        }
+        let p = ((pick_pos * len as f32) as usize).clamp(1, len - 1);
+        let mut mean = 0.0;
+        for i in 0..len {
+            let comb = tmp[i] - 0.9 * tmp[(i + len - p) % len];
+            v.buf[i] = comb;
+            mean += comb;
+        }
+        mean /= len as f32;
+        for b in v.buf.iter_mut().take(len) {
+            *b -= mean;
+        }
+        v
+    }
+
     pub fn render(&mut self, out: &mut [f32]) -> bool {
         for o in out.iter_mut() {
             let y = self.buf[self.pos];
@@ -1202,11 +1272,30 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
             Kernel::Pluck(PluckVoice::start(f0, vel, sr, t60, 0.68, 0.20, seed))
         }
         Instrument::GuitarElectric | Instrument::GuitarDistorted => {
-            // solid-body: darker string, long sustain, bridge-pickup pick position;
-            // the character comes from the track amp stage (amp_defaults)
-            let key = ((midi as f32) - 40.0) / 44.0;
-            let t60 = (7.5 - 3.0 * key).clamp(2.0, 7.5);
-            Kernel::Pluck(PluckVoice::start(f0, vel, sr, t60, 0.42, 0.12, seed))
+            // solid-body voicing lives in start_electric; the amp/pickup character
+            // comes from the track bus stages (pickup_defaults / amp_defaults)
+            Kernel::Pluck(PluckVoice::start_electric(midi, f0, vel, sr, seed))
         }
+    }
+}
+
+#[cfg(test)]
+mod diag {
+    use super::*;
+    #[test]
+    fn diag_electric_kernel_decay() {
+        let sr = 48000.0;
+        let mut v = PluckVoice::start_electric(41, midi_to_hz(41.0), 1.0, sr, 12345);
+        let mut out = vec![0.0f32; (4.0 * sr) as usize];
+        for chunk in out.chunks_mut(128) {
+            v.render(chunk);
+        }
+        let hop = (0.1 * sr) as usize;
+        let mut dbs = Vec::new();
+        for w in out.chunks(hop).take(20) {
+            let rms = (w.iter().map(|s| s * s).sum::<f32>() / w.len() as f32).sqrt();
+            dbs.push(format!("{:.1}", 20.0 * (rms + 1e-9).log10()));
+        }
+        eprintln!("KERNEL-ONLY env dB: {}", dbs.join(" "));
     }
 }
