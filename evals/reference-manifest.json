@@ -114,6 +114,14 @@
       "notes": "Close-mic, trustworthy full-band. Concert BD is an openness ANCHOR, not a kit kick: expect structural crest-gate reds against it (slow bloom); pair primary comparisons with the kit-kick refs."
     },
     {
+      "match": "references/jazz-kick-virtuosity",
+      "corpus": "Virtuosity Drums close kick mic, snare wires off",
+      "license": "CC0-1.0",
+      "sr": 48000,
+      "level_normalized": false,
+      "notes": "Full-band mono close-mic velocity layers with natural level preserved. Soft and hard layers are tune cases; the medium layer is held out. Mid/overhead scratchpad views are listening context only and are not campaign targets."
+    },
+    {
       "match": "references/cymbals",
       "corpus": "virtuosity-drums + VSCO-2-CE",
       "license": "CC0-1.0",

@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0.0",
+  "family": "drums-jazz",
+  "description": "Virtuosity Drums close-kick velocity anchors; medium velocity is held out from the soft/hard transient and damping fit.",
+  "cases": [
+    {
+      "id": "jazz-kick-soft",
+      "role": "tune",
+      "reference": "references/jazz-kick-virtuosity/canonical/jazz-kick-soft.wav",
+      "render": { "family": "drums-jazz", "midi": 36, "velocity": 30, "note_seconds": 0.3, "total_seconds": 4.0, "sample_rate": 48000, "lead_seconds": 0.03 },
+      "analysis": { "profile": "kick", "required_axes": ["mr_stft", "attack", "decay", "lufs"] }
+    },
+    {
+      "id": "jazz-kick-ff",
+      "role": "tune",
+      "reference": "references/jazz-kick-virtuosity/canonical/jazz-kick-ff.wav",
+      "render": { "family": "drums-jazz", "midi": 36, "velocity": 120, "note_seconds": 0.3, "total_seconds": 4.0, "sample_rate": 48000, "lead_seconds": 0.03 },
+      "analysis": { "profile": "kick", "required_axes": ["mr_stft", "attack", "decay", "lufs"] }
+    },
+    {
+      "id": "jazz-kick-mf-held",
+      "role": "held_out",
+      "reference": "references/jazz-kick-virtuosity/canonical/jazz-kick-mf.wav",
+      "render": { "family": "drums-jazz", "midi": 36, "velocity": 75, "note_seconds": 0.3, "total_seconds": 4.0, "sample_rate": 48000, "lead_seconds": 0.03 },
+      "analysis": { "profile": "kick", "required_axes": ["mr_stft", "attack", "decay", "lufs"] }
+    }
+  ]
+}
