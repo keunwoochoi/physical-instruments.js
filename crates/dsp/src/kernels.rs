@@ -2095,6 +2095,148 @@ impl CymbalVoice {
         v
     }
 
+    /// Ride BELL (GM 53): striking the stiff cup excites a sparse cluster of
+    /// long-ringing partials 1.5–5 kHz (measured on the CC0 virtuosity bell,
+    /// sustain FFT 0.15–0.65 s: dominant beating pair 2062/2128 Hz, support at
+    /// 1578/2340/2662/2990/3360/4120/4900; in-band flatness above 3 kHz is 0.06
+    /// — discrete partials, almost no noise) over only a LIGHT wash: the cup is
+    /// far stiffer than the bow, so little strike energy migrates into the
+    /// plate's dense mode field. Distinct from GM 51 (bow: wash-forward, low
+    /// 440–467 Hz cluster) by cluster register and wash share.
+    fn bell(vel: f32, sr: f32, seed: u32) -> Self {
+        let mut v = Self::new(seed);
+        v.burst_dec = t60_gain(0.020, sr);
+        v.amp = 1.05 * (0.25 + 0.75 * vel);
+        v.life = (4.5 * sr) as u64;
+        let mut jit = Lcg(seed ^ 0xbe11 | 1);
+        let imp = 0.23;
+        // cup partials: (freq, ring t60, hard-hit level, soft-hit level) — the
+        // soft reference redistributes energy UP (2326/4218/4900 dominate soft)
+        for (f, ring, hard, soft) in [
+            (1578.0, 5.5, 0.26f32, 0.10f32),
+            (2062.0, 6.0, 0.48, 0.25),
+            (2128.0, 4.5, 0.27, 0.24),
+            (2340.0, 3.8, 0.26, 0.42),
+            (2662.0, 3.2, 0.30, 0.20),
+            (2990.0, 2.8, 0.33, 0.14),
+            (3360.0, 2.4, 0.22, 0.30),
+            (4120.0, 2.1, 0.32, 0.14),
+            (4900.0, 1.8, 0.16, 0.30),
+            // low plate modes: the cup strike rocks the whole cymbal — the
+            // reference's 200–500 band is its LOUDEST (+11.7 dB) and rings
+            // longest (t60 ≈ 9 s)
+            (262.0, 8.5, 0.20, 0.08),
+            (331.0, 8.0, 0.17, 0.07),
+            (416.0, 7.0, 0.14, 0.06),
+        ] {
+            let ring = ring * (0.60 + 0.40 * vel);
+            // cup partials fall steeply with velocity while the low plate
+            // modes barely move (ref soft-vs-hard band levels) — extra vel^0.6
+            // on the cup cluster only
+            let vk = if f > 1000.0 { vel.powf(0.6) } else { 1.0 };
+            v.push_band(
+                CymBand {
+                    freq: f,
+                    ring_t60: ring,
+                    burst: (soft + (hard - soft) * vel) * imp * vk,
+                    chick: 0.0,
+                    wash: 0.0,
+                    decay_t60: ring,
+                    bloom_frac: 0.0,
+                    bloom_tau: 0.0,
+                },
+                sr,
+            );
+        }
+        // light wash bed: the plate still shivers under the cup (measured
+        // 200–500 Hz band is broadband, and 1–2 kHz still blooms late), at
+        // roughly a third of the bow ride's wash level, scaled up with vel
+        let n_wash = CYM_BANDS - v.n_bands;
+        for k in 0..n_wash {
+            let t = k as f32 / (n_wash - 1) as f32;
+            let f = 250.0 * (15500.0f32 / 250.0).powf(t) * (1.0 + 0.05 * jit.next());
+            let ring = 44.0 / f;
+            // measured bell-hit band t60s: 8.9 s at 200–500 (low plate modes
+            // ring LONGEST under a cup strike), ~4 s at 8–16 k
+            let decay = (5.5 * (1000.0 / f).powf(0.3)).clamp(2.2, 7.5);
+            let (bloom_frac, bloom_tau) =
+                if f < 3000.0 && f > 700.0 { (0.7 * (0.5 + 0.5 * vel), 0.045) } else { (0.2, 0.015) };
+            let lnr = (f / 6000.0).ln();
+            let burst = (0.08 + 1.0 * (-lnr * lnr / 0.9).exp()) * vel.powf(0.7) * imp * 0.5;
+            let wash = 0.38
+                * (0.4 + 0.6 * vel)
+                * if f > 7000.0 { 1.9 } else { 1.0 }; // sustained HF sizzle (ref 8–16k −4.3 dB, t60 3.9 s)
+            let chick = 1.4 * (f / 6000.0).powf(0.8).min(2.0) * vel.powf(0.5);
+            v.push_band(
+                CymBand { freq: f, ring_t60: ring, burst, chick, wash, decay_t60: decay, bloom_frac, bloom_tau },
+                sr,
+            );
+        }
+        v.cap_strike(1.6);
+        v
+    }
+
+    /// Splash (GM 55): an 8–10" thin crash. No license-clean reference exists
+    /// (see references ledger), so this is the crash model under plate scaling
+    /// physics: modal frequencies scale ~h/d² (Rossing, Science of Percussion
+    /// Instruments, ch. 20 — halving diameter ≈ 3–4× higher modes), stored
+    /// energy and radiating area shrink, so decay and bloom shorten by roughly
+    /// the same factor. Production convention agrees: "fast bright attack,
+    /// quick decay" is THE splash descriptor (manufacturer voicing language;
+    /// Owsinski, Recording Engineer's Handbook, cymbal-miking notes).
+    fn splash(vel: f32, sr: f32, seed: u32) -> Self {
+        let mut v = Self::new(seed);
+        v.burst_dec = t60_gain(0.030, sr);
+        v.amp = 0.95 * (0.25 + 0.75 * vel);
+        v.life = (1.6 * sr) as u64;
+        let mut jit = Lcg(seed ^ 0x5b1a | 1);
+        let imp = 0.08;
+        // scaled tonal skeleton (crash 524/1173 Hz × ~3.2)
+        for (f, ring, burst) in [(1680.0, 1.0, 0.14f32), (3760.0, 0.8, 0.12)] {
+            v.push_band(
+                CymBand {
+                    freq: f,
+                    ring_t60: ring,
+                    burst: burst * imp * vel.powf(0.8),
+                    chick: 0.0,
+                    wash: 0.0,
+                    decay_t60: ring,
+                    bloom_frac: 0.0,
+                    bloom_tau: 0.0,
+                },
+                sr,
+            );
+        }
+        let n_wash = CYM_BANDS - v.n_bands;
+        for k in 0..n_wash {
+            let t = k as f32 / (n_wash - 1) as f32;
+            let f = 1200.0 * (17000.0f32 / 1200.0).powf(t) * (1.0 + 0.05 * jit.next());
+            let ring = 44.0 / f;
+            // whole tail lives in ~1 s: mids ~0.9 s, top ~0.45 s
+            let decay = (0.85 * (4000.0 / f).powf(0.35)).clamp(0.4, 1.0);
+            // bloom compressed to ~1/3 of the crash's (smaller plate, shorter
+            // energy-migration path): full depth, 10–25 ms taus
+            let depth = 0.9 * (0.75 + 0.25 * vel);
+            let (bloom_frac, bloom_tau) = if f < 3000.0 {
+                (depth, 0.025)
+            } else if f < 7000.0 {
+                (depth, 0.016)
+            } else {
+                (depth, 0.010)
+            };
+            let lnr = (f / 6000.0).ln();
+            let burst = (0.12 + 0.9 * (-lnr * lnr / 1.2).exp()) * vel.powf(0.7) * imp;
+            let wash = 0.60 * if f < 2000.0 { (f / 2000.0).powf(1.2) } else { 1.0 };
+            let chick = 0.15 * (f / 8000.0).powf(0.8).min(2.0) * vel.powf(1.2);
+            v.push_band(
+                CymBand { freq: f, ring_t60: ring, burst, chick, wash, decay_t60: decay, bloom_frac, bloom_tau },
+                sr,
+            );
+        }
+        v.cap_strike(1.6);
+        v
+    }
+
     /// Hi-hats (GM 42/44 closed, 46 open): small bright plates. Closed chokes
     /// in ~0.4 s with no bloom; open sizzles for seconds with a mild mid bloom
     /// (reference band t60s hump at 1–2 kHz).
@@ -2289,10 +2431,22 @@ impl DrumVoice {
                 v.life = v.cym.life;
             }
             51 | 59 => {
-                // ride: banded-noise resonator bank (see CymbalVoice) — the old
+                // ride BOW: banded-noise resonator bank (see CymbalVoice) — the old
                 // 7-mode cluster + hiss read as a test tone (owner note 2026-07-11)
                 v.kind = DrumKind::Cymbal;
                 v.cym = CymbalVoice::ride(vel, sr, seed);
+                v.life = v.cym.life;
+            }
+            53 => {
+                // ride BELL: cup ping cluster, light wash
+                v.kind = DrumKind::Cymbal;
+                v.cym = CymbalVoice::bell(vel, sr, seed);
+                v.life = v.cym.life;
+            }
+            55 => {
+                // splash: small fast crash
+                v.kind = DrumKind::Cymbal;
+                v.cym = CymbalVoice::splash(vel, sr, seed);
                 v.life = v.cym.life;
             }
             _ => {
@@ -2423,7 +2577,8 @@ pub fn voice_pan(inst: Instrument, midi: u32, seed: u32) -> f32 {
             42 | 44 => 0.28,      // hats player-left (audience right)
             46 => 0.30,
             49 | 57 => -0.25,     // crash
-            51 | 53 | 59 => 0.40, // ride
+            55 => -0.32,          // splash (mounted near the crash side)
+            51 | 53 | 59 => 0.40, // ride (bell = same cymbal)
             41 | 43 | 45 => -0.18, // low toms
             47 | 48 | 50 => 0.12, // high toms
             _ => ((seed >> 7) as f32 / 33554432.0 - 0.5) * 0.2,
