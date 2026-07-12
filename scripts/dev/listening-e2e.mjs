@@ -247,12 +247,14 @@ try {
     const changed = structuredClone(interruptedJson);
     mutate(changed);
     await fallbackPage.locator("#restore-json").fill(JSON.stringify(changed));
+    await fallbackPage.locator("#status").evaluate((element) => { element.textContent = ""; });
     await fallbackPage.getByRole("button", { name: "Restore session JSON" }).click();
+    await fallbackPage.waitForFunction(() => document.querySelector("#status")?.textContent.startsWith("Session restore failed:"));
     rejectedTampering.push((await fallbackPage.locator("#status").innerText()).startsWith("Session restore failed:") && await fallbackPage.locator("#setup").isVisible());
   };
   await expectRestoreRejected((value) => { value.randomization.seed = 4294967296; });
   await expectRestoreRejected((value) => { value.trials[0].presentation.reverse(); });
-  await expectRestoreRejected((value) => { value.trials[0].playback[value.trials[0].presentation[0]].completed = -1; });
+  await expectRestoreRejected((value) => { value.trials[0].playback[value.trials[0].presentation[0]].listened_ms = 0; });
   await expectRestoreRejected((value) => { value.trials[0].response.choice = "not-a-condition"; });
   await fallbackPage.locator("#restore-json").fill(interruptedJsonText);
   await fallbackPage.getByRole("button", { name: "Restore session JSON" }).click();

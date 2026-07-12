@@ -249,7 +249,29 @@ function requireString(value, label, allowEmpty = true) {
   if (typeof value !== "string" || (!allowEmpty && !value)) throw new Error(`${label} must be ${allowEmpty ? "a string" : "a non-empty string"}`);
 }
 
-function validateRestoredTrial(response, trial, expectedPresentation) {
+const durationCache = new Map();
+
+function durationMs(path) {
+  const url = audioUrl(path);
+  if (!durationCache.has(url)) durationCache.set(url, new Promise((resolve, reject) => {
+    const audio = new Audio();
+    const timeout = setTimeout(() => reject(new Error("audio metadata timed out")), 10000);
+    audio.preload = "metadata";
+    audio.addEventListener("loadedmetadata", () => {
+      clearTimeout(timeout);
+      if (!Number.isFinite(audio.duration) || audio.duration <= 0) reject(new Error("audio duration is invalid"));
+      else resolve(Math.round(audio.duration * 1000));
+    }, { once: true });
+    audio.addEventListener("error", () => {
+      clearTimeout(timeout);
+      reject(new Error("audio metadata could not be loaded"));
+    }, { once: true });
+    audio.src = url;
+  }));
+  return durationCache.get(url);
+}
+
+async function validateRestoredTrial(response, trial, expectedPresentation) {
   requireExactKeys(response, ["trial_id", "protocol", "presentation", "response", "play_counts", "playback"], `${trial.id} response`);
   if (response.trial_id !== trial.id || response.protocol !== trial.protocol || JSON.stringify(response.presentation) !== JSON.stringify(expectedPresentation)) throw new Error(`${trial.id} presentation or protocol was changed`);
   const slots = [...expectedPresentation];
@@ -259,6 +281,9 @@ function validateRestoredTrial(response, trial, expectedPresentation) {
   if (slotSet.size !== slots.length) throw new Error(`${trial.id} playback slots are not unique`);
   requireExactKeys(response.play_counts, slots, `${trial.id} play counts`);
   requireExactKeys(response.playback, slots, `${trial.id} playback evidence`);
+  const stimulusPaths = Object.fromEntries(trial.stimuli.map((item) => [item.id, item.path]));
+  if (trial.protocol === "mushra") stimulusPaths.reference = trial.reference.path;
+  if (trial.protocol === "abx") stimulusPaths.x = trial.x.path;
   for (const slot of slots) {
     const count = response.play_counts[slot];
     const evidence = response.playback[slot];
@@ -267,6 +292,8 @@ function validateRestoredTrial(response, trial, expectedPresentation) {
     if (![evidence.starts, evidence.completed, evidence.listened_ms].every((item) => Number.isInteger(item) && item >= 0)
       || evidence.starts !== count || evidence.completed > evidence.starts
       || evidence.completed < experiment.exclusion_policy.min_completed_plays_per_stimulus) throw new Error(`${trial.id} playback evidence is invalid`);
+    const expectedListenedMs = await durationMs(stimulusPaths[slot]) * evidence.completed;
+    if (evidence.listened_ms < 0.95 * expectedListenedMs) throw new Error(`${trial.id} playback duration coverage is invalid`);
   }
   if (trial.protocol === "mushra") {
     requireExactKeys(response.response, ["ratings"], `${trial.id} answer`);
@@ -279,7 +306,7 @@ function validateRestoredTrial(response, trial, expectedPresentation) {
   }
 }
 
-function validateRestoredSession(value) {
+async function validateRestoredSession(value) {
   requireExactKeys(value, ["schema_version", "experiment_id", "experiment_digest", "session_id", "evidence_kind", "listener", "setup", "randomization", "trial_order", "started_at", "submitted_at", "trials"], "session");
   if (value.schema_version !== "1.0.0" || value.evidence_kind !== "human") throw new Error("session schema version or evidence kind is invalid");
   if (value.experiment_id !== experiment.id || value.experiment_digest !== digest) throw new Error("session belongs to a different experiment or manifest");
@@ -302,7 +329,7 @@ function validateRestoredSession(value) {
   if (JSON.stringify(value.trial_order) !== JSON.stringify(expectedOrder)) throw new Error("session trial order does not match its sealed seed");
   if (!Array.isArray(value.trials) || value.trials.length > expectedOrder.length) throw new Error("session trial evidence is incomplete or malformed");
   const expectedPresentations = presentations(experiment, value.randomization.seed);
-  value.trials.forEach((response, index) => validateRestoredTrial(response, byTrial[expectedOrder[index]], expectedPresentations[expectedOrder[index]]));
+  for (let index = 0; index < value.trials.length; index++) await validateRestoredTrial(value.trials[index], byTrial[expectedOrder[index]], expectedPresentations[expectedOrder[index]]);
   if (value.submitted_at && value.trials.length !== expectedOrder.length) throw new Error("submitted session is missing trials");
   return value;
 }
@@ -333,9 +360,9 @@ $("#start").addEventListener("click", () => {
 
 $("#resume").addEventListener("click", () => beginSession(recoverableSession));
 
-$("#restore").addEventListener("click", () => {
+$("#restore").addEventListener("click", async () => {
   try {
-    const restored = validateRestoredSession(JSON.parse($("#restore-json").value));
+    const restored = await validateRestoredSession(JSON.parse($("#restore-json").value));
     beginSession(restored);
     setStatus(restored.submitted_at ? "Completed session restored from manual JSON." : `In-progress session restored at trial ${restored.trials.length + 1}.`);
   } catch (error) {
