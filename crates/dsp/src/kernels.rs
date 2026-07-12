@@ -451,8 +451,10 @@ impl PluckVoice {
     pub fn start_electric(midi: u32, f0: f32, vel: f32, sr: f32, seed: u32) -> Self {
         let key = ((midi as f32) - 40.0) / 44.0; // 0 = E2 … 1 = C6
         let t60 = 4.0;
-        // per-pass brightness: gentle at the bottom, nearly lossless loop on top
-        let lp_c = (0.60 + 0.42 * key + 0.06 * vel).clamp(0.35, 0.985);
+        // per-pass brightness: refs lose ~35 dB/s at 1 kHz in the low register
+        // while H2..H5 barely decay — a steep loop corner, key-tracked so the
+        // per-second HF decay stays register-flat (Valimaki et al. 1996 loop fit)
+        let lp_c = (0.42 + 0.50 * key + 0.06 * vel).clamp(0.30, 0.985);
         let lp_delay = (1.0 - lp_c) / lp_c;
         let period = sr / f0;
         let total = (period - lp_delay).max(3.0);
@@ -508,7 +510,7 @@ impl PluckVoice {
         // (flesh-soft ≈ 200 Hz → hard plectrum ≈ 1.6 kHz), matching the NSynth
         // refs where the spectral knee scales with velocity but the cliff stays.
         // pick point at 0.28 of the sounding length (first comb dip ≈ H3.6);
-        // bridge-side 0.13/0.16 measured slightly worse vs the reference set
+        // bridge-side and velocity-tracked variants both measured worse
         let pick_pos = 0.28;
         let mut rng = Lcg(seed | 1);
         // corner is flatter in velocity than energy is (NSynth layers: the knee
