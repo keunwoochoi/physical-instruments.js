@@ -64,8 +64,11 @@ impl Instrument {
 pub fn amp_defaults(inst: Instrument) -> (f32, f32) {
     match inst {
         Instrument::GuitarElectric => (1.6, 1800.0),
-        // high gain: compression holds the note while the string decays >20 dB
-        Instrument::GuitarDistorted => (11.0, 4200.0),
+        // high gain: preamp gain must keep the tanh saturated for seconds so the
+        // note SINGS while the string decays >20 dB (drive 11 fell linear after
+        // ~1 s — a crunch, not a lead channel); tone at 3.4 kHz keeps the
+        // regenerated clip harmonics under the fizz gate
+        Instrument::GuitarDistorted => (45.0, 3400.0),
         _ => (0.0, 0.0),
     }
 }
@@ -1285,11 +1288,11 @@ pub struct ElectricVoice {
     sag_a: f32,
     sag_r: f32,
     sag_k: f32,
-    // Voicing/cab biquad (RBJ lowpass, transposed DF2): the tone-stack + speaker
-    // voicing as the player set it for the register being played. NSynth 022
-    // clean refs hold a TIME-FLAT centroid at ~1.3-1.65×f0 across E1..A2 — the
-    // steady spectrum is circuit-shaped (static filter), not string-shaped, so
-    // the corner key-tracks f0 (player-intent tracking, like lp_c above).
+    // Voicing/cab biquad (RBJ lowpass, transposed DF2): tone-stack + speaker
+    // voicing. A static circuit is fixed-Hz: 550 Hz for the dark clean rig —
+    // it stacks with the bus pickup (1500 Hz) + tone one-pole into the refs'
+    // measured ~−37 dB/oct cliff above 1 kHz, and holds their TIME-FLAT
+    // centroid (spectrum is circuit-shaped, not string-shaped).
     vf_on: bool,
     vf_b0: f32,
     vf_b1: f32,
@@ -1298,6 +1301,17 @@ pub struct ElectricVoice {
     vf_a2: f32,
     vf_z1: f32,
     vf_z2: f32,
+    // Fret-release noise (NSynth bright refs: broadband squeak at note-off,
+    // ~+5 dB over the decayed string, >800 Hz dominant, t60 ≈ 0.15 s, scales
+    // with velocity). Injected ON THE STRING (pre-voicing): the dark clean
+    // voicing suppresses it exactly as the dark 022 refs show no burst, while
+    // bright/distorted voicings pass it.
+    rel_rng: Lcg,
+    rel_amp: f32,
+    rel_c: f32,
+    rel_hp_c: f32,
+    rel_lp: f32,
+    vel: f32,
     level: f32,
     life: u64,
     age: u64,
@@ -1351,6 +1365,12 @@ impl ElectricVoice {
             vf_a2: 0.0,
             vf_z1: 0.0,
             vf_z2: 0.0,
+            rel_rng: Lcg(seed ^ 0x9E37_79B9),
+            rel_amp: 0.0,
+            rel_c: 0.0,
+            rel_hp_c: 0.0,
+            rel_lp: 0.0,
+            vel,
             level: 0.5 * (0.35 + 0.65 * vel),
             life: ((t60 * 1.5) * sr) as u64,
             age: 0,
@@ -1473,6 +1493,14 @@ impl ElectricVoice {
             vf_a2: 0.0,
             vf_z1: 0.0,
             vf_z2: 0.0,
+            rel_rng: Lcg(seed ^ 0x9E37_79B9),
+            rel_amp: 0.0,
+            // burst t60 ≈ 0.15 s (NSynth 028 release transients)
+            rel_c: t60_gain(0.15, sr),
+            // squeak brightness: one-pole HP at ~900 Hz (refs: 83-88% energy > 800 Hz)
+            rel_hp_c: 1.0 - (-core::f32::consts::TAU * 900.0 / sr).exp(),
+            rel_lp: 0.0,
+            vel,
             // Velocity moves loudness far less than timbre on an electric (NSynth
             // layer spread ≈ 5 LU, most of it spectral): keep the level curve
             // shallow and let the pick corner carry the dynamics. Mild key boost
@@ -1488,13 +1516,11 @@ impl ElectricVoice {
         // cliff: this pole + the bus pickup (1500 Hz) + tone one-pole stack to
         // exactly that cliff order. A static circuit is fixed-Hz — the earlier
         // key-tracked corner was wrong (it crushed every harmonic of low notes).
-        // Distorted runs the voicing open (bright pre-drive feed; the cab shaping
-        // for the drive channel lives in the pickup/tone rows + presence work).
-        let vfc = if dist {
-            (f0 * 6.0).clamp(400.0, 0.40 * sr)
-        } else {
-            550.0
-        };
+        // Distorted runs the voicing open at a FIXED 3.2 kHz (bridge-pickup +
+        // presence feed into the drive — a keyed corner choked low power chords
+        // at ~500 Hz and left the channel lifeless; the post-drive cab rolloff
+        // is the bus tone row).
+        let vfc = if dist { 3200.0 } else { 550.0 };
         let wv = core::f32::consts::TAU * vfc / sr;
         let (sv, cv) = wv.sin_cos();
         let alpha = sv / (2.0 * 0.707);
@@ -1577,8 +1603,15 @@ impl ElectricVoice {
                 self.diff_x1 = s;
                 s = d;
             }
+            // fret-release squeak: HP'd noise burst on the string (see fields)
+            if self.rel_amp > 1e-5 {
+                let w = self.rel_rng.next();
+                self.rel_lp += self.rel_hp_c * (w - self.rel_lp);
+                s += (w - self.rel_lp) * self.rel_amp;
+                self.rel_amp *= self.rel_c;
+            }
             let mut u = s * self.level;
-            // voicing/cab biquad (see fields; static per note, key-tracked corner)
+            // voicing/cab biquad (see fields; static per note, fixed-Hz corner)
             if self.vf_on {
                 let y = self.vf_b0 * u + self.vf_z1;
                 self.vf_z1 = self.vf_b1 * u - self.vf_a1 * y + self.vf_z2;
@@ -1614,6 +1647,9 @@ impl ElectricVoice {
             self.loss = t60_gain(0.30, f0);
             self.loss2 = self.loss;
             self.life = self.age + (0.45 * self.sr) as u64;
+            // fret-release squeak: finger-lift friction noise, velocity-scaled
+            // (absolute level — press force, not current string amplitude)
+            self.rel_amp = 0.05 + 0.13 * self.vel;
         } else {
             self.loss = t60_gain(0.07, self.sr);
             self.loss2 = t60_gain(0.07, self.sr);
