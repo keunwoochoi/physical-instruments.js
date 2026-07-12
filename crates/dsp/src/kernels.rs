@@ -3274,19 +3274,24 @@ impl DrumVoice {
                 // initial pitch (membrane tension modulation, Rossing ch. 2)
                 // and a brighter, louder beater click (CC0 kick refs: 30 ms
                 // centroid 306 Hz hard vs 148 Hz soft).
-                // (f_start base, vel span, f_end, sweep s, t60, click base,
+                // (f_end Hz, start ratio vel span, sweep tau s, t60, click base,
                 //  click vel span, click brightness, amp)
-                // De-danced 2026-07-12 (owner: "too electronic / dance music"):
-                // an acoustic kick's pitch drop is a fast transient (~12-15 ms)
-                // over a SMALL range (~1.5-1.7x), not a 909 whoop (3x over 40 ms);
-                // the body is short, the character is beater + shell.
-                let (f0, f0v, f1, sw, t60, ck0, ckv, ckb, amp) = match kit {
-                    KitStyle::Pop => (72.0, 14.0, 48.0, 0.014, 0.22, 0.22, 0.85, 0.55, 0.9),
-                    KitStyle::Rock => (74.0, 16.0, 44.0, 0.015, 0.26, 0.30, 1.10, 0.66, 1.0),
-                    KitStyle::Jazz => (108.0, 14.0, 72.0, 0.012, 0.30, 0.10, 0.50, 0.38, 0.8),
+                // De-danced round 3 (owner r2: "too electronic / dance music"):
+                // tension-modulation pitch shift decays with amplitude SQUARED
+                // (Rossing ch.2 / Fletcher-Rossing membrane nonlinearity), so
+                // the glide is spent in ~2x the envelope rate: tau 5-6.5 ms,
+                // start elevation <= ~1.35x. Measured on the CC0 vl4 kick:
+                // glide ratio 1.28 settling in ~3 ms; vl1 shows none. A 909
+                // whoop (2-3x over 15-40 ms) is exactly the "dance" signature.
+                // f_end: jazz 77 Hz (measured, 18" tuned high); rock 50 Hz
+                // (22" — 44 Hz read as sub-bass/808); pop 54 Hz tight.
+                let (f1, rv, sw, t60, ck0, ckv, ckb, amp) = match kit {
+                    KitStyle::Pop => (54.0, 0.22, 0.006, 0.22, 0.22, 0.85, 0.55, 0.9),
+                    KitStyle::Rock => (50.0, 0.26, 0.0065, 0.26, 0.30, 1.10, 0.66, 1.0),
+                    KitStyle::Jazz => (77.0, 0.18, 0.005, 0.30, 0.10, 0.50, 0.38, 0.8),
                 };
                 v.kind = DrumKind::Kick;
-                v.freq = f0 + f0v * vel;
+                v.freq = f1 * (1.10 + rv * vel);
                 v.freq_end = f1;
                 v.sweep = (-1.0 / (sw * sr)).exp();
                 v.decay = t60_gain(t60, sr);
