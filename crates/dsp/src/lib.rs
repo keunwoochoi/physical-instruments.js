@@ -47,6 +47,27 @@ pub struct TrackBus {
     amp_x1: f32,
     amp_f1: f32,
     tone_lp: f32,
+    // amp gain-ride (kernels::amp_ride_defaults): supply-rail-recovery /
+    // bias-shift compression, pre-drive. env = fast-attack/slow-release |x|
+    // follower; gain slews toward min(cap, (thr/env)^p) — slow rise (rail
+    // recovery), fast fall (sag on a fresh attack). Sub-audio-rate gain by
+    // construction: no extra aliasing, ADAA stage untouched.
+    ride_thr: f32,
+    ride_p: f32,
+    ride_cap: f32,
+    ride_env: f32,
+    ride_g: f32,
+    ride_env_a: f32,
+    ride_env_r: f32,
+    ride_up: f32,
+    ride_dn: f32,
+    // post-drive cab/presence EQ (kernels::amp_post_eq_defaults): two RBJ
+    // peaking biquads after the drive + tone lowpass (clip-generated presence
+    // and the cab's LF chug bump cannot come from pre-clip EQ — r3 rec #1).
+    pe_on: bool,
+    pe_b: [[f32; 3]; 2],
+    pe_a: [[f32; 2]; 2],
+    pe_z: [[f32; 2]; 2],
     // body resonator bank (acoustic instruments): parallel modes + dry path
     body_n: usize,
     body_dry: f32,
@@ -126,6 +147,19 @@ impl Engine {
                 amp_x1: 0.0,
                 amp_f1: 0.0,
                 tone_lp: 0.0,
+                ride_thr: 0.0,
+                ride_p: 0.0,
+                ride_cap: 1.0,
+                ride_env: 0.0,
+                ride_g: 1.0,
+                ride_env_a: 0.0,
+                ride_env_r: 0.0,
+                ride_up: 0.0,
+                ride_dn: 0.0,
+                pe_on: false,
+                pe_b: [[0.0; 3]; 2],
+                pe_a: [[0.0; 2]; 2],
+                pe_z: [[0.0; 2]; 2],
                 body_n: 0,
                 body_dry: 1.0,
                 body_a1: [0.0; MAX_BODY_MODES],
@@ -167,6 +201,39 @@ impl Engine {
             } else {
                 0.0
             };
+            // amp gain-ride (see TrackBus fields / kernels::amp_ride_defaults)
+            let (rthr, rp, rcap, rrec) = kernels::amp_ride_defaults(instrument);
+            t.ride_thr = rthr;
+            t.ride_p = rp;
+            t.ride_cap = rcap;
+            t.ride_env = 0.0;
+            t.ride_g = 1.0;
+            // envelope: 2 ms attack (catch the pick immediately), 120 ms release
+            // (tracks string decays without ripple at the fundamental)
+            t.ride_env_a = 1.0 - (-1.0 / (0.002 * self.sample_rate)).exp();
+            t.ride_env_r = 1.0 - (-1.0 / (0.120 * self.sample_rate)).exp();
+            // gain slew: rail recovery up (per-family seconds), sag down ~3 ms
+            t.ride_up = 1.0 - (-1.0 / (rrec * self.sample_rate)).exp();
+            t.ride_dn = 1.0 - (-1.0 / (0.003 * self.sample_rate)).exp();
+            // post-drive cab/presence peaking EQ (see TrackBus fields)
+            let sections = kernels::amp_post_eq_defaults(instrument);
+            t.pe_on = sections.0 .0 > 0.0;
+            t.pe_z = [[0.0; 2]; 2];
+            for (k, &(f, q, gdb)) in [sections.0, sections.1].iter().enumerate() {
+                if f <= 0.0 {
+                    // identity section
+                    t.pe_b[k] = [1.0, 0.0, 0.0];
+                    t.pe_a[k] = [0.0, 0.0];
+                    continue;
+                }
+                let a = 10f32.powf(gdb / 40.0);
+                let w = core::f32::consts::TAU * f / self.sample_rate;
+                let (sw, cw) = w.sin_cos();
+                let alpha = sw / (2.0 * q);
+                let a0 = 1.0 + alpha / a;
+                t.pe_b[k] = [(1.0 + alpha * a) / a0, (-2.0 * cw) / a0, (1.0 - alpha * a) / a0];
+                t.pe_a[k] = [(-2.0 * cw) / a0, (1.0 - alpha / a) / a0];
+            }
             // body resonator bank (acoustics)
             let sr = self.sample_rate;
             let (dry, modes) = body_defaults(instrument);
@@ -478,6 +545,24 @@ impl Engine {
                     bus.pk_z1 = flush_denormal(bus.pk_z1);
                     bus.pk_z2 = flush_denormal(bus.pk_z2);
                 }
+                // amp gain-ride: supply-rail recovery / bias-shift compression
+                // (see TrackBus fields). Pre-drive so the rising gain re-feeds
+                // the tanh limiter — drive-sustain, the "amplifier factor".
+                if bus.ride_thr > 0.0 {
+                    for i in 0..frames {
+                        let x = self.track_l[i];
+                        let a = x.abs();
+                        let c = if a > bus.ride_env { bus.ride_env_a } else { bus.ride_env_r };
+                        bus.ride_env += c * (a - bus.ride_env);
+                        let t = bus.ride_thr / bus.ride_env.max(1e-5);
+                        let gt = if t > 1.0 { t.powf(bus.ride_p).min(bus.ride_cap) } else { 1.0 };
+                        let cg = if gt < bus.ride_g { bus.ride_dn } else { bus.ride_up };
+                        bus.ride_g += cg * (gt - bus.ride_g);
+                        self.track_l[i] = x * bus.ride_g;
+                    }
+                    bus.ride_env = flush_denormal(bus.ride_env);
+                    // ride_g rests at cap (>= 1), never denormal
+                }
                 // amp stage: ADAA tanh + tone/cab lowpass
                 if bus.drive > 0.0 {
                     let d = bus.drive;
@@ -498,6 +583,23 @@ impl Engine {
                     }
                     bus.amp_x1 = flush_denormal(bus.amp_x1);
                     bus.tone_lp = flush_denormal(bus.tone_lp);
+                }
+                // post-drive cab/presence EQ (see TrackBus fields): transposed
+                // DF2 peaking sections — clip-generated presence + LF cab bump
+                if bus.pe_on {
+                    for k in 0..2 {
+                        let b = bus.pe_b[k];
+                        let a = bus.pe_a[k];
+                        for i in 0..frames {
+                            let x = self.track_l[i];
+                            let y = b[0] * x + bus.pe_z[k][0];
+                            bus.pe_z[k][0] = b[1] * x - a[0] * y + bus.pe_z[k][1];
+                            bus.pe_z[k][1] = b[2] * x - a[1] * y;
+                            self.track_l[i] = y;
+                        }
+                        bus.pe_z[k][0] = flush_denormal(bus.pe_z[k][0]);
+                        bus.pe_z[k][1] = flush_denormal(bus.pe_z[k][1]);
+                    }
                 }
                 // mirror mono chain to both channels at equal power
                 for i in 0..frames {

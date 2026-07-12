@@ -95,6 +95,57 @@ pub fn amp_defaults(inst: Instrument) -> (f32, f32) {
     }
 }
 
+/// Amp gain-ride per instrument: (threshold, exponent p = 1 − 1/R, max gain,
+/// recovery seconds). 0.0 threshold = bypass. The "amplifier factor" (owner
+/// verdict 2026-07-12: notes must remain longer): a tube amp's supply rail sags
+/// under attack current and RECOVERS as the string decays, and bias shift in
+/// the power stage acts the same way — the amp's gain effectively rises
+/// relative to the signal, flattening the envelope so the note sings instead
+/// of dying at the string's own rate (Pakarinen & Yeh, "A Review of Digital
+/// Techniques for Modeling Vacuum-Tube Guitar Amplifiers", CMJ 33(2) 2009:
+/// sag/bias-shift = program-dependent compression). Implemented on the track
+/// bus PRE-drive as an upward-only slow gain ride: unity at attack (velocity
+/// dynamics and pick transients pass untouched — the guard), rising toward
+/// (thr/env)^p as the envelope falls below thr, capped. For the distorted
+/// channel the rising gain re-feeds the ADAA-tanh limiter and extends its
+/// hold the way a cascaded-triode preamp does (single tanh at drive 90 spans
+/// ~35 dB of limiter range; the FreePats refs behave like 60+ dB — measured
+/// t_-3dB 3.6–22.6 s vs our 1.1–3.9 s baseline).
+pub fn amp_ride_defaults(inst: Instrument) -> (f32, f32, f32, f32) {
+    match inst {
+        // clean: ratio 2:1 above the ride knee (p = 0.5), +12 dB cap —
+        // NSynth 022 (deep-sag rig) holds slope_sustain −3.0…−3.4 dB/s where
+        // the raw string gives −8…−13; moderate ratio keeps the 028 rig's
+        // velocity/attack character (owner kept the bright rig, r3).
+        Instrument::GuitarElectric => (0.14, 0.67, 6.0, 0.5),
+        // distorted: ratio 4:1 (p = 0.75), +20 dB cap — the drive-sustain of
+        // a multi-stage preamp; refs hold output within −3 dB for 3.6–8.8 s
+        // (wound strings) and 22 s soft-picked.
+        Instrument::GuitarDistorted => (0.18, 0.75, 10.0, 0.4),
+        _ => (0.0, 0.0, 1.0, 0.1),
+    }
+}
+
+/// Post-drive cab/presence EQ per instrument: two RBJ peaking sections
+/// ((freq Hz, Q, gain dB) × 2), applied on the track bus AFTER the ADAA drive
+/// and tone lowpass. 0.0 freq = bypass. This is r3's filed recommendation #1:
+/// at drive 90 the tanh is a limiter, so no pre-clip EQ survives into the
+/// output spectrum — presence and the cab's LF bump must be POST-clip (r3
+/// measured a pre-drive 60 Hz/Q2 bump NEUTRAL-to-worse). A guitar cab is the
+/// speaker's own response: a strong low resonance bump and a presence edge
+/// before the HF collapse (Zollner ch. 10 speaker curves). Linear stage — no
+/// aliasing, no allocation.
+pub fn amp_post_eq_defaults(inst: Instrument) -> ((f32, f32, f32), (f32, f32, f32)) {
+    match inst {
+        // FreePats dist2 refs, band balance re band max (measured 2026-07-12):
+        // A2/E2 refs put 250 Hz–2.5 kHz at −12…−22 below the 60–250 Hz cab
+        // bump (we sat −4.7…−7.5 — the chug's LF dominance is a cab feature);
+        // the B3 ref keeps 2.5–7.5 kHz presence at −9…−13 (we sat −18…−27).
+        Instrument::GuitarDistorted => ((105.0, 0.9, 9.0), (4800.0, 0.7, 11.0)),
+        _ => ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+    }
+}
+
 /// Magnetic-pickup resonance per instrument: (resonant-lowpass Hz, Q). The RLC
 /// resonance of a real pickup is the core "electric" tone; 0.0 = bypass.
 pub fn pickup_defaults(inst: Instrument) -> (f32, f32) {
