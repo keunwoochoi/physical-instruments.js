@@ -84,12 +84,12 @@ pub enum KitStyle {
 /// on the track bus so simultaneous notes intermodulate like a real amplifier.
 pub fn amp_defaults(inst: Instrument) -> (f32, f32) {
     match inst {
-        Instrument::GuitarElectric => (1.6, 1800.0),
+        Instrument::GuitarElectric => (1.6, 3200.0),
         // high gain: preamp gain must keep the tanh saturated for seconds so the
         // note SINGS while the string decays >20 dB (drive 11 fell linear after
         // ~1 s — a crunch, not a lead channel); tone at 3.4 kHz keeps the
         // regenerated clip harmonics under the fizz gate
-        Instrument::GuitarDistorted => (45.0, 3400.0),
+        Instrument::GuitarDistorted => (90.0, 3400.0),
         _ => (0.0, 0.0),
     }
 }
@@ -101,10 +101,10 @@ pub fn pickup_defaults(inst: Instrument) -> (f32, f32) {
         // NSynth guitar_electronic refs cliff at a pitch-independent ~1.2-1.5 kHz:
         // a heavily loaded pickup + rolled tone pot pulls the RLC resonance down
         // and damps its Q (Zollner, Physics of the Electric Guitar, ch. 5).
-        Instrument::GuitarElectric => (1500.0, 1.2),
+        Instrument::GuitarElectric => (2400.0, 1.8),
         // distorted: vocal mid hump BEFORE the drive (TS-style pre-emphasis; the
         // in-voice differentiator already tightens the lows pre-drive)
-        Instrument::GuitarDistorted => (1600.0, 2.8),
+        Instrument::GuitarDistorted => (1700.0, 3.4),
         _ => (0.0, 0.0),
     }
 }
@@ -222,19 +222,19 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
     match inst {
         Instrument::Marimba => 2.1,       // reference
         Instrument::Vibraphone => 4.9,    // was -30.5 LUFS
-        Instrument::Glockenspiel => 28.0, // was -39.6 LUFS (tiny raw kernel level)
+        Instrument::Glockenspiel => 30.0, // was -39.6 LUFS (tiny raw kernel level)
         Instrument::MusicBox => 14.8,     // was -35.6 LUFS
         Instrument::Guitar => 0.126,       // round-2 re-bake (body refit + release; was -22.1 LUFS at 0.194)
         Instrument::Bass => 0.63,         // round-2 re-bake (DI tilt body)
-        Instrument::EPiano => 1.47,       // was -26.6 LUFS
-        Instrument::Drums => 0.61,        // was -27.4 LUFS
-        Instrument::SynthPad => 0.48,     // was -26.5 LUFS
+        Instrument::EPiano => 1.54,       // was -26.6 LUFS
+        Instrument::Drums => 0.54,        // was -27.4 LUFS
+        Instrument::SynthPad => 0.50,     // was -26.5 LUFS
         Instrument::Piano => 0.084, // piano r2 re-bake (decay-geometry rework)
-        Instrument::GuitarSteel => 0.46,    // acoustics r2 re-bake (HF floor + 16-mode body)
-        Instrument::GuitarElectric => 0.78, // electric r2 re-bake (022 dark voicing)
-        Instrument::GuitarDistorted => 0.23, // electric r2 re-bake (drive 45 lead channel)
-        Instrument::DrumsRock => 0.43,      // measured 2026-07-11 (pyloudnorm -22.6 pre-bake)
-        Instrument::DrumsJazz => 0.59,      // measured 2026-07-11 (pyloudnorm -25.5 pre-bake)
+        Instrument::GuitarSteel => 0.48,    // acoustics r2 re-bake (HF floor + 16-mode body)
+        Instrument::GuitarElectric => 0.34, // electric r2 re-bake (022 dark voicing)
+        Instrument::GuitarDistorted => 0.22, // electric r2 re-bake (drive 45 lead channel)
+        Instrument::DrumsRock => 0.32,      // measured 2026-07-11 (pyloudnorm -22.6 pre-bake)
+        Instrument::DrumsJazz => 0.51,      // measured 2026-07-11 (pyloudnorm -25.5 pre-bake)
     }
 }
 
@@ -2116,7 +2116,7 @@ impl ElectricVoice {
         // of the main amplitude — gives the fast-early/slow-late two-stage decay
         // measured in every NSynth electric ref (t60 0.1–0.4 s ≈ 3.5 s but
         // 0.8–1.8 s ≈ 6–20 s).
-        let t60_slow = if dist { 18.0 } else { 15.0 };
+        let t60_slow = if dist { 18.0 } else { 9.0 };
         let f2 = f0 * 1.000289; // +0.5 cents
         let total2 = (sr / f2 - lp_delay).max(3.0);
         let len2 = ((total2 - 0.5).floor() as usize).clamp(2, PLUCK_BUF - 1);
@@ -2143,11 +2143,9 @@ impl ElectricVoice {
             // tilt back out. Net transfer ≈ displacement → diff off for clean.
             // The distorted channel keeps the velocity tilt (bright bridge
             // pickup feeding the drive is what makes palm-tone chugs cut).
-            diff_g: if dist {
-                1.0 / (2.0 * (core::f32::consts::PI * f0 / sr).sin()).max(1e-3)
-            } else {
-                0.0
-            },
+            // bright-rig clean (owner 2026-07-12: dark 022 voicing read as an
+            // e-piano): velocity-pickup tilt ON for both channels now
+            diff_g: 1.0 / (2.0 * (core::f32::consts::PI * f0 / sr).sin()).max(1e-3),
             diff_x1: 0.0,
             buf2: [0.0; PLUCK_BUF],
             len2,
@@ -2166,7 +2164,7 @@ impl ElectricVoice {
             sag_r: 1.0 - (-1.0 / (0.900 * sr)).exp(),
             // depth: low notes draw more supply current (more stored string energy),
             // so sag scales down the neck — deep on E1, mild at C5
-            sag_k: (if dist { 9.0 } else { 6.0 }) * (1.0 - 0.55 * key.clamp(0.0, 1.0)),
+            sag_k: (if dist { 9.0 } else { 2.0 }) * (1.0 - 0.55 * key.clamp(0.0, 1.0)),
             vf_on: true,
             vf_b0: 0.0,
             vf_b1: 0.0,
@@ -2202,7 +2200,7 @@ impl ElectricVoice {
         // presence feed into the drive — a keyed corner choked low power chords
         // at ~500 Hz and left the channel lifeless; the post-drive cab rolloff
         // is the bus tone row).
-        let vfc = if dist { 3200.0 } else { 550.0 };
+        let vfc = if dist { 3200.0 } else { 2600.0 };
         let wv = core::f32::consts::TAU * vfc / sr;
         let (sv, cv) = wv.sin_cos();
         let alpha = sv / (2.0 * 0.707);
@@ -3278,10 +3276,14 @@ impl DrumVoice {
                 // centroid 306 Hz hard vs 148 Hz soft).
                 // (f_start base, vel span, f_end, sweep s, t60, click base,
                 //  click vel span, click brightness, amp)
+                // De-danced 2026-07-12 (owner: "too electronic / dance music"):
+                // an acoustic kick's pitch drop is a fast transient (~12-15 ms)
+                // over a SMALL range (~1.5-1.7x), not a 909 whoop (3x over 40 ms);
+                // the body is short, the character is beater + shell.
                 let (f0, f0v, f1, sw, t60, ck0, ckv, ckb, amp) = match kit {
-                    KitStyle::Pop => (90.0, 35.0, 45.0, 0.032, 0.30, 0.15, 0.75, 0.55, 0.9),
-                    KitStyle::Rock => (95.0, 45.0, 41.0, 0.040, 0.50, 0.20, 1.00, 0.64, 0.95),
-                    KitStyle::Jazz => (120.0, 40.0, 72.0, 0.028, 0.35, 0.08, 0.45, 0.38, 0.8),
+                    KitStyle::Pop => (72.0, 14.0, 48.0, 0.014, 0.22, 0.22, 0.85, 0.55, 0.9),
+                    KitStyle::Rock => (74.0, 16.0, 44.0, 0.015, 0.26, 0.30, 1.10, 0.66, 1.0),
+                    KitStyle::Jazz => (108.0, 14.0, 72.0, 0.012, 0.30, 0.10, 0.50, 0.38, 0.8),
                 };
                 v.kind = DrumKind::Kick;
                 v.freq = f0 + f0v * vel;
@@ -3296,9 +3298,9 @@ impl DrumVoice {
                 // (soft felt strokes barely knock; hard strokes do — refs:
                 // slap band −2.4 dB rel at vl4, −12.4 dB at vl1)
                 let (sf, sa) = match kit {
-                    KitStyle::Pop => (620.0, 1.7),
-                    KitStyle::Rock => (540.0, 2.4),
-                    KitStyle::Jazz => (700.0, 1.5),
+                    KitStyle::Pop => (620.0, 2.0),
+                    KitStyle::Rock => (540.0, 3.2),
+                    KitStyle::Jazz => (700.0, 1.6),
                 };
                 let r = t60_gain(0.060, sr);
                 let w = core::f32::consts::TAU * sf / sr;
@@ -3308,6 +3310,22 @@ impl DrumVoice {
                 let phi = core::f32::consts::PI * Lcg(seed ^ 0x51a9 | 1).next();
                 v.sl_y1 = a * (phi - w).sin();
                 v.sl_y2 = a * (phi - 2.0 * w).sin();
+                // membrane overtone + shell knock: a real head is not a sine —
+                // fast inharmonic partial (~1.58x) and a wood knock (~3.4x)
+                v.has_modal = true;
+                v.modal = ModalVoice::start(
+                    f1,
+                    vel,
+                    sr,
+                    &[
+                        ModeDef { ratio: 1.58, amp: 0.5, t60: 0.055 },
+                        ModeDef { ratio: 3.4, amp: 0.28, t60: 0.035 },
+                    ],
+                    0.6,
+                    0.0,
+                    0.0,
+                    seed ^ 0x6b1c,
+                );
             }
             38 | 40 => {
                 // Snare, kit-voiced: shell fundamental + coupled-head partials
@@ -3320,9 +3338,10 @@ impl DrumVoice {
                 // wires get a level floor, the modal shell scales with vel.
                 // (shell Hz, decay, hp_c, noise base, noise vel span,
                 //  modal gain, life s)
+                // rock row hardened 2026-07-12 (owner: "too weak")
                 let (shell, dec, hpc, n0, nv, mg, life) = match kit {
                     KitStyle::Pop => (186.0, 0.14, 0.40, 0.30, 0.60, 0.40, 0.32),
-                    KitStyle::Rock => (158.0, 0.22, 0.24, 0.33, 0.62, 0.55, 0.42),
+                    KitStyle::Rock => (158.0, 0.24, 0.26, 0.44, 0.74, 0.85, 0.44),
                     KitStyle::Jazz => (214.0, 0.20, 0.32, 0.24, 0.55, 0.60, 0.40),
                 };
                 v.decay = t60_gain(dec, sr);
@@ -3331,7 +3350,7 @@ impl DrumVoice {
                 // modal excitation — not in v.amp, or the wires pick up a
                 // second vel factor and soft hits lose their relative wire
                 // brightness (the CC0 soft snare is wire-forward)
-                v.amp = 0.95;
+                v.amp = if matches!(kit, KitStyle::Rock) { 1.25 } else { 0.95 };
                 v.noise_amt = n0 + nv * vel;
                 v.has_modal = true;
                 let dl = dec / 0.14; // shell ring scales with the kit's looseness

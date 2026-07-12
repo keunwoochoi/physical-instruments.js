@@ -77,13 +77,19 @@ fn ln_cosh(x: f32) -> f32 {
     a + (1.0 + (-2.0 * a).exp()).ln() - core::f32::consts::LN_2
 }
 
+/// Global output anchor. The per-family makeup table normalizes families to EQUAL
+/// loudness; this constant sets how loud that equal level IS. +5 dB over the
+/// original marimba-derived anchor (Keunwoo 2026-07-12: "overall too low volume") —
+/// single notes land ~-21 LUFS, leaving master-limiter headroom for arrangements.
+const MASTER_LEVEL: f32 = 1.78;
+
 impl TrackBus {
     fn targets(&self) -> (f32, f32) {
         let th = (self.pan.clamp(-1.0, 1.0) + 1.0) * core::f32::consts::FRAC_PI_4;
         // measured per-family loudness normalization (kernels::makeup_gain);
         // sqrt(2) compensates the equal-power per-voice spread so a centered voice
         // on a centered track lands at exactly the pre-stereo level
-        let g = self.gain * makeup_gain(self.instrument) * core::f32::consts::SQRT_2;
+        let g = self.gain * makeup_gain(self.instrument) * MASTER_LEVEL * core::f32::consts::SQRT_2;
         (g * th.cos(), g * th.sin())
     }
 }

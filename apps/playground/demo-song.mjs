@@ -158,14 +158,14 @@ export const DEMO_SONG_SECONDS = 8 * BAR;
  *  harness so both hear the same balance (gains are musical choices; loudness
  *  parity across families is already handled by the engine's measured makeup). */
 export const DEMO_MIX = {
-  piano: { gain: 0.62, pan: 0.25 },
-  bass: { gain: 0.66, pan: 0.0 },
-  marimba: { gain: 0.62, pan: -0.25 },
-  glockenspiel: { gain: 0.45, pan: 0.35 },
-  percussion: { gain: 0.58, pan: 0.1 },
-  drums: { gain: 0.58, pan: 0.1 },
-  strings: { gain: 0.42, pan: -0.15 },
-  "guitar-steel": { gain: 0.52, pan: -0.4 },
-  "guitar-electric": { gain: 0.52, pan: 0.45 },
-  "guitar-distorted": { gain: 0.56, pan: -0.1 },
+  piano: { gain: 0.43, pan: 0.25 },
+  bass: { gain: 0.46, pan: 0.0 },
+  marimba: { gain: 0.43, pan: -0.25 },
+  glockenspiel: { gain: 0.32, pan: 0.35 },
+  percussion: { gain: 0.41, pan: 0.1 },
+  drums: { gain: 0.41, pan: 0.1 },
+  strings: { gain: 0.29, pan: -0.15 },
+  "guitar-steel": { gain: 0.36, pan: -0.4 },
+  "guitar-electric": { gain: 0.36, pan: 0.45 },
+  "guitar-distorted": { gain: 0.39, pan: -0.1 },
 };
