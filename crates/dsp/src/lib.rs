@@ -233,6 +233,10 @@ impl Engine {
                 | Instrument::Bass
                 | Instrument::SynthPad
                 | Instrument::Piano
+                // electrics: fretted strings damp on release (NSynth refs decay at
+                // t60 ≈ 0.3 s after note-off; see PluckVoice::damp electric branch)
+                | Instrument::GuitarElectric
+                | Instrument::GuitarDistorted
         );
         if !damps {
             return;
@@ -543,19 +547,34 @@ mod tests {
     fn estimate_pitch(x: &[f32], sr: f32, lo: f32, hi: f32) -> f32 {
         let min_lag = (sr / hi) as usize;
         let max_lag = ((sr / lo) as usize).min(x.len() / 2);
-        let mut best_lag = min_lag;
         let mut best = f32::NEG_INFINITY;
         let n = x.len() - max_lag;
         let energy: f32 = x[..n].iter().map(|s| s * s).sum::<f32>().max(1e-12);
+        let mut scores = Vec::with_capacity(max_lag - min_lag + 1);
         for lag in min_lag..=max_lag {
             let mut acc = 0.0f32;
             for i in 0..n {
                 acc += x[i] * x[i + lag];
             }
             let score = acc / energy;
+            scores.push(score);
             if score > best {
                 best = score;
-                best_lag = lag;
+            }
+        }
+        // Octave-error guard: a periodic signal scores ~equally at T and 2T, and
+        // slow beating (detuned string pairs) can nudge 2T above T. Take the
+        // smallest-lag LOCAL MAXIMUM within 7% of the global best (standard ACF
+        // practice); fall back to the global max if none qualifies.
+        let mut best_lag = min_lag
+            + scores
+                .iter()
+                .position(|&s| s >= best)
+                .unwrap_or(0);
+        for (i, &s) in scores.iter().enumerate().skip(1).take(scores.len().saturating_sub(2)) {
+            if s >= 0.93 * best && s >= scores[i - 1] && s >= scores[i + 1] {
+                best_lag = min_lag + i;
+                break;
             }
         }
         // parabolic interpolation for sub-sample lag
@@ -709,19 +728,25 @@ mod tests {
 
     #[test]
     fn electric_guitars_stay_in_tune_through_the_amp() {
-        // the amp stage is an odd monotonic shaper — pitch must survive it
-        for inst in [Instrument::GuitarSteel, Instrument::GuitarElectric, Instrument::GuitarDistorted] {
-            let mut e = Engine::new(48_000.0);
-            e.set_track(0, inst, 0.8, 0.0);
-            e.note_on(0, 57, 0.8); // A3
-            let out = render_seconds(&mut e, 0.7);
-            let tail = &out[(0.3 * 48_000.0) as usize..(0.6 * 48_000.0) as usize];
-            let f_est = estimate_pitch(tail, 48_000.0, 100.0, 500.0);
-            assert!(out.iter().all(|s| s.is_finite()));
-            assert!(
-                (f_est - 220.0).abs() < 220.0 * 0.02,
-                "{inst:?}: estimated {f_est} Hz, want 220"
-            );
+        // the amp stage is an odd monotonic shaper — pitch must survive it.
+        // Both sample rates: the electric voice has its own delay math (two
+        // polarization loops + loop-lowpass compensation) and iOS locks 44.1 kHz.
+        for sr in [44_100.0f32, 48_000.0f32] {
+            for inst in
+                [Instrument::GuitarSteel, Instrument::GuitarElectric, Instrument::GuitarDistorted]
+            {
+                let mut e = Engine::new(sr);
+                e.set_track(0, inst, 0.8, 0.0);
+                e.note_on(0, 57, 0.8); // A3
+                let out = render_seconds(&mut e, 0.7);
+                let tail = &out[(0.3 * sr) as usize..(0.6 * sr) as usize];
+                let f_est = estimate_pitch(tail, sr, 100.0, 500.0);
+                assert!(out.iter().all(|s| s.is_finite()));
+                assert!(
+                    (f_est - 220.0).abs() < 220.0 * 0.02,
+                    "{inst:?} sr={sr}: estimated {f_est} Hz, want 220"
+                );
+            }
         }
     }
 
@@ -736,7 +761,11 @@ mod tests {
         let out = render_seconds(&mut e, 1.0);
         let peak = out.iter().fold(0.0f32, |a, &s| a.max(s.abs()));
         assert!(out.iter().all(|s| s.is_finite()), "NaN through the amp");
-        assert!(peak > 0.05 && peak <= 1.0, "distorted chord peak={peak}");
+        // 0.035 floor: since the 2026-07-11 LUFS recalibration the distorted bus
+        // sits at marimba loudness (-26 LUFS); a sustained saturated signal at
+        // that loudness peaks near 0.05 at gain 0.8 — the old 0.05 floor encoded
+        // the earlier, 8-LU-hot calibration.
+        assert!(peak > 0.035 && peak <= 1.0, "distorted chord peak={peak}");
         let late = &out[(0.9 * 48_000.0) as usize..];
         let sustain = late.iter().fold(0.0f32, |a, &s| a.max(s.abs()));
         assert!(sustain > 0.02, "distorted guitar should sing: {sustain}");
