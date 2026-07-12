@@ -3332,11 +3332,22 @@ impl DrumVoice {
                     KitStyle::Rock => (540.0, 3.2),
                     KitStyle::Jazz => (700.0, 1.6),
                 };
-                let r = t60_gain(0.060, sr);
+                // "openness": undamped heads keep their overtone band ringing
+                // (refs: 400–1500 Hz t60 0.6–0.9 s on the open jazz kick);
+                // pillow-muffled rock/pop kicks choke it within ~100 ms
+                let open = match kit {
+                    KitStyle::Pop => 1.6,
+                    KitStyle::Rock => 1.4,
+                    KitStyle::Jazz => 6.0,
+                };
+                let r = t60_gain(0.060 * open, sr);
                 let w = core::f32::consts::TAU * sf / sr;
                 v.sl_a1 = 2.0 * r * w.cos();
                 v.sl_r2 = r * r;
-                let a = sa * vel.powf(1.05);
+                // √open normalization: longer ring at the same strike amplitude
+                // would inflate the 30 ms attack-window energy (it4 overshoot:
+                // jazz slap band went +10 dB); keep window level, extend ring
+                let a = sa * vel.powf(1.05) / (open / 1.6f32).sqrt();
                 let phi = core::f32::consts::PI * Lcg(seed ^ 0x51a9 | 1).next();
                 v.sl_y1 = a * (phi - w).sin();
                 v.sl_y2 = a * (phi - 2.0 * w).sin();
@@ -3349,8 +3360,16 @@ impl DrumVoice {
                     sr,
                     &[
                         ModeDef { ratio: 1.04, amp: ring_amp, t60: ring_t60 },
-                        ModeDef { ratio: 1.58, amp: 0.5, t60: 0.055 },
-                        ModeDef { ratio: 3.4, amp: 0.28, t60: 0.035 },
+                        ModeDef {
+                            ratio: 1.58,
+                            amp: 0.5 / (open / 1.6f32).sqrt(),
+                            t60: 0.055 * open,
+                        },
+                        ModeDef {
+                            ratio: 3.4,
+                            amp: 0.28 / (open / 1.6f32).sqrt(),
+                            t60: 0.035 * open,
+                        },
                     ],
                     // impulse-style charge (longer pulses pump the LF ring mode
                     // ~7 dB hot and darken the attack — measured it3 regression)
