@@ -246,13 +246,13 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
         Instrument::Vibraphone => 4.9,    // was -30.5 LUFS
         Instrument::Glockenspiel => 30.0, // was -39.6 LUFS (tiny raw kernel level)
         Instrument::MusicBox => 14.8,     // was -35.6 LUFS
-        Instrument::Guitar => 0.151,       // guitar r3 re-bake (radiation chain; was -27.4 LUFS at 0.126)
+        Instrument::Guitar => 0.181,       // body-round re-bake (Q'd body bank + release ring; was -22.4 at 0.151)
         Instrument::Bass => 0.63,         // round-2 re-bake (DI tilt body)
         Instrument::EPiano => 1.54,       // was -26.6 LUFS
         Instrument::Drums => 0.59,        // kick round re-bake (pop kick unchanged; family drifted -21.3)
         Instrument::SynthPad => 0.50,     // was -26.5 LUFS
         Instrument::Piano => 0.066, // P1 per-key calibration re-bake (per-key LUFS trims raised the mid; was -14.9 LUFS at 0.130, x0.51 per measure-loudness)
-        Instrument::GuitarSteel => 0.362,   // re-bake after onset-impulse fix (the impulse carried 4.6 LU of K-weighted loudness)
+        Instrument::GuitarSteel => 0.387,   // body-round re-bake (A0/thump + release ring; was -21.4 at 0.362)
         Instrument::GuitarElectric => 0.41, // electric r3 re-bake (bright-028 rig, pyloudnorm -22.5 pre-bake)
         Instrument::GuitarDistorted => 0.21, // electric r3 re-bake (drive-90 lead, tone 5.5k)
         Instrument::DrumsRock => 0.35,      // kick round re-bake (beater-transient kick, x0.93)
