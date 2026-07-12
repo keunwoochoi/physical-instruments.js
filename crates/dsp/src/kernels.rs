@@ -192,8 +192,8 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
         Instrument::GuitarSteel => 0.50,    // acoustic agent re-bake
         Instrument::GuitarElectric => 0.73, // electric agent re-measure
         Instrument::GuitarDistorted => 0.21, // electric agent re-measure (high gain)
-        Instrument::DrumsRock => 0.61,      // kit round-2 re-measure (pyloudnorm, vs Drums)
-        Instrument::DrumsJazz => 0.61,      // kit round-2 re-measure (pyloudnorm, vs Drums)
+        Instrument::DrumsRock => 0.43,      // measured 2026-07-11 (pyloudnorm -22.6 pre-bake)
+        Instrument::DrumsJazz => 0.59,      // measured 2026-07-11 (pyloudnorm -25.5 pre-bake)
     }
 }
 
@@ -3067,7 +3067,7 @@ mod cymbal_tests {
     #[test]
     fn cymbals_finite_bounded_and_terminate_at_both_rates() {
         for &sr in &[44100.0f32, 48000.0] {
-            for &gm in &[42u32, 44, 46, 49, 51, 57, 59] {
+            for &gm in &[42u32, 44, 46, 49, 51, 53, 55, 57, 59] {
                 let out = render_drum(gm, 1.0, sr);
                 for (i, &s) in out.iter().enumerate() {
                     assert!(s.is_finite(), "GM {gm} sr {sr}: non-finite at {i}");
@@ -3079,7 +3079,7 @@ mod cymbal_tests {
 
     #[test]
     fn cymbal_velocity_is_monotonic() {
-        for &gm in &[42u32, 46, 49, 51] {
+        for &gm in &[42u32, 46, 49, 51, 53, 55] {
             let soft = rms(&render_drum(gm, 0.3, 48000.0));
             let hard = rms(&render_drum(gm, 1.0, 48000.0));
             assert!(
