@@ -7,6 +7,7 @@ masking, standardized auditions. Owner-approved.)
 
 ## Environment
 
+- Install the pinned metric environment with `python3 -m pip install -r scripts/dev/requirements-loop.txt`; never compare reports produced by an unrecorded dependency set.
 - Reference WAVs live under the session scratchpad `references/<family>/` (or
   `references/<corpus>/`). Check `evals/reference-manifest.json` for each corpus's
   known limitations (sr ceiling, level normalization, release gates) BEFORE
@@ -33,10 +34,7 @@ python3 scripts/dev/compare.py /path/render.wav <reference.wav>
    tuned AND held-out; a held-out regression is acceptable ONLY with a
    structural-axis justification (name the axes that improved and why the
    composite disagrees).
-2. **Check `gates` FIRST.** A red gate (onset crest above the ref's, near-full-scale
-   sample flips, ultrasonic energy, DC) means every spectral distance in that
-   report is UNTRUSTED — inspect the waveform, fix the artifact, only then read
-   the distances. Never accept an iteration with a red gate.
+2. **Check `interpretation` and `gates` FIRST.** `interpretation: untrusted` or a red gate (onset crest above the reference, near-full-scale sample flips, ultrasonic energy, or DC) means every spectral distance in that report is untrusted; inspect the waveform, fix the artifact, and only then read the distances. Never accept an iteration with a red gate.
 3. Headline metric: `mr_stft.mean` (multi-resolution, K-weighted, onset-aligned).
    `logmel_dist` axes remain for attack/mid/tail decomposition. Read ALL axes:
    centroid trajectory, envelope (time-to-peak, t60s), partials
@@ -56,7 +54,8 @@ python3 scripts/dev/compare.py /path/render.wav <reference.wav>
 
 ## Standing gates (every iteration, not just at the end)
 
-- compare.py `gates.all_pass` true on every kept iteration's renders.
+- `schema_version`, `metric_version`, input SHA-256 values, runtime versions, resolved configuration, and preprocessing operations are present in every archived report. Pre-L1 `mr_stft` values are not comparable to metric version `2026.07.12-l1`.
+- compare.py `interpretation == "trusted"`, `gates.trusted == true`, and `gates.all_pass == true` on every kept iteration's renders.
 - **Crest conformance** (pluck/strike families): onset crest within +6 dB of the
   reference's, and the velocity trend must match (refs: pp attack ≪ body).
 - Loudness: re-bake your family's `makeup_gain` row with pyloudnorm
@@ -78,6 +77,7 @@ python3 scripts/dev/compare.py /path/render.wav <reference.wav>
 - Know your corpus's blind spots (manifest!): a 16 kHz corpus cannot police
   anything above 8 kHz — the ultrasonic gate is your only guard there; trust it.
 - Renders float32 ONLY (int16 flattered decay tails once).
+- Run `npm run audit:loop` before publishing iteration evidence; the versioned schema and equation-owned golden reports must remain unchanged unless the PR explicitly changes metric semantics and bumps the metric version.
 - Commit your work in the worktree in small, well-messaged commits.
 
 ## Final report (your last message — it is the deliverable)

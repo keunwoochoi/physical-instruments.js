@@ -34,6 +34,7 @@ not black-box curve fitting. This loop was not possible before frontier LLMs; us
 ## Hard rules
 - Measurement tools get the same rigor as the DSP (windowing, no decimation ghosts —
   see decision log 2026-07-11: a broken centroid metric nearly caused a wrong re-tune).
+- Archive only schema-valid reports with their metric version, input digests, resolved configuration, and preprocessing operations; never compare scores across metric versions without an explicit migration report.
 - Every equation change cites its source or states its physical derivation.
 - Tuning/stability tests (`cargo test`) must stay green every iteration.
 - Never overfit to one reference: hold out at least one velocity/register per axis.
