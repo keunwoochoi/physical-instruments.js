@@ -43,19 +43,9 @@
     #pads button { padding: 1.4rem 0.5rem; font-size: 0.9rem; }
     #status { font-size: 0.8rem; opacity: 0.6; min-height: 1.2em; font-variant-numeric: tabular-nums; }
     .foot { margin-top: 1.6rem; font-size: 0.8rem; opacity: 0.6; line-height: 1.5; }
-    #overlay {
-      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-      background: light-dark(#faf7f2ee, #191512ee); z-index: 10; flex-direction: column; gap: 1rem;
-    }
-    #overlay button { font-size: 1.3rem; padding: 1.1rem 2.6rem; }
   </style>
 </head>
 <body>
-  <div id="overlay">
-    <button class="primary" id="start">▶ Start audio</button>
-    <div class="sub">one tap unlocks the AudioContext (hello, iOS)</div>
-  </div>
-
   <h1>instruments.js <span class="badge" id="size-badge">…</span></h1>
   <p class="sub">Physical-modeled instruments in your browser. No samples were harmed — none exist.</p>
 
@@ -76,21 +66,33 @@
   <div class="row">
     <label>Instrument
       <select id="inst">
-        <option value="piano" selected>Piano (acoustic)</option>
-        <option value="marimba">Marimba</option>
-        <option value="vibraphone">Vibraphone</option>
-        <option value="glockenspiel">Glockenspiel</option>
-        <option value="musicbox">Music box</option>
-        <option value="guitar">Acoustic guitar (nylon)</option>
-        <option value="guitar-steel">Acoustic guitar (steel)</option>
-        <option value="guitar-electric">Electric guitar (clean)</option>
-        <option value="guitar-distorted">Electric guitar (distorted)</option>
-        <option value="bass">Bass</option>
-        <option value="epiano">Electric piano</option>
-        <option value="synthpad">Synth pad</option>
-        <option value="drums">Drum kit (pop)</option>
-        <option value="drums-rock">Drum kit (rock)</option>
-        <option value="drums-jazz">Drum kit (jazz)</option>
+        <optgroup label="Keys">
+          <option value="piano" selected>Piano (acoustic)</option>
+          <option value="epiano">Electric piano</option>
+        </optgroup>
+        <optgroup label="Guitars">
+          <option value="guitar">Acoustic guitar (nylon)</option>
+          <option value="guitar-steel">Acoustic guitar (steel)</option>
+          <option value="guitar-electric">Electric guitar (clean)</option>
+          <option value="guitar-distorted">Electric guitar (distorted)</option>
+        </optgroup>
+        <optgroup label="Bass">
+          <option value="bass">Electric bass guitar</option>
+        </optgroup>
+        <optgroup label="Drums">
+          <option value="drums">Drum kit (pop)</option>
+          <option value="drums-rock">Drum kit (rock)</option>
+          <option value="drums-jazz">Drum kit (jazz)</option>
+        </optgroup>
+        <optgroup label="Mallets &amp; bells">
+          <option value="marimba">Marimba</option>
+          <option value="vibraphone">Vibraphone</option>
+          <option value="glockenspiel">Glockenspiel</option>
+          <option value="musicbox">Music box</option>
+        </optgroup>
+        <optgroup label="Synth">
+          <option value="synthpad">Synth pad</option>
+        </optgroup>
       </select>
     </label>
     <label>Velocity <input type="range" id="vel" min="10" max="127" value="96" /></label>
@@ -137,8 +139,7 @@
       return tracks.get(name);
     }
 
-    $("start").addEventListener("click", async () => {
-      $("overlay").remove();
+    (async () => {
       status("compiling WASM…");
       try {
         engine = await createEngine();
@@ -152,7 +153,7 @@
         status(`engine failed: ${err.message}`, true); // loud on failure
         throw err;
       }
-    });
+    })(); // engine at load; the first key press is the gesture that resumes the context (core resumeIfNeeded)
 
     // ---------- keyboard ----------
     const KEYS = "zsxdcvgbhnjm,q2w3er5t6y7u"; // C3..C5-ish chromatic run across two rows
