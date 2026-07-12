@@ -37,6 +37,7 @@ The permissive license is part of the product. This file is the single owner of 
 | virtuosity-drums (github.com/studiorack/virtuosity-drums) | CC0-1.0 (verified) | ride + hi-hat measurement targets for the cymbal engine (scratchpad only) | not committed; CC0 = no attribution required (provenance kept anyway) |
 | VSCO-2-CE (github.com/sgossner/VSCO-2-CE) | CC0-1.0 (verified) | crash measurement target + Upright Piano 44.1 kHz refs (Player_dyn{1,2,3}_rr1_{006,014,026}.wav → A1/C♯3/C♯5, piano round-2 full-band checks; scratchpad only) | not committed |
 | Salamander Grand Piano (Alexander Holm, via tonejs.github.io mirror) | CC-BY-3.0 | per-key piano calibration references — inharmonicity/decay ladders (scratchpad only) | not committed; attribute if references ever ship |
+| FreePats FSBS Electric Guitar bridge dist2 (freepats.zenvoid.org/ElectricGuitar, EGuitarFSBS-bridge-dist2-SFZ+FLAC-20220911.7z) | CC0-1.0 (verified: cc0.txt in archive + page statement, fetched 2026-07-12) | distorted lead-channel references — sustain envelope, band balance, 2.5–7.5 kHz flatness targets (electrics round 3; scratchpad only) | not committed; CC0 = no attribution required (provenance kept anyway) |
 
 ## Port ledger
 
