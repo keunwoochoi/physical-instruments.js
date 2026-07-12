@@ -15,7 +15,9 @@ const GROUP = {
   "guitar-steel": 10, "guitar-electric": 11, "guitar-distorted": 12,
 };
 
-const [family, midiS, velS, durS, out, totalS, srS] = process.argv.slice(2);
+const args = process.argv.slice(2).filter((a) => a !== "--float32");
+const FLOAT = process.argv.includes("--float32");
+const [family, midiS, velS, durS, out, totalS, srS] = args;
 if (!out) {
   console.error("usage: render-note.mjs <family> <midi> <vel1-127> <noteSec> <out.wav> [totalSec] [sr]");
   process.exit(2);
@@ -43,12 +45,16 @@ for (let f = 0; f < total; f += Q) {
   x.ij_process(p, n);
   mono.set(new Float32Array(x.memory.buffer, lPtr, n), f);
 }
-const b = Buffer.alloc(44 + total * 2);
-b.write("RIFF", 0); b.writeUInt32LE(36 + total * 2, 4); b.write("WAVE", 8);
-b.write("fmt ", 12); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22);
-b.writeUInt32LE(SR, 24); b.writeUInt32LE(SR * 2, 28); b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34);
-b.write("data", 36); b.writeUInt32LE(total * 2, 40);
-for (let i = 0; i < total; i++) b.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(mono[i] * 32767))), 44 + i * 2);
+const bytes = FLOAT ? 4 : 2;
+const b = Buffer.alloc(44 + total * bytes);
+b.write("RIFF", 0); b.writeUInt32LE(36 + total * bytes, 4); b.write("WAVE", 8);
+b.write("fmt ", 12); b.writeUInt32LE(16, 16); b.writeUInt16LE(FLOAT ? 3 : 1, 20); b.writeUInt16LE(1, 22);
+b.writeUInt32LE(SR, 24); b.writeUInt32LE(SR * bytes, 28); b.writeUInt16LE(bytes, 32); b.writeUInt16LE(bytes * 8, 34);
+b.write("data", 36); b.writeUInt32LE(total * bytes, 40);
+for (let i = 0; i < total; i++) {
+  if (FLOAT) b.writeFloatLE(mono[i], 44 + i * 4);
+  else b.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(mono[i] * 32767))), 44 + i * 2);
+}
 await writeFile(out, b);
 let peak = 0;
 for (const s of mono) peak = Math.max(peak, Math.abs(s));

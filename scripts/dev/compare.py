@@ -96,7 +96,7 @@ def envelope_stats(x, sr):
     db = 20 * np.log10(env + 1e-9)
     def t60(t0, t1):
         i0, i1 = int(t0 / 0.05), int(t1 / 0.05)
-        if i1 >= len(db) or db[i0] <= db[i1] + 0.5:
+        if i0 >= len(db) or i1 >= len(db) or db[i0] <= db[i1] + 0.5:
             return None
         rate = (db[i0] - db[i1]) / (t1 - t0)
         return round(60 / rate, 2) if rate > 0.1 else None
@@ -130,6 +130,27 @@ def partials(x, sr, t0=0.25, dur=0.5, top=12):
     return [(f, round(20 * np.log10(m / ref + 1e-12), 1)) for f, m in sorted(out)]
 
 
+def partial_decay(x, sr, top=6):
+    """Per-partial decay rates (dB/s) via heterodyne envelopes of the strongest
+    early partials — the sharpest decay diagnostic (fleet round 1 lesson)."""
+    peaks = partials(x, sr, t0=0.08, dur=0.25, top=top)
+    out = []
+    for f, _ in peaks:
+        t_axis = np.arange(len(x)) / sr
+        osc = np.exp(-2j * np.pi * f * t_axis)
+        prod = x * osc
+        hop = int(0.05 * sr)
+        n = len(prod) // hop
+        if n < 8:
+            return out
+        env = np.abs(prod[: n * hop].reshape(n, hop).mean(axis=1))
+        db = 20 * np.log10(env + 1e-9)
+        i0, i1 = 3, min(n - 1, 20)
+        rate = (db[i0] - db[i1]) / ((i1 - i0) * 0.05)
+        out.append((round(f, 1), round(float(rate), 1)))
+    return out
+
+
 def main():
     render_path, ref_path = sys.argv[1], sys.argv[2]
     xr, sr_r = load_mono(render_path)
@@ -149,6 +170,10 @@ def main():
     d = np.abs(mr - mf)
     thirds = np.array_split(d, 3)
     report = {
+        "partial_decay_dbps": {
+            "render": partial_decay(xr, sr),
+            "reference": partial_decay(xf, sr),
+        },
         "sr": sr,
         "seconds": round(n / sr, 2),
         "lufs": {"render": round(l_r, 1), "reference": round(l_f, 1), "delta": round(l_r - l_f, 1)},
