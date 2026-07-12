@@ -149,6 +149,20 @@ pub fn body_defaults(inst: Instrument) -> (f32, &'static [(f32, f32, f32)]) {
                 (3600.0, 0.045, 1.2712), // P=1.4
             ],
         ),
+        // Bass (NSynth bass_electronic refs): gentle DI tone tilt — low modes
+        // reinforce 40–500 Hz ~+6 dB over the dry path, so the sustained
+        // 700–1500 Hz sits ~−6 dB relative (mel-error profile 2026-07-11:
+        // only mild +2–3 excess patches; a steep cab rolloff over-corrected).
+        Instrument::Bass => (
+            0.5,
+            &[
+                (45.0, 0.090, 0.0059),
+                (100.0, 0.080, 0.0144),
+                (180.0, 0.070, 0.0236),
+                (300.0, 0.060, 0.0298),
+                (480.0, 0.050, 0.0276),
+            ],
+        ),
         // piano: soundboard low-mode ladder (broad, subtle — per-voice knock stays)
         Instrument::Piano => (
             0.75,
@@ -181,13 +195,13 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
         Instrument::Vibraphone => 4.9,    // was -30.5 LUFS
         Instrument::Glockenspiel => 28.0, // was -39.6 LUFS (tiny raw kernel level)
         Instrument::MusicBox => 14.8,     // was -35.6 LUFS
-        Instrument::Guitar => 0.194,       // re-baked 2026-07-11 (acoustic rework ran -13.3 LUFS at 0.85)
-        Instrument::Bass => 0.66,         // was -25.3 LUFS
+        Instrument::Guitar => 0.126,       // round-2 re-bake (body refit + release; was -22.1 LUFS at 0.194)
+        Instrument::Bass => 0.63,         // round-2 re-bake (DI tilt body)
         Instrument::EPiano => 1.47,       // was -26.6 LUFS
         Instrument::Drums => 0.61,        // was -27.4 LUFS
         Instrument::SynthPad => 0.48,     // was -26.5 LUFS
         Instrument::Piano => 0.067, // piano agent re-measure (v4 knock/level rework)
-        Instrument::GuitarSteel => 0.50,    // acoustic agent re-bake
+        Instrument::GuitarSteel => 0.46,    // round-2 re-bake (HF floor + 16-mode body)
         Instrument::GuitarElectric => 0.73, // electric agent re-measure
         Instrument::GuitarDistorted => 0.21, // electric agent re-measure (high gain)
     }
@@ -546,8 +560,11 @@ fn allpass_delay(a: f32, w: f32) -> f32 {
     -(th_n - th_d) / w
 }
 
-/// Max first-order stages in the stiffness-dispersion cascade.
-pub const MAX_DISP: usize = 8;
+/// Max first-order stages in the stiffness-dispersion cascade. 6 keeps the
+/// 8-voice steel render inside the µs budget; the solver still anchors the
+/// stretch exactly at n*, at the cost of a few cents of shape residual
+/// between anchors (verified by the h5/h10 stretch tests).
+pub const MAX_DISP: usize = 6;
 
 /// Solve a stiffness-dispersion cascade for inharmonicity `b` at `f0`:
 /// returns (stages M, pole p). M identical first-order allpasses with pole at
@@ -647,16 +664,31 @@ fn load_carrier(
     let srf = sr as f64;
     for n in 1..=n_syn {
         let nn = n as f32;
-        // exact mode frequency and total loop phase delay at it
+        // exact mode frequency and total loop phase delay at it. Two fixed-point
+        // iterations with the trig SHARED between the blend/allpass delay math:
+        // wasm transcendentals are software floats, and the original 4×helper
+        // version cost ~2 ms per note-on voice (measured, 8-chord = 15.7 ms).
         let mut f = nn * f0 * (1.0 + 0.5 * stiff_b * nn * nn);
         let mut ptot = len as f32 + frac;
-        for _ in 0..4 {
+        let mut bl_mag = 1.0f32;
+        for _ in 0..2 {
             let w = core::f32::consts::TAU * f / sr;
-            ptot = (len as f32
-                + frac
-                + blend_delay(lp_c, lp_mix, w)
-                + disp_n as f32 * allpass_delay(disp_a, w))
-            .max(3.0);
+            let (sw, cw_) = w.sin_cos();
+            let b = 1.0 - lp_c;
+            let dd = 1.0 + b * b - 2.0 * b * cw_;
+            let hre = lp_mix + (1.0 - lp_mix) * lp_c * (1.0 - b * cw_) / dd;
+            let him = -(1.0 - lp_mix) * lp_c * b * sw / dd;
+            bl_mag = (hre * hre + him * him).sqrt();
+            let d_lp = -him.atan2(hre) / w;
+            let d_disp = if disp_n > 0 {
+                let a = disp_a;
+                let th_n = (-sw).atan2(a + cw_);
+                let th_d = (-a * sw).atan2(1.0 + a * cw_);
+                -(th_n - th_d) / w * disp_n as f32
+            } else {
+                0.0
+            };
+            ptot = (len as f32 + frac + d_lp + d_disp).max(3.0);
             f = 0.5 * (f + nn * sr / ptot);
         }
         if f > 0.45 * sr {
@@ -666,8 +698,7 @@ fn load_carrier(
         let nu = f as f64 * lf / srf;
         // per-tick decay: round-trip gain is loss·|H_blend(w)| (allpasses unity)
         let (sw, cwn) = w.sin_cos();
-        let bl_mag = blend_mag(lp_c, lp_mix, core::f32::consts::TAU * f / sr) as f64;
-        let sig = (loss as f64 * bl_mag).min(0.99999).ln() / ptot as f64;
+        let sig = (loss as f64 * bl_mag as f64).min(0.99999).ln() / ptot as f64;
         // G = triangle coefficient × MA² × MA phase advance
         let c0 = lf * lf
             / (4.0 * core::f64::consts::PI * core::f64::consts::PI * nu * nu * pkf * (lf - pkf));
@@ -1061,7 +1092,7 @@ impl PluckVoice {
         // delay, which is what the first rendered blocks use).
         let n_syn = ((2.5 * len as f32 / cw as f32) as usize + 6)
             .min((0.45 * sr / p.f0) as usize)
-            .min(64)
+            .min(40)
             .min(len / 2);
         let st = load_carrier(
             &mut v.buf,
@@ -1128,44 +1159,60 @@ impl PluckVoice {
             let f2 = (self.frac2 - dev).clamp(0.1, 1.5);
             self.ap2_c = (1.0 - f2) / (1.0 + f2);
         }
+        // Hoist small filter states into locals so the optimizer keeps them in
+        // registers across the sample loop (through &mut self they reload per
+        // sample — measured 108 µs/quantum at 8 steel voices, ~2× the budget).
+        let mut dsx = self.dsx;
+        let mut dsy = self.dsy;
+        let mut ds2x = self.ds2x;
+        let mut ds2y = self.ds2y;
+        let disp_n = self.disp_n as usize;
+        let (mut lp, mut ap_x1, mut ap_y1) = (self.lp, self.ap_x1, self.ap_y1);
+        let (mut lp2, mut ap2_x1, mut ap2_y1) = (self.lp2, self.ap2_x1, self.ap2_y1);
         for o in out.iter_mut() {
             let y = self.buf[self.pos];
             // blend loss filter: one-pole ladder over a flat HF bypass floor
             // (m·y + (1−m)·lp ≡ lp + m(y−lp); m = 0 is the pure one-pole)
-            self.lp += self.lp_c * (y - self.lp);
+            lp += self.lp_c * (y - lp);
             // stiffness dispersion: M-stage allpass cascade delays lows vs highs
             // (pole at +p ⇒ stretched partials, see design_dispersion)
-            let mut s = self.lp_mix.mul_add(y - self.lp, self.lp);
-            for k in 0..self.disp_n as usize {
-                let d = self.disp_a * (s - self.dsy[k]) + self.dsx[k];
-                self.dsx[k] = s;
-                self.dsy[k] = d;
+            let mut s = self.lp_mix.mul_add(y - lp, lp);
+            for k in 0..disp_n {
+                let d = self.disp_a * (s - dsy[k]) + dsx[k];
+                dsx[k] = s;
+                dsy[k] = d;
                 s = d;
             }
             // fractional-delay allpass keeps the string in tune
-            let ap = self.ap_c * (s - self.ap_y1) + self.ap_x1;
-            self.ap_x1 = s;
-            self.ap_y1 = ap;
+            let ap = self.ap_c * (s - ap_y1) + ap_x1;
+            ap_x1 = s;
+            ap_y1 = ap;
             self.buf[self.pos] = ap * self.loss;
-            self.pos = (self.pos + 1) % self.len;
+            self.pos += 1;
+            if self.pos >= self.len {
+                self.pos = 0;
+            }
             let mut mix = y;
             // second polarization (own loop; summed at the bridge). Same string,
             // same stiffness: it disperses through its own cascade states.
             if self.pol_mix > 0.0 {
                 let y2 = self.buf2[self.pos2];
-                self.lp2 += self.lp_c * (y2 - self.lp2);
-                let mut s2 = self.lp_mix.mul_add(y2 - self.lp2, self.lp2);
-                for k in 0..self.disp_n as usize {
-                    let d = self.disp_a * (s2 - self.ds2y[k]) + self.ds2x[k];
-                    self.ds2x[k] = s2;
-                    self.ds2y[k] = d;
+                lp2 += self.lp_c * (y2 - lp2);
+                let mut s2 = self.lp_mix.mul_add(y2 - lp2, lp2);
+                for k in 0..disp_n {
+                    let d = self.disp_a * (s2 - ds2y[k]) + ds2x[k];
+                    ds2x[k] = s2;
+                    ds2y[k] = d;
                     s2 = d;
                 }
-                let ap2 = self.ap2_c * (s2 - self.ap2_y1) + self.ap2_x1;
-                self.ap2_x1 = s2;
-                self.ap2_y1 = ap2;
+                let ap2 = self.ap2_c * (s2 - ap2_y1) + ap2_x1;
+                ap2_x1 = s2;
+                ap2_y1 = ap2;
                 self.buf2[self.pos2] = ap2 * self.loss2;
-                self.pos2 = (self.pos2 + 1) % self.len2;
+                self.pos2 += 1;
+                if self.pos2 >= self.len2 {
+                    self.pos2 = 0;
+                }
                 mix += self.pol_mix * y2;
             }
             if self.tm_dev > 0.0 {
@@ -1190,11 +1237,17 @@ impl PluckVoice {
                 self.tr_env *= self.tr_dec;
             }
         }
-        self.lp = flush_denormal(self.lp);
-        self.ap_y1 = flush_denormal(self.ap_y1);
+        self.dsx = dsx;
+        self.dsy = dsy;
+        self.ds2x = ds2x;
+        self.ds2y = ds2y;
+        self.lp = flush_denormal(lp);
+        self.ap_x1 = ap_x1;
+        self.ap_y1 = flush_denormal(ap_y1);
         if self.pol_mix > 0.0 {
-            self.lp2 = flush_denormal(self.lp2);
-            self.ap2_y1 = flush_denormal(self.ap2_y1);
+            self.lp2 = flush_denormal(lp2);
+            self.ap2_x1 = ap2_x1;
+            self.ap2_y1 = flush_denormal(ap2_y1);
         }
         for k in 0..self.disp_n as usize {
             self.dsy[k] = flush_denormal(self.dsy[k]);
@@ -2820,10 +2873,14 @@ pub fn voice_pan(inst: Instrument, midi: u32, seed: u32) -> f32 {
             47 | 48 | 50 => 0.12, // high toms
             _ => ((seed >> 7) as f32 / 33554432.0 - 0.5) * 0.2,
         },
-        Instrument::Guitar | Instrument::GuitarSteel | Instrument::Bass => {
+        Instrument::Guitar | Instrument::GuitarSteel => {
             // per-note micro-offset: strings sit at slightly different spots
-            ((seed >> 9) as f32 / 8388608.0 - 0.5) * 0.12
+            // across the neck (round 2: widened a touch — the stereo body
+            // banks render the spread naturally now)
+            ((seed >> 9) as f32 / 8388608.0 - 0.5) * 0.16
         }
+        // bass sits at the middle of the mix like a DI track: barely off-center
+        Instrument::Bass => ((seed >> 9) as f32 / 8388608.0 - 0.5) * 0.04,
         _ => 0.0,
     }
 }
@@ -2958,8 +3015,12 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
             let p = AcPluck {
                 f0,
                 vel,
-                // NSynth bass_electronic refs sustain glacially (t60_early
-                // 14–35 s); the 6.5 s placeholder decayed twice too fast
+                // refs' measured ladder (025-028-100): h1 dies 10 dB/s, h3 at
+                // 10 dB/s, h6 at 33 dB/s, nothing sustained above ~500 Hz —
+                // while their ENVELOPE reads 10–35 s because h2 rings near 0
+                // dB/s. Compromise fundamental t60 + a genuinely dark loop
+                // (per-period loss barely bites at a 24 ms period: the old
+                // lp 0.58 rang 7.5 s at 1 kHz, +20 dB over the ref mid-note).
                 t60_f0: 14.0 - 4.0 * key,
                 lp_c: 0.50 + 0.10 * vel,
                 hf_floor_t60: 0.0,
@@ -3438,5 +3499,63 @@ mod cymbal_tests {
         // closed hat, by contrast, must be short
         let hat = render_drum(42, 0.8, 48000.0);
         assert!((hat.len() as f32) < 1.0 * 48000.0, "closed hat rings too long");
+    }
+}
+
+#[cfg(test)]
+mod bench_probe {
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    fn probe_render_cost() {
+        for (name, inst, base) in [
+            ("nylon", Instrument::Guitar, 40u32),
+            ("steel", Instrument::GuitarSteel, 40),
+            ("bass", Instrument::Bass, 28),
+        ] {
+            let mut voices: Vec<Kernel> = (0..8)
+                .map(|i| start_voice(inst, base + i * 3, 0.9, 48_000.0, 99 + i))
+                .collect();
+            let mut block = [0.0f32; 128];
+            // warmup
+            for _ in 0..100 {
+                for v in voices.iter_mut() {
+                    if let Kernel::Pluck(p) = v {
+                        p.render(&mut block);
+                    }
+                }
+            }
+            let t0 = Instant::now();
+            let n = 2000;
+            for _ in 0..n {
+                block.fill(0.0);
+                for v in voices.iter_mut() {
+                    if let Kernel::Pluck(p) = v {
+                        p.render(&mut block);
+                    }
+                }
+                core::hint::black_box(&block);
+            }
+            println!("{name}: {:.1} us/quantum @8 voices (native)", t0.elapsed().as_micros() as f64 / n as f64);
+        }
+    }
+
+    #[test]
+    fn probe_note_on_cost() {
+        for (name, inst, base) in [
+            ("nylon", Instrument::Guitar, 40u32),
+            ("steel", Instrument::GuitarSteel, 40),
+            ("bass", Instrument::Bass, 28),
+        ] {
+            for midi in [base, base + 12, base + 24] {
+                let t0 = Instant::now();
+                for i in 0..50 {
+                    let k = start_voice(inst, midi, 0.9, 48_000.0, 1234 + i);
+                    core::hint::black_box(&k);
+                }
+                println!("{name} midi {midi}: {:.1} us/note-on", t0.elapsed().as_micros() as f64 / 50.0);
+            }
+        }
     }
 }
