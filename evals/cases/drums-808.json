@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0.0",
+  "family": "drums-808",
+  "description": "Original-hardware TR-808 isolated-voice anchors from A43's edited Freesound recordings. Kick, snare, and maraca decay are invalid; open hat and cowbell are voice-held-out. The independent Wikimedia hardware pattern is reserved for arrangement listening and is not misused as a single-hit metric target.",
+  "cases": [
+    {
+      "id": "kick-short",
+      "role": "tune",
+      "reference": "references/drums-808-original/a43/canonical/kick-short-9698.wav",
+      "render": { "family": "drums-808", "midi": 36, "velocity": 120, "note_seconds": 0.2, "total_seconds": 2.5, "sample_rate": 48000, "lead_seconds": 0.03 },
+      "analysis": { "profile": "kick", "required_axes": ["mr_stft", "attack"] }
+    },
+    {
+      "id": "snare",
+      "role": "tune",
+      "reference": "references/drums-808-original/a43/canonical/snare-11378.wav",
+      "render": { "family": "drums-808", "midi": 38, "velocity": 120, "note_seconds": 0.2, "total_seconds": 2.5, "sample_rate": 48000, "lead_seconds": 0.03 },
+      "analysis": { "profile": "default", "required_axes": ["mr_stft", "attack"] }
+    },
+    {
+      "id": "closed-hat",
+      "role": "tune",
+      "reference": "references/drums-808-original/a43/canonical/closed-hat-9877.wav",
+      "render": { "family": "drums-808", "midi": 42, "velocity": 120, "note_seconds": 0.2, "total_seconds": 2.5, "sample_rate": 48000, "lead_seconds": 0.03 },
+      "analysis": { "profile": "cymbal", "required_axes": ["mr_stft", "attack", "decay"] }
+    },
+    {
+      "id": "maraca",
+      "role": "tune",
+      "reference": "references/drums-808-original/a43/canonical/maraca-9697.wav",
+      "render": { "family": "drums-808", "midi": 70, "velocity": 120, "note_seconds": 0.2, "total_seconds": 2.5, "sample_rate": 48000, "lead_seconds": 0.03 },
+      "analysis": { "profile": "default", "required_axes": ["mr_stft", "attack"] }
+    },
+    {
+      "id": "open-hat",
+      "role": "held_out",
+      "reference": "references/drums-808-original/a43/canonical/open-hat-9878.wav",
+      "render": { "family": "drums-808", "midi": 46, "velocity": 120, "note_seconds": 0.2, "total_seconds": 2.5, "sample_rate": 48000, "lead_seconds": 0.03 },
+      "analysis": { "profile": "cymbal", "required_axes": ["mr_stft", "attack", "decay"] }
+    },
+    {
+      "id": "cowbell",
+      "role": "held_out",
+      "reference": "references/drums-808-original/a43/canonical/cowbell-9780.wav",
+      "render": { "family": "drums-808", "midi": 56, "velocity": 120, "note_seconds": 0.2, "total_seconds": 2.5, "sample_rate": 48000, "lead_seconds": 0.03 },
+      "analysis": { "profile": "default", "required_axes": ["mr_stft", "attack", "decay", "partials"] }
+    }
+  ]
+}
