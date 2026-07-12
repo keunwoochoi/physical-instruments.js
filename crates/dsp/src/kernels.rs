@@ -5036,7 +5036,13 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
                 // subtle - metrics prefer it slightly over 0 and single-note
                 // peaks are unchanged (0.042)
                 click: 5.0,
-                rel_t60: 0.10,
+                // nylon refs' post-off slopes (68-171 dB/s) are contaminated
+                // by the NSynth release fade/gate (014 mids are hard-gated;
+                // steel 015's 31-51 dB/s proves slower decays survive the
+                // pipeline, so nylon's true damp is ≥ ~70 dB/s). A 0.55-0.75 s
+                // law overshot (tail logmel 1.29→1.45, it2); 0.30 s keeps an
+                // audible finger-damp ring without ringing past the refs.
+                rel_t60: 0.30 - 0.06 * vel,
                 rel_click: 0.25,
                 pol_mix: 0.35,
                 pol_detune_cents: 2.2,
