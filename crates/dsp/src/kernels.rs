@@ -1212,7 +1212,7 @@ impl PluckVoice {
             ap2_c: 0.0,
             ap2_x1: 0.0,
             ap2_y1: 0.0,
-            pol_mix: 0.25,
+            pol_mix: 0.0,
             disp_a: 0.0,
             disp_n: 0,
             dsx: [0.0; MAX_DISP],
@@ -1229,7 +1229,7 @@ impl PluckVoice {
             rad_p: 0.0,
             rad_x1: 0.0,
             rad_y1: 0.0,
-            acc_rho: 0.995,
+            acc_rho: 0.0,
             acc_x1: 0.0,
             tm_dev: 0.0,
             tm_env: 0.0,
@@ -5812,7 +5812,7 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
                 // dominant in mid/high register; low-register h2 emphasis comes
                 // from the body's T1 mode, not a global force tilt
                 br_rho: 0.0,
-                acc_rho: 0.995,
+                acc_rho: 0.0, // body-round radiation design (bass-merge silently reverted this; drift-check caught it)
                 // radiated sound only: monopole HP (Woodhouse 2012 f_c ~250 Hz)
                 rad_hz: 250.0,
                 thump: 0.0,
