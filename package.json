@@ -15,6 +15,7 @@
     "render": "node scripts/dev/render-demo.mjs",
     "bench": "node scripts/dev/render-demo.mjs --bench",
     "test:loop": "python3 scripts/dev/test_loop_metrics.py",
+    "audit:loop": "scripts/audit/loop-metrics-audit.sh",
     "audit:harness": "scripts/audit/harness-audit.sh"
   },
   "devDependencies": {

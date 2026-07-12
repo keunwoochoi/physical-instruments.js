@@ -17,16 +17,19 @@ import hashlib
 import json
 import os
 import platform
+from importlib.metadata import version
 
 import numpy as np
+import jsonschema
 import pyloudnorm
-import scipy
 from scipy.signal import resample_poly
 import soundfile as sf
 
 
 REPORT_SCHEMA_VERSION = "1.0.0"
 METRIC_VERSION = "2026.07.12-l1"
+SCHEMA_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "evals", "metrics", "report-schema-v1.json"))
+_REPORT_SCHEMA = None
 
 
 def file_sha256(path):
@@ -35,6 +38,16 @@ def file_sha256(path):
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def validate_report(report):
+    """Validate the public metric-report contract before any caller sees it."""
+    global _REPORT_SCHEMA
+    if _REPORT_SCHEMA is None:
+        with open(SCHEMA_PATH) as f:
+            _REPORT_SCHEMA = json.load(f)
+        jsonschema.Draft202012Validator.check_schema(_REPORT_SCHEMA)
+    jsonschema.validate(instance=report, schema=_REPORT_SCHEMA)
 
 
 def load_mono(path):
@@ -477,6 +490,8 @@ def compare_files(render_path, ref_path, profile="default", flat=False,
                            expected_onset_s=expected_onset_s,
                            note_off_s=note_off_s,
                            max_post_note_off_db=max_post_note_off_db)
+    if not gates["finite"]["pass"]:
+        raise ValueError("render contains NaN or infinite samples; comparison aborted")
     ref_meta = manifest_lookup(ref_path)
     operations = []
     if ref_meta and ref_meta.get("mask_after_s"):
@@ -516,10 +531,11 @@ def compare_files(render_path, ref_path, profile="default", flat=False,
         },
         "runtime": {
             "python": platform.python_version(),
-            "numpy": np.__version__,
-            "scipy": scipy.__version__,
-            "soundfile": getattr(sf, "__version__", "unknown"),
-            "pyloudnorm": getattr(pyloudnorm, "__version__", "unknown"),
+            "numpy": version("numpy"),
+            "scipy": version("scipy"),
+            "soundfile": version("soundfile"),
+            "pyloudnorm": version("pyloudnorm"),
+            "jsonschema": version("jsonschema"),
         },
         "configuration": {
             "profile": profile,
@@ -553,4 +569,5 @@ def compare_files(render_path, ref_path, profile="default", flat=False,
                                           mels=lf["mels"], fmin=lf["fmin"], fmax=lf["fmax"])
         report["glide_hz"] = {"render": glide_track(xr, sr), "reference": glide_track(xf, sr)}
     disable_invalid_axes(report, (ref_meta or {}).get("invalid_axes", {}))
+    validate_report(report)
     return report

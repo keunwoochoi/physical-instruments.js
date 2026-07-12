@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 import numpy as np
+import jsonschema
 import soundfile as sf
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -134,6 +135,30 @@ class ReportContractTests(unittest.TestCase):
         self.assertEqual(first["schema_version"], compare.REPORT_SCHEMA_VERSION)
         self.assertEqual(first["metric_version"], compare.METRIC_VERSION)
         self.assertEqual(first["inputs"]["render"]["sha256"], first["inputs"]["reference"]["sha256"])
+
+    def test_report_schema_rejects_missing_contract_field(self):
+        x = tone(seconds=0.7)
+        with tempfile.TemporaryDirectory() as d:
+            a = os.path.join(d, "candidate.wav")
+            b = os.path.join(d, "reference.wav")
+            sf.write(a, x, SR, subtype="FLOAT")
+            sf.write(b, x, SR, subtype="FLOAT")
+            report = compare.compare_files(a, b)
+        del report["metric_version"]
+        with self.assertRaises(jsonschema.ValidationError):
+            compare.validate_report(report)
+
+    def test_nonfinite_file_aborts_before_distances(self):
+        x = tone(seconds=0.7)
+        broken = x.copy()
+        broken[100] = np.nan
+        with tempfile.TemporaryDirectory() as d:
+            a = os.path.join(d, "candidate.wav")
+            b = os.path.join(d, "reference.wav")
+            sf.write(a, broken, SR, subtype="FLOAT")
+            sf.write(b, x, SR, subtype="FLOAT")
+            with self.assertRaisesRegex(ValueError, "NaN or infinite"):
+                compare.compare_files(a, b)
 
     def test_invalid_loudness_axis_is_removed(self):
         report = {

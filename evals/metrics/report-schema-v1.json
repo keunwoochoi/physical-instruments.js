@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://instruments.js/evals/metrics/report-schema-v1.json",
+  "title": "instruments.js loop metric report v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "metric_version",
+    "interpretation",
+    "inputs",
+    "runtime",
+    "configuration",
+    "operations",
+    "profile",
+    "sr",
+    "seconds",
+    "lufs",
+    "logmel_dist",
+    "mr_stft",
+    "gates",
+    "axis_validity"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "metric_version": { "type": "string", "minLength": 1 },
+    "interpretation": { "enum": ["trusted", "untrusted"] },
+    "inputs": {
+      "type": "object",
+      "required": ["render", "reference"],
+      "properties": {
+        "render": { "$ref": "#/$defs/input" },
+        "reference": { "$ref": "#/$defs/input" }
+      },
+      "additionalProperties": false
+    },
+    "runtime": { "type": "object" },
+    "configuration": { "type": "object" },
+    "operations": { "type": "array", "items": { "type": "object" } },
+    "profile": { "type": "string" },
+    "sr": { "type": "integer", "minimum": 8000 },
+    "seconds": { "type": "number", "minimum": 0 },
+    "lufs": { "type": "object" },
+    "logmel_dist": { "type": "object" },
+    "mr_stft": {
+      "type": "object",
+      "required": ["w256", "w1024", "w4096", "mean", "alignment"],
+      "properties": {
+        "w256": { "type": "number", "minimum": 0 },
+        "w1024": { "type": "number", "minimum": 0 },
+        "w4096": { "type": "number", "minimum": 0 },
+        "mean": { "type": "number", "minimum": 0 },
+        "alignment": {
+          "type": "object",
+          "required": ["status", "lag_samples", "lag_ms", "max_lag_ms"],
+          "properties": {
+            "status": { "enum": ["applied", "rejected", "not_evaluated"] },
+            "lag_samples": { "type": "integer" },
+            "lag_ms": { "type": "number" },
+            "max_lag_ms": { "type": "number", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "required": ["finite", "all_pass", "trusted"],
+      "properties": {
+        "finite": { "$ref": "#/$defs/gate" },
+        "all_pass": { "type": "boolean" },
+        "trusted": { "type": "boolean" }
+      }
+    },
+    "axis_validity": { "type": "object" }
+  },
+  "$defs": {
+    "input": {
+      "type": "object",
+      "required": ["path", "sha256", "sample_rate", "frames"],
+      "properties": {
+        "path": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "sample_rate": { "type": "integer", "minimum": 8000 },
+        "frames": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "gate": {
+      "type": "object",
+      "required": ["pass"],
+      "properties": {
+        "pass": { "type": ["boolean", "null"] }
+      }
+    }
+  }
+}

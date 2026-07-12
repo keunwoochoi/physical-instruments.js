@@ -31,7 +31,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - run: npm ci || npm install
+      - run: python3 -m pip install -r scripts/dev/requirements-loop.txt
+      - run: npm run audit:loop
       - run: npm run typecheck --workspaces --if-present
       - run: npm run build --workspaces --if-present
       - run: node scripts/dev/test-midi.mjs
