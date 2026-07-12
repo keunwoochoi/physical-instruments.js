@@ -384,6 +384,36 @@ pub struct ModalVoice {
     trem_rate: f32,
     trem_depth: f32,
     trem_phase: f32,
+    // --- EP (tine/reed + magnetic pickup) extensions. ep_amp = 0.0 ⇒ every
+    // field below is inert and the render path is the legacy one, bit-identical
+    // for all non-EP families (marimba/vibes/glock/musicbox/drum shells). ---
+    /// displacement drive into the pickup flux curve (key-tracked down the top
+    /// octaves, same law as the old tanh drive — anti-aliasing guard)
+    ep_amp: f32,
+    /// tine rest offset from the pickup axis in flux-width units (the Rhodes
+    /// "timbre screw"): asymmetry ⇒ even harmonics that grow with amplitude
+    ep_off: f32,
+    /// output normalization: small-signal gain comp × register level law
+    ep_gain: f32,
+    /// previous flux sample — the pickup output IS the flux first difference
+    /// (dΦ/dt), which is first-order-ADAA band-limited by construction
+    ep_flux1: f32,
+    /// key-action thunk (note-on) / damper-felt bump (note-off): decaying
+    /// noise through a one-pole lowpass, added post-pickup (frame vibration)
+    th_env: f32,
+    th_dec: f32,
+    th_lc: f32,
+    th_y1: f32,
+    /// hammer flight: samples between key action and string contact — the
+    /// refs' tone peaks 2–17 ms AFTER the action knock starts (slower at pp)
+    ep_wait: u32,
+    /// key-action knock as DISPLACEMENT (frame shifts on key bottoming, the
+    /// pickup differentiates it into the refs' coherent LF onset swell —
+    /// measured centroid 90–300 Hz, near-zero zero-crossings pre-peak):
+    /// raised-cosine bump added into s before the flux curve
+    act_pos: u32,
+    act_len: u32,
+    act_amp: f32,
     rng: Lcg,
     life: u64,
     age: u64,
@@ -424,6 +454,18 @@ impl ModalVoice {
             trem_rate: 0.0,
             trem_depth: 0.0,
             trem_phase: 0.0,
+            ep_amp: 0.0,
+            ep_off: 0.0,
+            ep_gain: 0.0,
+            ep_flux1: 0.0,
+            th_env: 0.0,
+            th_dec: 0.0,
+            th_lc: 0.0,
+            th_y1: 0.0,
+            ep_wait: 0,
+            act_pos: 0,
+            act_len: 0,
+            act_amp: 0.0,
             rng: Lcg(seed | 1),
             life: 0,
             age: 0,
@@ -459,8 +501,152 @@ impl ModalVoice {
         v
     }
 
+    /// EP round 2026-07-12 (owner verdict: "electric piano — too much like
+    /// marimba"). A Rhodes/Wurli is not a struck bar; it is a tine/reed +
+    /// tonebar pair read by an ASYMMETRIC magnetic pickup. This constructor
+    /// kills the marimba tells (measured on the old preset: clean 1:3.97 bar
+    /// ladder, odd-only tanh harmonics h2 ≈ −73…−140 dB, zero beating,
+    /// single-exponential decay, no key noise):
+    ///   - partials = tine f0 (prompt) + tonebar at f0+~0.9 Hz (aftersound:
+    ///     slow beat + two-stage decay, Weinreich 1977 lineage) + one
+    ///     inharmonic tine-mode-2 "bell" near 6.3·f0 (cantilever mode ratios
+    ///     1:6.27, Fletcher & Rossing ch.4/§13 — NOT the 1:4 tuned-bar mark).
+    ///   - velocity→timbre lives in the PICKUP, not mode brightness: the
+    ///     Wurlitzer EP200 refs measure h2/h1 ≈ −20 dB at pp rising to
+    ///     −3…+16 dB at ff (references/epiano-wurli, manifest caveats there).
+    ///   - t60 law fits the refs' pp (linear-regime) ladder: ≈25 s at A1,
+    ///     7.7 s at C#4, 3.7 s at C#5.
+    ///   - key-action thunk at note-on; damper felt bump in damp().
+    /// Mode gains are DISPLACEMENT-normalized (g = amp·sin ω / Σpulse) so the
+    /// flux-curve drive u is calibrated in velocity units; the shared start()
+    /// normalization targets summed OUTPUT instead and is left untouched.
+    pub fn start_epiano(midi: u32, f0: f32, vel: f32, sr: f32, seed: u32) -> Self {
+        let key = (((midi as f32) - 28.0) / 60.0).clamp(0.0, 1.0);
+        let t60_tine = 28.0 * (1.0 - key) * (1.0 - key) + 2.0;
+        // hammer contact ∝ the struck element's period (compliant striker:
+        // contact ≈ 0.5–1 period, Fletcher & Rossing ch.19 hammer–string /
+        // ch.4 struck-bar analysis), shorter when harder. Fits the refs'
+        // measured onset blooms: a1ff peaks ~17 ms, ab3 ~10–12 ms, db5ff
+        // ~2.3 ms after onset — a fixed-ms contact can't do all three.
+        let contact_ms = (900.0 / f0) * (1.6 - 0.9 * vel).max(0.45);
+        let contact_ms = contact_ms.clamp(0.45, 25.0);
+        let mut v = Self::start(f0, vel, sr, &[], 1.0, 0.0, 0.0, seed);
+        v.pulse_len = ((contact_ms * 1e-3 * sr) as u32).max(2);
+        v.pulse_amp = vel;
+        v.click_amp = 0.0;
+        let defs = [
+            (f0, 1.0, t60_tine),
+            // tonebar aftersound: sings past the tine, slightly mistuned →
+            // the slow beat the refs keep at ~1–3 dB depth, 0.5–1 Hz
+            (f0 + 0.9, 0.22, t60_tine * 2.0),
+            // tine mode 2: fast bell ping on the attack
+            (f0 * 6.3, 0.10 + 0.10 * vel, (0.9 - 0.6 * key).max(0.15)),
+        ];
+        let nyq = 0.45 * sr;
+        let mut max_t60 = 0.0f32;
+        let pulse_sum = 0.5 * v.pulse_len as f32; // Σ raised-cosine
+        for &(f, amp, t60) in defs.iter() {
+            if f >= nyq {
+                continue; // aliasing guard, same as start()
+            }
+            let r = t60_gain(t60, sr);
+            let w = core::f32::consts::TAU * f / sr;
+            let i = v.n_modes;
+            v.a1[i] = 2.0 * r * w.cos();
+            v.r2[i] = r * r;
+            v.g[i] = amp * w.sin() / pulse_sum;
+            v.n_modes += 1;
+            max_t60 = max_t60.max(t60);
+        }
+        v.life = ((max_t60 * 1.2 + 0.05) * sr) as u64;
+        // pickup drive: THE velocity→timbre axis. Key-tracked down the top
+        // octaves — same guard law as the old tanh drive (tine harmonics of a
+        // high f0 would fold past Nyquist; the refs' top octaves measure
+        // near-sinusoidal anyway: g5 h2 ≈ −21 dB even at ff).
+        v.ep_amp = 2.0 * (1.2 - key).clamp(0.25, 1.0);
+        // rest offset in flux-width units (the Rhodes "timbre screw"):
+        // asymmetry ⇒ even harmonics grow with amplitude
+        v.ep_off = 0.55;
+        let slope = 2.0 * v.ep_off * (-(v.ep_off * v.ep_off)).exp();
+        let level = 0.22 * (0.3 + 0.7 * vel);
+        v.ep_gain = level / (slope * v.ep_amp * (core::f32::consts::TAU * f0 / sr));
+        v.ep_flux1 = (-(v.ep_off * v.ep_off)).exp(); // rest flux: no onset step
+        // attack mechanics (it3): the refs' onsets are action-knock-first —
+        // a coherent LF swell 6–10 ms BEFORE the tone peaks (crest gate:
+        // render first-3ms must sit ≈20 dB under body like the refs').
+        // Hammer flight delays the strike; the key-bottoming knock shifts
+        // the frame (a displacement bump through the pickup). Noise thunk
+        // at note-on removed — the refs' pre-peak has ~zero zero-crossings.
+        let wait_ms = (95.0 / f0.sqrt()) * (1.35 - 0.5 * vel);
+        v.ep_wait = (wait_ms.clamp(0.0, 25.0) * 1e-3 * sr) as u32;
+        // heavier low-key action rises slower (a1ff ref knock peaks ~17 ms)
+        v.act_len = (((wait_ms + 13.0 * (2.0 - key)) * 1e-3 * sr) as u32).max(8);
+        // knock/tone ratio is ~velocity-flat in the refs (ab3 thunk −14.9 dB
+        // at pp vs −12.6 at ff) → the knock scales LINEARLY with velocity
+        v.act_amp = 0.28 * vel * (1.35 - 0.8 * key);
+        v
+    }
+
+    /// EP render path (ep_amp > 0 only): modal displacement → flux pickup.
+    /// The pickup output is the flux FIRST DIFFERENCE — physically dΦ/dt (a
+    /// magnetic pickup senses velocity, Zollner Physics of the Electric
+    /// Guitar ch.4), numerically the first-order-ADAA form of Φ′(u)·u̇
+    /// (Bilbao/Esqueda/Parker/Välimäki, IEEE SPL 2017), so the asymmetric
+    /// distortion stays band-limited without oversampling — this EXTENDS the
+    /// pre-round key-tracked-drive guard instead of replacing it.
+    fn render_ep(&mut self, out: &mut [f32]) -> bool {
+        let inv_len = 1.0 / self.pulse_len as f32;
+        let act_inv = 1.0 / self.act_len.max(1) as f32;
+        for o in out.iter_mut() {
+            let mut x = 0.0;
+            if self.ep_wait > 0 {
+                self.ep_wait -= 1;
+            } else if self.pulse_pos < self.pulse_len {
+                let ph = self.pulse_pos as f32 * inv_len;
+                x = self.pulse_amp * 0.5 * (1.0 - (core::f32::consts::TAU * ph).cos());
+                self.pulse_pos += 1;
+            }
+            let mut s = 0.0;
+            for m in 0..self.n_modes {
+                let y = self.a1[m] * self.y1[m] - self.r2[m] * self.y2[m] + self.g[m] * x;
+                self.y2[m] = self.y1[m];
+                self.y1[m] = y;
+                s += y;
+            }
+            // key-bottoming knock: frame displacement bump under the tine —
+            // the pickup differentiates it into the refs' LF onset swell and
+            // it momentarily shifts the flux operating point (the ff "spit")
+            if self.act_pos < self.act_len {
+                let ph = self.act_pos as f32 * act_inv;
+                s += self.act_amp * 0.5 * (1.0 - (core::f32::consts::TAU * ph).cos());
+                self.act_pos += 1;
+            }
+            let d = s * self.ep_amp - self.ep_off;
+            let flux = (-(d * d).min(25.0)).exp();
+            let mut y = (flux - self.ep_flux1) * self.ep_gain;
+            self.ep_flux1 = flux;
+            if self.th_env > 1e-6 {
+                // thunk/felt: LP noise burst added post-pickup (frame → coil)
+                self.th_y1 += self.th_lc * (self.rng.next() * self.th_env - self.th_y1);
+                self.th_env *= self.th_dec;
+                y += self.th_y1;
+            }
+            *o += y;
+        }
+        for m in 0..self.n_modes {
+            self.y1[m] = flush_denormal(self.y1[m]);
+            self.y2[m] = flush_denormal(self.y2[m]);
+        }
+        self.th_y1 = flush_denormal(self.th_y1);
+        self.age += out.len() as u64;
+        self.age < self.life
+    }
+
     /// Render one block, ADD into `out`. Returns false when the voice is spent.
     pub fn render(&mut self, out: &mut [f32]) -> bool {
+        if self.ep_amp > 0.0 {
+            return self.render_ep(out);
+        }
         let inv_len = 1.0 / self.pulse_len as f32;
         for o in out.iter_mut() {
             // excitation: raised-cosine contact pulse + mallet click noise
@@ -508,7 +694,16 @@ impl ModalVoice {
             self.r2[m] *= scale;
             self.a1[m] *= scale.sqrt();
         }
-        self.life = self.age + (0.12 * sr) as u64;
+        if self.ep_amp > 0.0 {
+            // damper felt lands on the ringing tine (Askenfelt & Jansson
+            // release-transient lineage, EP scale): soft LP noise breath
+            self.th_env = 0.05;
+            self.th_dec = t60_gain(0.045, sr);
+            self.th_lc = 1.0 - (-core::f32::consts::TAU * 420.0 / sr).exp();
+            self.life = self.age + (0.30 * sr) as u64;
+        } else {
+            self.life = self.age + (0.12 * sr) as u64;
+        }
     }
 }
 
@@ -5832,26 +6027,12 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
             Kernel::Pluck(PluckVoice::start_acoustic(&p, sr, seed))
         }
         Instrument::EPiano => {
-            // tine + tone-bar partial through a velocity-driven pickup nonlinearity.
-            // Drive is key-tracked DOWN in the top octaves: tanh harmonics of a high
-            // fundamental would fold past Nyquist (no oversampling yet — issue #8).
-            let key = ((midi as f32) - 40.0) / 48.0;
-            let t = (7.0 - 4.5 * key).clamp(1.2, 7.0);
-            let drive_scale = (1.2 - key).clamp(0.25, 1.0);
-            Kernel::Modal(ModalVoice::start(
-                f0,
-                vel,
-                sr,
-                &[
-                    ModeDef { ratio: 1.0, amp: 1.0, t60: t },
-                    ModeDef { ratio: 3.97, amp: 0.14 + 0.5 * vel * vel, t60: 0.5 },
-                    ModeDef { ratio: 6.24, amp: 0.05 * vel, t60: 0.2 },
-                ],
-                2.2,
-                0.03,
-                (0.5 + 1.6 * vel) * drive_scale,
-                seed,
-            ))
+            // tine/reed + tonebar through an asymmetric flux pickup — see
+            // ModalVoice::start_epiano (EP round 2026-07-12; the old 1:3.97
+            // bar ladder + symmetric tanh was the owner's "too much like
+            // marimba": a tanh is odd-symmetric and CANNOT make the
+            // even-harmonic bark that is the EP's velocity axis)
+            Kernel::Modal(ModalVoice::start_epiano(midi, f0, vel, sr, seed))
         }
         Instrument::Drums => Kernel::Drum(DrumVoice::start(midi, vel, sr, seed, KitStyle::Pop)),
         Instrument::DrumsRock => Kernel::Drum(DrumVoice::start(midi, vel, sr, seed, KitStyle::Rock)),
