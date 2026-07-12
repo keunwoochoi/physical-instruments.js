@@ -30,6 +30,7 @@
           "id": { "type": "string" },
           "case_id": { "type": "string" },
           "reference_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "x_source": { "type": "string" },
           "stimuli": {
             "type": "array",
             "minItems": 2,

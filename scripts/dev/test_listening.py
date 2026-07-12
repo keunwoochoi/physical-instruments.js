@@ -206,7 +206,7 @@ class AnalysisTests(unittest.TestCase):
             "purpose": "iteration",
             "trials": [
                 {"id": "ab", "protocol": "ab", "stimuli": [{"id": "a"}, {"id": "b"}]},
-                {"id": "abx", "protocol": "abx", "x_source": "x-a", "stimuli": [{"id": "x-a"}, {"id": "x-b"}]},
+                {"id": "abx", "protocol": "abx", "x": {"id": "x", "path": "opaque-x.wav"}, "stimuli": [{"id": "x-a"}, {"id": "x-b"}]},
             ],
             "exclusion_policy": {"min_completed_trials": 2, "hidden_reference_min_score": 90, "min_completed_plays_per_stimulus": 1, "unique_listener_ids_required": True},
         }
@@ -215,7 +215,7 @@ class AnalysisTests(unittest.TestCase):
             "experiment_digest": digest,
             "trials": [
                 {"id": "ab", "case_id": "ab-case", "stimuli": [{"id": "a", "role": "candidate", "duration_ms": 800}, {"id": "b", "role": "incumbent", "duration_ms": 800}]},
-                {"id": "abx", "case_id": "abx-case", "stimuli": [{"id": "x-a", "role": "candidate", "duration_ms": 800}, {"id": "x-b", "role": "incumbent", "duration_ms": 800}]},
+                {"id": "abx", "case_id": "abx-case", "x_source": "x-a", "stimuli": [{"id": "x-a", "role": "candidate", "duration_ms": 800}, {"id": "x-b", "role": "incumbent", "duration_ms": 800}]},
             ],
         }
         sessions = []

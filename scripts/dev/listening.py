@@ -305,7 +305,7 @@ def validate_experiment(path: Path | str, verify_files: bool = True) -> dict[str
     experiment_stimulus_ids: set[str] = set()
     base = path.parent
     for trial in value["trials"]:
-        _require_keys(trial, {"id", "protocol", "prompt", "stimuli"}, {"id", "protocol", "prompt", "stimuli", "reference", "x_source"}, f"trial {trial.get('id', '?')}")
+        _require_keys(trial, {"id", "protocol", "prompt", "stimuli"}, {"id", "protocol", "prompt", "stimuli", "reference", "x"}, f"trial {trial.get('id', '?')}")
         trial_id = trial["id"]
         if trial_id in trial_ids:
             raise ValueError(f"duplicate trial id: {trial_id}")
@@ -334,8 +334,22 @@ def validate_experiment(path: Path | str, verify_files: bool = True) -> dict[str
                 info = sf.info(audio)
                 if info.frames <= 0 or info.channels not in {1, 2} or info.samplerate != value["sample_rate"]:
                     raise ValueError(f"{trial_id}: stimulus format violates the experiment contract")
-        if protocol == "abx" and trial.get("x_source") not in stimulus_ids:
-            raise ValueError(f"{trial_id}: x_source must name an A/B stimulus")
+        if protocol == "abx":
+            if "x" not in trial:
+                raise ValueError(f"{trial_id}: ABX requires an opaque X asset")
+            x_audio = trial["x"]
+            _require_keys(x_audio, {"id", "path"}, {"id", "path"}, f"{trial_id} X")
+            if x_audio["id"] != "x":
+                raise ValueError(f"{trial_id}: opaque X asset id must be x")
+            x_path = _safe_audio_path(base, x_audio["path"])
+            if verify_files:
+                if not x_path.is_file():
+                    raise ValueError(f"{trial_id}: X asset is missing")
+                info = sf.info(x_path)
+                if info.frames <= 0 or info.channels not in {1, 2} or info.samplerate != value["sample_rate"]:
+                    raise ValueError(f"{trial_id}: X asset format violates the experiment contract")
+        elif "x" in trial:
+            raise ValueError(f"{trial_id}: only ABX may declare an X asset")
         if protocol == "mushra":
             if "reference" not in trial:
                 raise ValueError(f"{trial_id}: MUSHRA requires an explicit reference")
@@ -348,6 +362,8 @@ def validate_experiment(path: Path | str, verify_files: bool = True) -> dict[str
                 info = sf.info(reference_path)
                 if info.frames <= 0 or info.channels not in {1, 2} or info.samplerate != value["sample_rate"]:
                     raise ValueError(f"{trial_id}: explicit reference format violates the experiment contract")
+        elif "reference" in trial:
+            raise ValueError(f"{trial_id}: only MUSHRA may declare an explicit reference")
     return value
 
 
@@ -398,6 +414,14 @@ def validate_analysis_manifest(path: Path | str, verify_files: bool = True) -> t
                     raise ValueError(f"{trial_id}: stimulus loudness outside declared tolerance: {loudness}")
                 if abs(private_stimulus["integrated_lufs_after"] - loudness) > 0.01:
                     raise ValueError(f"{trial_id}: prepared loudness provenance mismatch")
+        if trial["protocol"] == "abx":
+            if private.get("x_source") not in private_stimuli:
+                raise ValueError(f"{trial_id}: private X source must name an A/B stimulus")
+            x_audio = _safe_audio_path(experiment_path.parent, trial["x"]["path"])
+            if verify_files and sha256_bytes(x_audio.read_bytes()) != private_stimuli[private["x_source"]]["sha256"]:
+                raise ValueError(f"{trial_id}: opaque X asset does not match its private source")
+        elif "x_source" in private:
+            raise ValueError(f"{trial_id}: only ABX may have a private X source")
         if trial["protocol"] == "mushra":
             reference = _safe_audio_path(experiment_path.parent, trial["reference"]["path"])
             reference_digest = sha256_bytes(reference.read_bytes())
@@ -579,7 +603,7 @@ def analyze(experiment: dict[str, Any], sessions: list[dict[str, Any]], analysis
                 if slot == "reference":
                     duration_slot = next(item["id"] for item in private_by_id[trial["id"]]["stimuli"] if item["role"] == "hidden_reference")
                 elif slot == "x":
-                    duration_slot = trial["x_source"]
+                    duration_slot = private_by_id[trial["id"]]["x_source"]
                 expected_ms = duration_by_trial[trial["id"]][duration_slot] * playback["completed"]
                 if playback["completed"] and playback["listened_ms"] < 0.95 * expected_ms:
                     reasons.append(f"insufficient_playback_coverage:{trial['id']}")
@@ -624,7 +648,7 @@ def analyze(experiment: dict[str, Any], sessions: list[dict[str, Any]], analysis
                     summary["counts"][answer["choice"]] += 1
             elif trial["protocol"] == "abx":
                 abx_total += 1
-                abx_correct += int(answer["choice"] == trial["x_source"])
+                abx_correct += int(answer["choice"] == private_by_id[trial["id"]]["x_source"])
 
     stimulus_results: dict[str, Any] = {}
     for index, (stimulus_id, meta) in enumerate(sorted(stimulus_meta.items())):

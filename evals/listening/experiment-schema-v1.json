@@ -67,7 +67,7 @@
         "protocol": { "enum": ["ab", "abx", "mushra"] },
         "prompt": { "type": "string", "minLength": 1 },
         "reference": { "$ref": "#/$defs/audio" },
-        "x_source": { "type": "string" },
+        "x": { "$ref": "#/$defs/audio" },
         "stimuli": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/audio" } }
       },
       "additionalProperties": false

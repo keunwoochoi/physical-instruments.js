@@ -176,8 +176,7 @@ function showTrial() {
     players.append(sample);
   });
   if (trial.protocol === "abx") {
-    const xItem = stimulus[trial.x_source];
-    players.append(player("X", "x", xItem.path, response));
+    players.append(player("X", "x", trial.x.path, response));
   }
   section.append(players);
   const choices = document.createElement("div");
@@ -238,16 +237,72 @@ function beginSession(value) {
   if (session.submitted_at) finish(); else showTrial();
 }
 
+function plainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function requireExactKeys(value, keys, label) {
+  if (!plainObject(value) || JSON.stringify(Object.keys(value).sort()) !== JSON.stringify([...keys].sort())) throw new Error(`${label} fields do not match the session contract`);
+}
+
+function requireString(value, label, allowEmpty = true) {
+  if (typeof value !== "string" || (!allowEmpty && !value)) throw new Error(`${label} must be ${allowEmpty ? "a string" : "a non-empty string"}`);
+}
+
+function validateRestoredTrial(response, trial, expectedPresentation) {
+  requireExactKeys(response, ["trial_id", "protocol", "presentation", "response", "play_counts", "playback"], `${trial.id} response`);
+  if (response.trial_id !== trial.id || response.protocol !== trial.protocol || JSON.stringify(response.presentation) !== JSON.stringify(expectedPresentation)) throw new Error(`${trial.id} presentation or protocol was changed`);
+  const slots = [...expectedPresentation];
+  if (trial.protocol === "mushra") slots.push("reference");
+  if (trial.protocol === "abx") slots.push("x");
+  const slotSet = new Set(slots);
+  if (slotSet.size !== slots.length) throw new Error(`${trial.id} playback slots are not unique`);
+  requireExactKeys(response.play_counts, slots, `${trial.id} play counts`);
+  requireExactKeys(response.playback, slots, `${trial.id} playback evidence`);
+  for (const slot of slots) {
+    const count = response.play_counts[slot];
+    const evidence = response.playback[slot];
+    if (!Number.isInteger(count) || count < 0) throw new Error(`${trial.id} play count is invalid`);
+    requireExactKeys(evidence, ["starts", "completed", "listened_ms"], `${trial.id} playback item`);
+    if (![evidence.starts, evidence.completed, evidence.listened_ms].every((item) => Number.isInteger(item) && item >= 0)
+      || evidence.starts !== count || evidence.completed > evidence.starts
+      || evidence.completed < experiment.exclusion_policy.min_completed_plays_per_stimulus) throw new Error(`${trial.id} playback evidence is invalid`);
+  }
+  if (trial.protocol === "mushra") {
+    requireExactKeys(response.response, ["ratings"], `${trial.id} answer`);
+    requireExactKeys(response.response.ratings, expectedPresentation, `${trial.id} ratings`);
+    if (!Object.values(response.response.ratings).every((score) => Number.isInteger(score) && score >= 0 && score <= 100)) throw new Error(`${trial.id} ratings are invalid`);
+  } else {
+    requireExactKeys(response.response, ["choice"], `${trial.id} answer`);
+    const choices = trial.protocol === "ab" ? [...expectedPresentation, "tie"] : expectedPresentation;
+    if (!choices.includes(response.response.choice)) throw new Error(`${trial.id} choice is invalid`);
+  }
+}
+
 function validateRestoredSession(value) {
-  if (!value || typeof value !== "object") throw new Error("session must be a JSON object");
+  requireExactKeys(value, ["schema_version", "experiment_id", "experiment_digest", "session_id", "evidence_kind", "listener", "setup", "randomization", "trial_order", "started_at", "submitted_at", "trials"], "session");
+  if (value.schema_version !== "1.0.0" || value.evidence_kind !== "human") throw new Error("session schema version or evidence kind is invalid");
   if (value.experiment_id !== experiment.id || value.experiment_digest !== digest) throw new Error("session belongs to a different experiment or manifest");
-  if (!Number.isInteger(value.randomization?.seed)) throw new Error("session randomization seed is missing");
+  requireString(value.session_id, "session ID", false);
+  requireString(value.started_at, "start time");
+  requireString(value.submitted_at, "submission time");
+  requireExactKeys(value.listener, ["id", "experience", "hearing_notes"], "listener");
+  requireString(value.listener.id, "listener ID", false);
+  requireString(value.listener.experience, "listener experience");
+  requireString(value.listener.hearing_notes, "hearing notes");
+  requireExactKeys(value.setup, ["transducer", "environment", "device", "volume_check"], "setup");
+  if (!["headphones", "studio_monitors", "speakers", "other"].includes(value.setup.transducer)
+    || typeof value.setup.environment !== "string" || !value.setup.environment
+    || typeof value.setup.device !== "string" || !value.setup.device
+    || value.setup.volume_check !== true) throw new Error("session setup is invalid");
+  requireExactKeys(value.randomization, ["algorithm", "seed"], "randomization");
+  if (value.randomization.algorithm !== RANDOMIZATION_ALGORITHM || !Number.isInteger(value.randomization.seed)
+    || value.randomization.seed < 0 || value.randomization.seed > 0xFFFFFFFF) throw new Error("session randomization is invalid");
   const expectedOrder = trialOrder(experiment, value.randomization.seed);
   if (JSON.stringify(value.trial_order) !== JSON.stringify(expectedOrder)) throw new Error("session trial order does not match its sealed seed");
   if (!Array.isArray(value.trials) || value.trials.length > expectedOrder.length) throw new Error("session trial evidence is incomplete or malformed");
-  const completedIds = value.trials.map((trial) => trial?.trial_id);
-  if (JSON.stringify(completedIds) !== JSON.stringify(expectedOrder.slice(0, completedIds.length))) throw new Error("completed trials are not a valid experiment prefix");
-  if (!value.session_id || !value.listener?.id || !value.setup?.volume_check) throw new Error("session identity or setup evidence is missing");
+  const expectedPresentations = presentations(experiment, value.randomization.seed);
+  value.trials.forEach((response, index) => validateRestoredTrial(response, byTrial[expectedOrder[index]], expectedPresentations[expectedOrder[index]]));
   if (value.submitted_at && value.trials.length !== expectedOrder.length) throw new Error("submitted session is missing trials");
   return value;
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -93,6 +93,30 @@ async function createCampaignBundle() {
   return { candidate, bundle: join(candidate, "listening"), analysis: join(candidate, "listening-analysis.json") };
 }
 
+async function createAbxBundle(candidate, sourceBundle, sourceAnalysis) {
+  const bundle = join(candidate, "listening-abx");
+  const analysisPath = join(candidate, "listening-abx-analysis.json");
+  await cp(sourceBundle, bundle, { recursive: true });
+  const experiment = JSON.parse(await readFile(join(bundle, "experiment.json"), "utf8"));
+  const analysis = JSON.parse(await readFile(sourceAnalysis, "utf8"));
+  for (let index = 0; index < experiment.trials.length; index++) {
+    const trial = experiment.trials[index];
+    const privateTrial = analysis.trials[index];
+    const source = trial.stimuli[index % trial.stimuli.length];
+    const xPath = `audio/x-${String(index + 1).padStart(3, "0")}.wav`;
+    await copyFile(join(bundle, source.path), join(bundle, xPath));
+    trial.protocol = "abx";
+    trial.prompt = `Which sample is identical to X for case ${index + 1}?`;
+    trial.x = { id: "x", path: xPath };
+    privateTrial.x_source = source.id;
+  }
+  analysis.experiment = "listening-abx/experiment.json";
+  analysis.experiment_digest = await manifestDigest(experiment);
+  await writeFile(join(bundle, "experiment.json"), `${JSON.stringify(experiment, null, 2)}\n`);
+  await writeFile(analysisPath, `${JSON.stringify(analysis, null, 2)}\n`);
+  return { bundle, analysis: analysisPath, experiment };
+}
+
 async function waitForServer(url) {
   for (let attempt = 0; attempt < 100; attempt++) {
     try {
@@ -141,7 +165,7 @@ try {
     noVerdict: !("quality_verdict" in pilotSession),
   };
 
-  const { bundle, analysis } = await createCampaignBundle();
+  const { candidate, bundle, analysis } = await createCampaignBundle();
   const bundleUrl = relative(ROOT, join(bundle, "index.html")).split(sep).join("/");
   const campaignUrl = `http://127.0.0.1:${port}/${bundleUrl}?seed=305419896`;
   await page.goto(campaignUrl, { waitUntil: "networkidle" });
@@ -181,6 +205,29 @@ try {
     noVerdict: campaignAnalysis.quality_verdict === null,
   };
 
+  const abx = await createAbxBundle(candidate, bundle, analysis);
+  const abxUrl = relative(ROOT, join(abx.bundle, "index.html")).split(sep).join("/");
+  await page.goto(`http://127.0.0.1:${port}/${abxUrl}?seed=2271560481`, { waitUntil: "networkidle" });
+  const abxPublicText = JSON.stringify(abx.experiment);
+  if (/x_source|candidate|incumbent/i.test(abxPublicText)) throw new Error("ABX participant manifest exposes its answer key");
+  await completeSetup(page, "abx-browser-pilot");
+  for (let trial = 0; trial < abx.experiment.trials.length; trial++) {
+    await playEveryVisibleSampleToCompletion(page);
+    await page.getByRole("button", { name: "Sample 1", exact: true }).click();
+    await page.getByRole("button", { name: trial + 1 === abx.experiment.trials.length ? "Submit session" : "Save and continue" }).click();
+  }
+  const abxSessionPath = join(downloads, "abx-session.json");
+  const abxSession = await exportSession(page, abxSessionPath);
+  const abxAnalysisPath = join(downloads, "abx-analysis.json");
+  runPython(["scripts/dev/listening.py", "analyze", abx.analysis, abxSessionPath, "--out", abxAnalysisPath]);
+  const abxAnalysis = JSON.parse(await readFile(abxAnalysisPath, "utf8"));
+  const abxAssertions = {
+    publicAnswerKeyAbsent: !/x_source|candidate|incumbent/i.test(abxPublicText),
+    opaqueXPlayedCompletely: abxSession.trials.every((trial) => trial.playback.x.completed === 1),
+    pythonAcceptedBrowserSession: abxAnalysis.n_included === 1 && abxAnalysis.abx.total === abx.experiment.trials.length,
+    noVerdict: abxAnalysis.quality_verdict === null,
+  };
+
   const fallbackContext = await browser.newContext();
   await fallbackContext.addInitScript(() => {
     Storage.prototype.setItem = function setItem() { throw new DOMException("blocked", "QuotaExceededError"); };
@@ -195,6 +242,18 @@ try {
   const exportVisibleDuringProgress = await fallbackPage.locator("#manual-export-section").isVisible();
   await fallbackPage.reload({ waitUntil: "networkidle" });
   await fallbackPage.getByText("Recover from a manual session copy").click();
+  const rejectedTampering = [];
+  const expectRestoreRejected = async (mutate) => {
+    const changed = structuredClone(interruptedJson);
+    mutate(changed);
+    await fallbackPage.locator("#restore-json").fill(JSON.stringify(changed));
+    await fallbackPage.getByRole("button", { name: "Restore session JSON" }).click();
+    rejectedTampering.push((await fallbackPage.locator("#status").innerText()).startsWith("Session restore failed:") && await fallbackPage.locator("#setup").isVisible());
+  };
+  await expectRestoreRejected((value) => { value.randomization.seed = 4294967296; });
+  await expectRestoreRejected((value) => { value.trials[0].presentation.reverse(); });
+  await expectRestoreRejected((value) => { value.trials[0].playback[value.trials[0].presentation[0]].completed = -1; });
+  await expectRestoreRejected((value) => { value.trials[0].response.choice = "not-a-condition"; });
   await fallbackPage.locator("#restore-json").fill(interruptedJsonText);
   await fallbackPage.getByRole("button", { name: "Restore session JSON" }).click();
   const restoredProgress = await fallbackPage.locator(".progress").innerText();
@@ -204,6 +263,7 @@ try {
   const fallbackStatus = await fallbackPage.locator("#status").innerText();
   const fallbackAssertions = {
     inProgressCopyAvailable: exportVisibleDuringProgress && interruptedJson.trials.length === 1 && !interruptedJson.submitted_at,
+    tamperedCopiesRejected: rejectedTampering.length === 4 && rejectedTampering.every(Boolean),
     restoredAfterInterruption: restoredProgress.includes("Trial 2 of 2") && fallbackJson.session_id === interruptedJson.session_id,
     completedWithoutStorage: fallbackJson.trials.length === 2 && Boolean(fallbackJson.submitted_at),
     manualCopyAvailable: fallbackJson.listener.id === "storage-fallback-pilot",
@@ -215,11 +275,13 @@ try {
     noConsoleErrors: errors.length === 0,
     pilot: pilotAssertions,
     campaign: campaignAssertions,
+    abx: abxAssertions,
     storageFallback: fallbackAssertions,
   };
   const verdict = errors.length === 0
     && Object.values(pilotAssertions).every(Boolean)
     && Object.values(campaignAssertions).every(Boolean)
+    && Object.values(abxAssertions).every(Boolean)
     && Object.values(fallbackAssertions).every(Boolean) ? "PASS" : "FAIL";
   console.log(JSON.stringify({ verdict, browser: BROWSER_NAME, seed, pilotPresentation: expected, assertions, errors }, null, 2));
   if (verdict !== "PASS") process.exitCode = 1;
