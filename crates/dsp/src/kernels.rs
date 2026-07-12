@@ -155,8 +155,9 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
         Instrument::SynthPad => 0.48,     // was -26.5 LUFS
         Instrument::Piano => 0.11,          // v3 hammer runs hot; measured -13.5 LUFS pre-correction
         Instrument::GuitarSteel => 0.76,    // was -25.2 LUFS
-        Instrument::GuitarElectric => 1.5,  // was -31.7 LUFS
-        Instrument::GuitarDistorted => 0.57, // was -27.3 LUFS
+        Instrument::GuitarElectric => 0.95, // re-measured 2026-07-11 after electric
+        // string/level rework: was -22.2 LUFS at makeup 1.5 (marimba -26.2)
+        Instrument::GuitarDistorted => 0.55, // was -25.9 LUFS at makeup 0.57
     }
 }
 
@@ -492,7 +493,11 @@ impl PluckVoice {
             ap2_c: (1.0 - frac2) / (1.0 + frac2),
             ap2_x1: 0.0,
             ap2_y1: 0.0,
-            level: 0.5 * (0.35 + 0.65 * vel),
+            // Velocity moves loudness far less than timbre on an electric (NSynth
+            // layer spread ≈ 5 LU, most of it spectral): keep the level curve
+            // shallow and let the pick corner carry the dynamics. Mild key boost
+            // compensates the short upper strings' lower energy (P72 was −18 LU).
+            level: 0.52 * (0.72 + 0.28 * vel) * (1.0 + 0.35 * key.max(0.0)),
             life: ((t60_slow + 0.5) * sr) as u64,
             age: 0,
             sr,
@@ -502,6 +507,8 @@ impl PluckVoice {
         // noise with TWO cascaded one-pole lowpasses. Velocity moves the corner
         // (flesh-soft ≈ 200 Hz → hard plectrum ≈ 1.6 kHz), matching the NSynth
         // refs where the spectral knee scales with velocity but the cliff stays.
+        // pick point at 0.28 of the sounding length (first comb dip ≈ H3.6);
+        // bridge-side 0.13/0.16 measured slightly worse vs the reference set
         let pick_pos = 0.28;
         let mut rng = Lcg(seed | 1);
         // corner is flatter in velocity than energy is (NSynth layers: the knee
