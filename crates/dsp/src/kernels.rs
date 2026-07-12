@@ -226,13 +226,13 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
         Instrument::Vibraphone => 4.9,    // was -30.5 LUFS
         Instrument::Glockenspiel => 28.0, // was -39.6 LUFS (tiny raw kernel level)
         Instrument::MusicBox => 14.8,     // was -35.6 LUFS
-        Instrument::Guitar => 0.126,       // round-2 re-bake (body refit + release; was -22.1 LUFS at 0.194)
+        Instrument::Guitar => 0.151,       // guitar r3 re-bake (radiation chain; was -27.4 LUFS at 0.126)
         Instrument::Bass => 0.63,         // round-2 re-bake (DI tilt body)
         Instrument::EPiano => 1.47,       // was -26.6 LUFS
         Instrument::Drums => 0.61,        // was -27.4 LUFS
         Instrument::SynthPad => 0.48,     // was -26.5 LUFS
         Instrument::Piano => 0.084, // piano r2 re-bake (decay-geometry rework)
-        Instrument::GuitarSteel => 0.46,    // acoustics r2 re-bake (HF floor + 16-mode body)
+        Instrument::GuitarSteel => 0.111,   // guitar r3 re-bake (acceleration chain ran +9 dB at 0.46)
         Instrument::GuitarElectric => 0.78, // electric r2 re-bake (022 dark voicing)
         Instrument::GuitarDistorted => 0.23, // electric r2 re-bake (drive 45 lead channel)
         Instrument::DrumsRock => 0.43,      // measured 2026-07-11 (pyloudnorm -22.6 pre-bake)
@@ -506,6 +506,9 @@ pub struct PluckVoice {
     /// release voicing: post-note-off t60 and pluck-off click level
     rel_t60: f32,
     rel_click: f32,
+    /// click/transient level scale (pre-acceleration-renorm; the transients
+    /// bypass the output differencers — see level_tr in start_acoustic)
+    tr_lvl: f32,
     /// f0 > 0 marks the acoustic path (per-period loss calibration, new damp)
     f0: f32,
 }
@@ -604,8 +607,16 @@ fn body_coupling_shape(f: f32) -> f32 {
 /// One-pole loop lowpass y += c(x−y): magnitude at ω (for loss calibration).
 #[inline]
 fn onepole_mag(c: f32, w: f32) -> f32 {
+    onepole_mag_cw(c, w.cos())
+}
+
+/// cos(ω)-hoisted variant for bisection loops (ω fixed, wasm transcendentals
+/// are software floats — the r3 law fit's nested bisections cost ~ms/note-on
+/// before hoisting).
+#[inline]
+fn onepole_mag_cw(c: f32, cw: f32) -> f32 {
     let b = 1.0 - c;
-    c / (1.0 - 2.0 * b * w.cos() + b * b).sqrt()
+    c / (1.0 - 2.0 * b * cw + b * b).sqrt()
 }
 
 /// One-pole loop lowpass phase delay in samples at ω (exact, not the DC approx).
@@ -623,8 +634,13 @@ fn onepole_delay(c: f32, w: f32) -> f32 {
 /// al. 1996; steel ref 015 keeps 2–6 kHz partials ringing t60 ≈ 2 s while a
 /// pure one-pole killed them in tens of ms). m = 0 reduces to the one-pole.
 fn blend_h(c: f32, m: f32, w: f32) -> (f32, f32) {
-    let b = 1.0 - c;
     let (sw, cw) = w.sin_cos();
+    blend_h_sc(c, m, sw, cw)
+}
+
+#[inline]
+fn blend_h_sc(c: f32, m: f32, sw: f32, cw: f32) -> (f32, f32) {
+    let b = 1.0 - c;
     let d = 1.0 + b * b - 2.0 * b * cw;
     (
         m + (1.0 - m) * c * (1.0 - b * cw) / d,
@@ -635,6 +651,12 @@ fn blend_h(c: f32, m: f32, w: f32) -> (f32, f32) {
 #[inline]
 fn blend_mag(c: f32, m: f32, w: f32) -> f32 {
     let (re, im) = blend_h(c, m, w);
+    (re * re + im * im).sqrt()
+}
+
+#[inline]
+fn blend_mag_sc(c: f32, m: f32, sw: f32, cw: f32) -> f32 {
+    let (re, im) = blend_h_sc(c, m, sw, cw);
     (re * re + im * im).sqrt()
 }
 
@@ -669,12 +691,26 @@ fn shelf_h(d: f32, c: f32, w: f32) -> (f32, f32) {
     if d <= 0.0 {
         return (1.0, 0.0);
     }
-    let b = 1.0 - c;
     let (sw, cw) = w.sin_cos();
+    shelf_h_sc(d, c, sw, cw)
+}
+
+#[inline]
+fn shelf_h_sc(d: f32, c: f32, sw: f32, cw: f32) -> (f32, f32) {
+    let b = 1.0 - c;
     let den = 1.0 + b * b - 2.0 * b * cw;
     let lre = c * (1.0 - b * cw) / den;
     let lim = -c * b * sw / den;
     (1.0 - d * lre, -d * lim)
+}
+
+#[inline]
+fn shelf_mag_sc(d: f32, c: f32, sw: f32, cw: f32) -> f32 {
+    if d <= 0.0 {
+        return 1.0;
+    }
+    let (re, im) = shelf_h_sc(d, c, sw, cw);
+    (re * re + im * im).sqrt()
 }
 
 #[inline]
@@ -1012,6 +1048,7 @@ impl PluckVoice {
             tr_rng: Lcg(1),
             rel_t60: 0.0,
             rel_click: 0.0,
+            tr_lvl: 0.0,
             f0: 0.0,
         }
     }
@@ -1112,6 +1149,8 @@ impl PluckVoice {
                 }
             }
             let w_v = core::f32::consts::TAU * f_v / sr;
+            let (sv, cv) = w_v.sin_cos();
+            let (s0, c0) = w0.sin_cos();
             // Blend fit to LAW targets at two anchors that the metrics can see
             // (NSynth refs are 16 kHz): the floor from ~4.5 kHz, the knee
             // (lp_c) bisected so the MID ladder (~1 kHz) matches. A first cut
@@ -1123,12 +1162,13 @@ impl PluckVoice {
             let f_mid = (3.5 * p.f0).clamp(900.0, 2200.0).min(0.6 * f_top);
             lp_mix = (g_t(f_top) / g_v).clamp(0.0, 0.98);
             let w_m = core::f32::consts::TAU * f_mid / sr;
+            let (sm, cm) = w_m.sin_cos();
             let target_mid = (g_t(f_mid) / g_v).clamp(lp_mix, 1.0);
             // |H_bl(w_m)| rises monotonically with lp_c (brighter one-pole)
             let (mut lo, mut hi) = (0.01f32, 0.995f32);
             for _ in 0..28 {
                 let mid = 0.5 * (lo + hi);
-                if blend_mag(mid, lp_mix, w_m) < target_mid {
+                if blend_mag_sc(mid, lp_mix, sm, cm) < target_mid {
                     lo = mid;
                 } else {
                     hi = mid;
@@ -1137,11 +1177,11 @@ impl PluckVoice {
             lp_c = 0.5 * (lo + hi);
             // coupling shelf: knee ~320 Hz; depth from the f0-vs-valley ratio
             if f_v > p.f0 * 1.02 {
-                let wsh = core::f32::consts::TAU * 320.0 / sr;
+                let cwsh = (core::f32::consts::TAU * 320.0 / sr).cos();
                 let (mut lo, mut hi) = (0.005f32, 0.95f32);
                 for _ in 0..24 {
                     let mid = 0.5 * (lo + hi);
-                    if onepole_mag(mid, wsh) < 0.5 {
+                    if onepole_mag_cw(mid, cwsh) < 0.5 {
                         lo = mid;
                     } else {
                         hi = mid;
@@ -1149,12 +1189,13 @@ impl PluckVoice {
                 }
                 sh_c = 0.5 * (lo + hi);
                 let r = (g0 / g_v)
-                    * (blend_mag(lp_c, lp_mix, w_v) / blend_mag(lp_c, lp_mix, w0));
+                    * (blend_mag_sc(lp_c, lp_mix, sv, cv) / blend_mag_sc(lp_c, lp_mix, s0, c0));
                 if r < 0.999 {
                     let (mut lo_d, mut hi_d) = (0.0f32, 0.92f32);
                     for _ in 0..30 {
                         let mid = 0.5 * (lo_d + hi_d);
-                        let ratio = shelf_mag(mid, sh_c, w0) / shelf_mag(mid, sh_c, w_v);
+                        let ratio =
+                            shelf_mag_sc(mid, sh_c, s0, c0) / shelf_mag_sc(mid, sh_c, sv, cv);
                         if ratio > r {
                             lo_d = mid;
                         } else {
@@ -1169,7 +1210,7 @@ impl PluckVoice {
                 sh_d = 0.0;
                 sh_c = 0.5;
             }
-            loss = (g_v / (blend_mag(lp_c, lp_mix, w_v) * shelf_mag(sh_d, sh_c, w_v)))
+            loss = (g_v / (blend_mag_sc(lp_c, lp_mix, sv, cv) * shelf_mag_sc(sh_d, sh_c, sv, cv)))
                 .min(0.99995);
         } else {
             // legacy hand-fit path (bass): pure one-pole or ladder-over-floor —
@@ -1245,6 +1286,11 @@ impl PluckVoice {
         } else {
             p.level
         };
+        // The direct click transient bypasses the differencers: scale it by
+        // the level BEFORE the acceleration renorm (the renorm compensates
+        // the string's in-chain loss, which the click never suffers — left on
+        // the post-renorm level it ran ~12x hot at E2 and clipped at onset).
+        let level_tr = level;
         // Acceleration differencer: renormalized at 3·f0 like the force tap.
         if p.acc_rho > 0.0 {
             let w3 = (3.0 * w0).min(core::f32::consts::FRAC_PI_2);
@@ -1293,12 +1339,13 @@ impl PluckVoice {
             frac1,
             frac2,
             // contact click: ~35 ms HP-shaped noise burst, velocity-scaled like
-            // the snap; scaled by `level` since it bypasses the loop tap
-            tr_env: p.click * (0.35 + 0.65 * p.vel) * level,
+            // the snap; scaled by the pre-acceleration level (see level_tr)
+            tr_env: p.click * (0.35 + 0.65 * p.vel) * level_tr,
             tr_dec: t60_gain(0.035, sr),
             tr_rng: Lcg(seed.rotate_left(13) | 1),
             rel_t60: p.rel_t60,
             rel_click: p.rel_click,
+            tr_lvl: level_tr,
             f0: p.f0,
             ..Self::blank()
         };
@@ -1378,6 +1425,14 @@ impl PluckVoice {
                 let src = (i * len) / len2;
                 v.buf2[i] = tmp[src] - mean;
             }
+        }
+        // Prime the output differencers with the t=0 signal so sample 0 is
+        // differenced like every other sample instead of passing as a raw
+        // impulse (which the level renorm then amplifies ~1/|H(3f0)| per tap).
+        if p.br_rho > 0.0 {
+            let m0 = v.buf[0] + p.pol_mix * v.buf2[0];
+            v.br_x1 = m0;
+            v.acc_x1 = m0 * (1.0 - p.br_rho);
         }
         // Tension mod follows the STRING displacement power (excitation shape is
         // peak-normalized ~1); the string is maximally elongated at release, so
@@ -1611,7 +1666,7 @@ impl PluckVoice {
                     acc += b * b;
                 }
                 let rms = (acc / self.len.max(1) as f32).sqrt();
-                let amp = self.rel_click * rms.min(1.0) * self.level;
+                let amp = self.rel_click * rms.min(1.0) * self.tr_lvl;
                 if amp > self.tr_env {
                     self.tr_env = amp;
                 }
@@ -2677,6 +2732,10 @@ pub struct SympBank {
     /// though the duplex floor keeps a small send alive)
     hot: f32,
     pub enabled: bool,
+    /// true while configured as the guitar open-string bank (lets lib.rs
+    /// restore the piano tuning when a track switches back without touching
+    /// still-ringing piano banks on repeated set_track calls)
+    pub guitar: bool,
     wet: f32,
 }
 
@@ -2695,6 +2754,7 @@ impl SympBank {
             send_c: 1.0 - (-1.0 / (0.015 * sr)).exp(),
             hot: 0.0,
             enabled: false,
+            guitar: false,
             wet: 0.4,
         };
         for (i, &m) in SYMP_TUNING.iter().enumerate() {
@@ -2707,6 +2767,44 @@ impl SympBank {
             b.loss_damped[i] = 10f32.powf(-3.0 / (0.4 * f0));
         }
         b
+    }
+
+    /// Reconfigure as the guitar's six open strings (E2 A2 D3 G3 B3 E4):
+    /// every fretted note rings the other strings through the bridge. This is
+    /// the always-stable FEEDFORWARD sympathetic bank (Jaffe-Smith 1983; the
+    /// HUT coupling matrix of Karjalainen/Valimaki/Tolonen CMJ 1998 Eq. 16 is
+    /// the same idea inside a dual-polarization string). Coupling is subtle -
+    /// audible on strums and staccato phrases, not solo held notes (Woodhouse,
+    /// Euphonics 7.3: guitar bridge coupling exceeds intrinsic damping only
+    /// near the strong soundboard resonances). Slots 6..12 are parked (len 2,
+    /// skipped by tick's len guard). Piano banks are untouched: lib.rs calls
+    /// this only for guitar-family tracks.
+    pub fn retune_guitar(&mut self, sr: f32) {
+        const GUITAR_OPEN: [u32; 6] = [40, 45, 50, 55, 59, 64];
+        for i in 0..SYMP_STRINGS {
+            self.bufs[i] = [0.0; SYMP_BUF];
+            self.lp[i] = 0.0;
+            self.pos[i] = 0;
+            if i < GUITAR_OPEN.len() {
+                let f0 = midi_to_hz(GUITAR_OPEN[i] as f32);
+                self.len[i] = ((sr / f0 - 0.5) as usize).clamp(2, SYMP_BUF - 1);
+                // undamped open strings ring a few seconds while the hand is
+                // playing; the flesh chokes them when the last voice dies
+                // (lib.rs drives open/damped from track voice activity)
+                self.loss_open[i] = 10f32.powf(-3.0 / (3.0 * f0));
+                self.loss_damped[i] = 10f32.powf(-3.0 / (0.3 * f0));
+            } else {
+                self.len[i] = 2;
+            }
+        }
+        self.open = true;
+        self.send = 1.0;
+        self.send_target = 1.0;
+        // subtle: single sampled notes (NSynth) carry no cross-string ring;
+        // the halo should surface on strums/phrases, not solo-note metrics
+        self.wet = 0.05;
+        self.hot = 0.0;
+        self.guitar = true;
     }
 
     pub fn set_pedal(&mut self, on: bool) {
@@ -2728,6 +2826,9 @@ impl SympBank {
         let inj = input * self.send * (1.0 / SYMP_STRINGS as f32) * 0.9;
         let mut sum = 0.0;
         for i in 0..SYMP_STRINGS {
+            if self.len[i] < 3 {
+                continue; // parked slot (guitar bank uses 6 of 12)
+            }
             let p = self.pos[i];
             let y = self.bufs[i][p];
             // dark loop: sympathetic strings answer mostly with their lower partials
@@ -3945,10 +4046,21 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
                 hf_floor_t60: 0.0,
                 hf_knee_hz: 2400.0,
                 pick_pos: 0.20,
-                contact: 0.045,
+                // r2's 0.045 band-limited the excitation to ~n=22 (1.8 kHz at
+                // E2); the refs keep 1.7-3.4 kHz attack content +17..+31 dB
+                // above the render (pooled envdelta r3). Woodhouse 2012 uses a
+                // ~7.5 mm contact on a 650 mm string = 0.0115 - our wider value
+                // also stood in for the missing radiation tilt, now present.
+                // Velocity-steepened: soft tirando is all flesh (wide patch),
+                // hard plucks release nearer the nail.
+                contact: 0.036 - 0.011 * vel,
                 snap: 0.5,
                 scrape: 0.06,
-                click: 0.0,
+                // fingertip/nail release tick (r3): at the nylon transient
+                // scale (tr_lvl = p.level, no differencer renorms) this is
+                // subtle - metrics prefer it slightly over 0 and single-note
+                // peaks are unchanged (0.042)
+                click: 5.0,
                 rel_t60: 0.10,
                 rel_click: 0.25,
                 pol_mix: 0.35,
@@ -4083,11 +4195,12 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
                 // (with the HF loss floor, all-in-loop ran +30…+47 dB hot)
                 snap: 0.12,
                 scrape: 0.008,
-                // r2's 1.35 was compensating a dark output chain; with the
-                // acceleration+radiation tilt the string carries the attack
-                // brightness itself, and the big click rang the body rows
-                // 20-35 dB hot between partials (attack envdelta, it4a)
-                click: 0.5,
+                // Re-fit at the r3 transient scale (tr_lvl = pre-acceleration
+                // level): r2's 1.35 rode a scale ~30-46x hotter at E2 and was
+                // soft-clipping every ff onset. Sweep 1.5-16 (2026-07-12): the
+                // metric optimum (8-16) rides the clip ceiling again; 3.0 is
+                // the best clean-crest point (solo ff onset peak ~0.5).
+                click: 3.0,
                 rel_t60: 0.90,
                 rel_click: 0.5,
                 // two-stage decay, Weinreich roles corrected round 2: the
@@ -4271,6 +4384,49 @@ mod tests {
     /// Steel-string tuning at both deploy sample rates (the acoustic constructor
     /// has its own delay budget: exact loop-lowpass phase delay + tension-mod
     /// fraction bias) — protocol: delay math changes need 44.1k AND 48k coverage.
+    #[test]
+    /// Guards the r3 radiation chain (bridge force -> acceleration differencer
+    /// -> monopole HP): the steel attack must be BRIGHT like the refs (attack
+    /// centroid ~1.1 kHz at E2 ff in NSynth 015; the r2 chain sat at 274 Hz).
+    #[test]
+    fn steel_attack_is_radiation_bright() {
+        for sr in [44_100.0f32, 48_000.0f32] {
+            let out = render_pluck(Instrument::GuitarSteel, 40, 1.0, sr, 0.5);
+            let n = (0.1 * sr) as usize;
+            let seg = &out[..n];
+            // spectral centroid over the first 100 ms via Goertzel probes
+            let (mut num, mut den) = (0.0f64, 0.0f64);
+            let mut f = 90.0f32;
+            while f < 5000.0 {
+                let e = band_energy(seg, sr, &[f]) as f64;
+                num += (f as f64) * e;
+                den += e;
+                f *= 1.12;
+            }
+            let centroid = num / den.max(1e-12);
+            assert!(
+                centroid > 600.0,
+                "sr={sr}: attack centroid {centroid:.0} Hz — radiation tilt missing"
+            );
+        }
+    }
+
+    /// Guards the coupling-shelf delay compensation: G2 sits ON the A0 hump
+    /// (shelf active, extra in-loop phase delay) and must stay in tune.
+    #[test]
+    fn steel_g2_in_tune_with_coupling_shelf_active() {
+        for sr in [44_100.0f32, 48_000.0f32] {
+            let out = render_pluck(Instrument::GuitarSteel, 43, 0.9, sr, 1.0);
+            let tail = &out[(0.5 * sr) as usize..];
+            let want = midi_to_hz(43.0);
+            let f = peak_freq(tail, sr, want * 0.97, want * 1.03);
+            assert!(
+                (f - want).abs() < want * 0.015,
+                "sr={sr}: {f} Hz, want {want}"
+            );
+        }
+    }
+
     #[test]
     fn steel_e3_in_tune_both_rates_and_velocities() {
         for sr in [44_100.0f32, 48_000.0f32] {

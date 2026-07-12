@@ -177,8 +177,24 @@ impl Engine {
                 t.body_y2[0][i] = 0.0;
                 t.body_y2[1][i] = 0.0;
             }
-            // sympathetic resonance (pedal bloom): pianos only for now
-            self.symp[track].enabled = instrument == Instrument::Piano;
+            // sympathetic resonance: piano pedal bloom, and the acoustic
+            // guitars' six open strings (guitar r3 — kernels::SympBank owns
+            // the guitar retune; feedforward = unconditionally stable)
+            match instrument {
+                Instrument::Piano => {
+                    if self.symp[track].guitar {
+                        self.symp[track] = SympBank::new(self.sample_rate);
+                    }
+                    self.symp[track].enabled = true;
+                }
+                Instrument::Guitar | Instrument::GuitarSteel => {
+                    if !self.symp[track].guitar {
+                        self.symp[track].retune_guitar(self.sample_rate);
+                    }
+                    self.symp[track].enabled = true;
+                }
+                _ => self.symp[track].enabled = false,
+            }
             // magnetic-pickup resonance (electrics): RBJ resonant lowpass
             let (pf, pq) = pickup_defaults(instrument);
             t.pk_on = pf > 0.0;
@@ -386,6 +402,12 @@ impl Engine {
             // returned to both channels; keeps ringing after the source damps
             if self.symp[t].enabled && (any || self.symp[t].ringing()) {
                 let bank = &mut self.symp[t];
+                // guitar open strings ring while the hand is playing and get
+                // damped by the flesh when the last note dies (piano banks
+                // keep their pedal-driven state)
+                if bank.guitar {
+                    bank.set_pedal(any);
+                }
                 for i in 0..frames {
                     let m = (self.track_l[i] + self.track_r[i]) * 0.5;
                     let res = bank.tick(m) * core::f32::consts::FRAC_1_SQRT_2;
@@ -997,6 +1019,64 @@ mod tests {
         let peak = late.iter().fold(0.0f32, |a, &s| a.max(s.abs()));
         assert!(peak < 1e-3, "pad still sounding 3.3 s after release: {peak}");
         assert_eq!(e.active_voices(), 0, "released pad voice not reclaimed");
+    }
+
+    #[test]
+    fn guitar_symp_halo_rings_then_hand_damps_it() {
+        // The open-string bank rings while the track has live voices and is
+        // choked (palm damp) once the last voice dies; by 2.5 s after that,
+        // the track must be essentially silent (this is exactly what the
+        // isolated-note references show).
+        let mut e = Engine::new(48_000.0);
+        e.set_track(0, Instrument::Guitar, 0.9, 0.0);
+        e.note_on(0, 52, 0.9); // E3: partials coincide with open E2/E4
+        let mut render = |secs: f32, e: &mut Engine| {
+            let mut peak = 0.0f32;
+            let total = (secs * 48_000.0) as usize;
+            let mut done = 0;
+            while done < total {
+                let n = QUANTUM_FRAMES.min(total - done);
+                e.process(n);
+                for i in 0..n {
+                    peak = peak.max(e.out_l[i].abs());
+                }
+                done += n;
+            }
+            peak
+        };
+        render(1.0, &mut e);
+        e.note_off(0, 52);
+        // during the release the voice is alive, the bank open: halo present
+        let halo = render(0.4, &mut e);
+        assert!(halo > 1e-6, "no sympathetic halo during release: {halo}");
+        render(2.5, &mut e);
+        let damped = render(0.5, &mut e);
+        assert!(
+            damped < halo * 0.05,
+            "open strings not hand-damped after the voice died: {halo} -> {damped}"
+        );
+    }
+
+    #[test]
+    fn piano_symp_bank_restored_after_guitar_switch() {
+        let mut e = Engine::new(48_000.0);
+        e.set_track(0, Instrument::Guitar, 0.9, 0.0);
+        e.set_track(0, Instrument::Piano, 0.9, 0.0);
+        // the bank must be back on piano tuning/behavior: pedal bloom works
+        e.set_pedal(0, true);
+        e.note_on(0, 57, 0.9);
+        for _ in 0..400 {
+            e.process(QUANTUM_FRAMES);
+        }
+        e.note_off(0, 57);
+        let mut peak = 0.0f32;
+        for _ in 0..40 {
+            e.process(QUANTUM_FRAMES);
+            for i in 0..QUANTUM_FRAMES {
+                peak = peak.max(e.out_l[i].abs());
+            }
+        }
+        assert!(peak > 1e-4, "pedal bloom lost after guitar->piano switch: {peak}");
     }
 
     #[test]
