@@ -1,7 +1,7 @@
 # Professional reference-matching loop v3
 
 Date: 2026-07-12
-Status: draft — proposes a multi-PR evaluation-harness upgrade for human review; it does NOT authorize implementation, reference downloads, embedding-model downloads, instrument-model changes, npm publication, or release activity.
+Status: accepted — owner-approved 2026-07-12; authorizes the L1–L4 evaluation-harness phases below, but does NOT authorize reference downloads, embedding-model downloads, instrument-model changes before the loop gate, npm publication, or release activity.
 
 ## Motivation
 
