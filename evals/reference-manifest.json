@@ -46,6 +46,31 @@
       "notes": "Same NSynth caveats."
     },
     {
+      "match": "references/epiano-wurli",
+      "corpus": "Greg Sullivan Wurlitzer EP200 (sfzinstruments/GregSullivan.E-Pianos)",
+      "license": "CC-BY-3.0",
+      "sr": 44100,
+      "level_normalized": true,
+      "notes": "4 velocity layers (pp/mp/f/ff), full-band, trustworthy attack + harmonic balance. Peak-normalized: velocity->loudness FAKE, fit velocity->timbre only. Tails hard-trimmed while ringing (pp files down to 0.36 s): decay/t60/release axes untrustworthy. ~5 Hz AM on low notes is the built-in amp tremolo (preset effect, not a fit target)."
+    },
+    {
+      "match": "references/epiano-pianet",
+      "corpus": "Greg Sullivan Pianet T (same repo)",
+      "license": "CC-BY-3.0",
+      "sr": 44100,
+      "level_normalized": true,
+      "notes": "2 layers only; long natural decays (~35 s low). Sticky-pad excitation, no hammer: decay-shape sanity only, never attack fitting."
+    },
+    {
+      "match": "references/epiano",
+      "corpus": "NSynth keyboard_electronic",
+      "license": "CC-BY-4.0",
+      "sr": 16000,
+      "level_normalized": true,
+      "mask_after_s": 3.3,
+      "notes": "Same NSynth caveats as guitar-acoustic. Sources triaged for tine/reed-EP character (SOURCES.txt): 098/002/001 bark ladders, 069 two-stage decay; 003 has 5.4 Hz tremolo (held out)."
+    },
+    {
       "match": "references/kick",
       "corpus": "DRSKit + MuldjordKit + NakedDrums (DrumGizmo/sfz) + VSCO-2-CE concert BD",
       "license": "CC-BY-4.0 / CC0-1.0 (per SOURCES.txt)",
