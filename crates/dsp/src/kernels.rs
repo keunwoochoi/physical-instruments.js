@@ -63,7 +63,7 @@ impl Instrument {
 /// on the track bus so simultaneous notes intermodulate like a real amplifier.
 pub fn amp_defaults(inst: Instrument) -> (f32, f32) {
     match inst {
-        Instrument::GuitarElectric => (1.6, 5200.0),
+        Instrument::GuitarElectric => (1.6, 1800.0),
         Instrument::GuitarDistorted => (6.5, 3800.0),
         _ => (0.0, 0.0),
     }
@@ -73,7 +73,10 @@ pub fn amp_defaults(inst: Instrument) -> (f32, f32) {
 /// resonance of a real pickup is the core "electric" tone; 0.0 = bypass.
 pub fn pickup_defaults(inst: Instrument) -> (f32, f32) {
     match inst {
-        Instrument::GuitarElectric => (4200.0, 2.6),
+        // NSynth guitar_electronic refs cliff at a pitch-independent ~1.2-1.5 kHz:
+        // a heavily loaded pickup + rolled tone pot pulls the RLC resonance down
+        // and damps its Q (Zollner, Physics of the Electric Guitar, ch. 5).
+        Instrument::GuitarElectric => (1500.0, 1.2),
         Instrument::GuitarDistorted => (3400.0, 3.2),
         _ => (0.0, 0.0),
     }
