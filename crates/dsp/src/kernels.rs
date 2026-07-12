@@ -172,8 +172,8 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
         Instrument::SynthPad => 0.48,     // was -26.5 LUFS
         Instrument::Piano => 0.067, // piano agent re-measure (v4 knock/level rework)
         Instrument::GuitarSteel => 0.50,    // acoustic agent re-bake
-        Instrument::GuitarElectric => 0.73, // electric agent re-measure
-        Instrument::GuitarDistorted => 0.21, // electric agent re-measure (high gain)
+        Instrument::GuitarElectric => 0.78, // electric r2 re-bake (022 dark voicing)
+        Instrument::GuitarDistorted => 0.23, // electric r2 re-bake (drive 45 lead channel)
     }
 }
 
@@ -1408,6 +1408,17 @@ impl ElectricVoice {
     ///   E1 to C5). The loop lowpass applies once per round trip (f0 times/sec),
     ///   so its per-pass attenuation must shrink as f0 rises or trebles die —
     ///   key-track lp_c toward 1.0 up the neck (Jaffe & Smith 1983 loss scaling).
+    ///
+    /// CLEAN VOICING (round-2 decision): the NSynth clean refs split into two
+    /// distinct rigs. The DEFAULT is the dark/saggy one (ref cluster 022:
+    /// neck-pickup jazz tone, centroid ≈ 1.3–1.65·f0 time-flat, deep rail sag,
+    /// t60_late/early ≈ 4.7) — reference-fit here. The alternative BRIGHT/STIFF
+    /// rig (cluster 028: centroid ≈ 3.2–4.2·f0 at low register, sag ratio only
+    /// ≈ 1.3–1.7, audible fret-release squeak) is a future preset row; measured
+    /// directions if exposed: diff_g ON (velocity pickup tilt), vf_on false or
+    /// vfc ≈ 2.6 kHz, sag_k ≈ 2.0, t60_slow ≈ 9 s, texture corner ×2, pickup
+    /// row ≈ (2400 Hz, Q 1.8), tone ≈ 3.2 kHz. The release squeak passes its
+    /// open voicing automatically (it is injected on the string, pre-voicing).
     pub fn start_electric(midi: u32, f0: f32, vel: f32, sr: f32, dist: bool, seed: u32) -> Self {
         let key = ((midi as f32) - 40.0) / 44.0; // 0 = E2 … 1 = C6
         // dist: heavy strings + amp compression read as longer sustain; the pick
@@ -1419,7 +1430,7 @@ impl ElectricVoice {
         // per-pass brightness: refs lose ~35 dB/s at 1 kHz in the low register
         // while H2..H5 barely decay — a steep loop corner, key-tracked so the
         // per-second HF decay stays register-flat (Valimaki et al. 1996 loop fit)
-        let mut lp_c = (0.47 + 0.62 * key + 0.06 * vel).clamp(0.30, 0.985);
+        let mut lp_c = (0.51 + 0.56 * key + 0.06 * vel).clamp(0.30, 0.985);
         if dist {
             lp_c = (lp_c + 0.08).min(0.985);
         }

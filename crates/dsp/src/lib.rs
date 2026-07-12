@@ -902,6 +902,49 @@ mod tests {
     }
 
     #[test]
+    fn electric_note_blooms_two_slope_decay() {
+        // Round-2 amp life: supply-rail sag + slow polarization must produce the
+        // refs' two-slope envelope — fast early decay, near-flat late plateau.
+        let sr = 48_000.0;
+        let mut e = Engine::new(sr);
+        e.set_track(0, Instrument::GuitarElectric, 0.9, 0.0);
+        e.note_on(0, 40, 0.8); // E2
+        let out = render_seconds(&mut e, 3.0);
+        let rms = |a: f32, b: f32| {
+            let s = &out[(a * sr) as usize..(b * sr) as usize];
+            (s.iter().map(|x| x * x).sum::<f32>() / s.len() as f32).sqrt().max(1e-9)
+        };
+        // dB/s over an early window vs a late window
+        let early = 20.0 * (rms(0.2, 0.45) / rms(0.7, 0.95)).log10() / 0.5;
+        let late = 20.0 * (rms(1.6, 1.85) / rms(2.6, 2.85)).log10() / 1.0;
+        assert!(out.iter().all(|s| s.is_finite()));
+        assert!(
+            early > late * 1.3 && late < 12.0,
+            "no bloom: early {early:.1} dB/s late {late:.1} dB/s"
+        );
+    }
+
+    #[test]
+    fn electric_release_squeak_bounded_and_terminates() {
+        // Fret-release noise: bursts at note-off on the drive channel, stays
+        // bounded, and the voice still terminates promptly at both rates.
+        for sr in [44_100.0f32, 48_000.0f32] {
+            let mut e = Engine::new(sr);
+            e.set_track(0, Instrument::GuitarDistorted, 0.9, 0.0);
+            e.note_on(0, 45, 1.0);
+            let _ = render_seconds(&mut e, 1.0);
+            e.note_off(0, 45);
+            let out = render_seconds(&mut e, 1.2);
+            assert!(out.iter().all(|s| s.is_finite()), "sr={sr}: NaN in release");
+            let peak = out.iter().fold(0.0f32, |a, &s| a.max(s.abs()));
+            assert!(peak <= 1.0, "sr={sr}: release burst clipped: {peak}");
+            let tail = &out[(1.0 * sr) as usize..];
+            let tail_peak = tail.iter().fold(0.0f32, |a, &s| a.max(s.abs()));
+            assert!(tail_peak < 1e-3, "sr={sr}: voice failed to die: {tail_peak}");
+        }
+    }
+
+    #[test]
     fn sustain_pedal_defers_release_until_pedal_up() {
         let mut e = Engine::new(48_000.0);
         e.set_track(0, Instrument::Guitar, 0.8, 0.0);
