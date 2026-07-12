@@ -91,7 +91,9 @@ def markdown_files() -> list[Path]:
 
 
 def check_skill_surface(audit: Audit) -> None:
-    skill_dirs = sorted(path for path in (ROOT / "skills").iterdir() if path.is_dir())
+    skill_dirs = sorted(
+        path for path in (ROOT / "skills").iterdir() if path.is_dir() and not path.name.startswith(".")
+    )
     command_paths = sorted((ROOT / ".claude" / "commands").glob("*.md"))
     audit.count("skills", len(skill_dirs))
     audit.count("claude_commands", len(command_paths))
@@ -125,7 +127,7 @@ def check_links(audit: Audit) -> None:
             link = raw_link.strip("<>")
             if link.startswith(("#", "http://", "https://", "mailto:")):
                 continue
-            path_part = link.split("#", 1)[0]
+            path_part = link.split("#", 1)[0].split("?", 1)[0]
             if not path_part:
                 continue
             target = (path.parent / path_part).resolve()
