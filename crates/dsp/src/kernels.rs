@@ -528,6 +528,11 @@ pub struct PluckVoice {
     tr_lp: f32,
     tr_lc: f32,
     tr_rng: Lcg,
+    /// body-pump transient (see AcPluck::thump): one windowed bipolar cycle,
+    /// active while th_ph < 1
+    th_amp: f32,
+    th_dph: f32,
+    th_ph: f32,
     /// release voicing: post-note-off t60 and pluck-off click level
     rel_t60: f32,
     rel_click: f32,
@@ -603,7 +608,55 @@ pub struct AcPluck {
     /// body-coupling loss scale: peak extra eta near the A0/top-plate modes
     /// (string-mode damping tracks Re{Y_bridge}, Woodhouse 2004 I Fig. 7)
     pub couple: f32,
+    /// body-pump transient ("woof"): the pluck release is a STEP of bridge
+    /// force whose sub-f0 content the radiation differencers remove by
+    /// design — but on a real guitar that step pumps the Helmholtz/top pair
+    /// and radiates a low thump (commuted body response to the force step;
+    /// Christensen & Vistisen 1980 two-oscillator model). Injected as one
+    /// windowed bipolar cycle at `thump_hz` AFTER the radiation chain so the
+    /// track body bank rings from it. Level ∝ vel² (refs' attack A0 band
+    /// collapses from −10 dB deficit at ff to +7 excess at pp, 2026-07-12).
+    pub thump: f32,
+    pub thump_hz: f32,
     pub level: f32,
+}
+
+impl Default for AcPluck {
+    /// Neutral parameter set: every feature off, unity level. Lets preset
+    /// arms opt into new fields with `..Default::default()` instead of
+    /// enumerating them (keeps parallel-agent merges small).
+    fn default() -> Self {
+        AcPluck {
+            f0: 110.0,
+            vel: 0.7,
+            t60_f0: 4.0,
+            lp_c: 0.7,
+            hf_floor_t60: 0.0,
+            hf_knee_hz: 0.0,
+            pick_pos: 0.2,
+            contact: 0.02,
+            snap: 0.3,
+            scrape: 0.0,
+            click: 0.0,
+            pol_mix: 0.0,
+            pol_detune_cents: 0.0,
+            pol_t60_ratio: 1.0,
+            stiff_b: 0.0,
+            tm_cents: 0.0,
+            rel_t60: 0.1,
+            rel_click: 0.0,
+            br_rho: 0.0,
+            rad_hz: 0.0,
+            acc_rho: 0.0,
+            eta_f: 0.0,
+            eta_b: 0.0,
+            eta_a: 0.0,
+            couple: 0.0,
+            thump: 0.0,
+            thump_hz: 110.0,
+            level: 0.5,
+        }
+    }
 }
 
 /// Normalized Re{Y_bridge} shape for the coupling loss: A0 Helmholtz hump
@@ -1073,6 +1126,9 @@ impl PluckVoice {
             tr_lp: 0.0,
             tr_lc: 0.0,
             tr_rng: Lcg(1),
+            th_amp: 0.0,
+            th_dph: 0.0,
+            th_ph: 1.0,
             rel_t60: 0.0,
             rel_click: 0.0,
             tr_lvl: 0.0,
@@ -1375,6 +1431,11 @@ impl PluckVoice {
             // (≤6 kHz) scrape level the refs were fit against (see tr_lc docs)
             tr_lc: 1.0 - (-core::f32::consts::TAU * 4200.0 / sr).exp(),
             tr_rng: Lcg(seed.rotate_left(13) | 1),
+            // body-pump: one bipolar cycle at thump_hz (see AcPluck::thump);
+            // amp on the pre-differencer level scale like the click
+            th_amp: p.thump * p.vel * p.vel * level_tr,
+            th_dph: p.thump_hz / sr,
+            th_ph: 0.0,
             rel_t60: p.rel_t60,
             rel_click: p.rel_click,
             tr_lvl: level_tr,
@@ -1662,6 +1723,16 @@ impl PluckVoice {
                 self.rad_x1 = sig;
                 self.rad_y1 = y;
                 sig = y;
+            }
+            // body-pump transient: injected AFTER the radiation HP (the HP
+            // models the string→plate path; the pump IS the plate's own
+            // low-frequency volume flow) — one raised-cosine-windowed sine
+            // cycle, zero-mean, band-centered at thump_hz. The track body
+            // bank (A0/T1) rings from it.
+            if self.th_amp != 0.0 && self.th_ph < 1.0 {
+                let ph = core::f32::consts::TAU * self.th_ph;
+                sig += self.th_amp * ph.sin() * 0.5 * (1.0 - ph.cos());
+                self.th_ph += self.th_dph;
             }
             *o += sig;
         }
@@ -5086,6 +5157,8 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
                 acc_rho: 0.0,
                 // radiated sound only: monopole HP (Woodhouse 2012 f_c ~250 Hz)
                 rad_hz: 250.0,
+                thump: 0.0,
+                thump_hz: 110.0,
                 // register slope ~12 dB/key (within-source NSynth slope is
                 // ~9 dB/key; cross-source fits inflate it); mild velocity curve
                 level: 0.5 * (0.55 + 0.45 * vel) * (1.4 * key.min(0.9)).exp(),
@@ -5133,6 +5206,7 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
                 eta_a: 0.0,
                 couple: 0.0,
                 level: 0.5 * (0.5 + 0.5 * vel),
+                ..Default::default()
             };
             Kernel::Pluck(PluckVoice::start_acoustic(&p, sr, seed))
         }
@@ -5236,6 +5310,11 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
                 br_rho: 0.995,
                 acc_rho: 0.995,
                 rad_hz: 250.0,
+                // body-pump (see AcPluck::thump): sized to the ff attack A0
+                // deficit (−10.8 dB vs ref 015, body round 2026-07-12); vel²
+                // law keeps pp clean (refs' pp attack A0 is already matched)
+                thump: 0.12,
+                thump_hz: 105.0,
                 level: 0.5 * (0.55 + 0.45 * vel) * (0.83 * key).exp(),
             };
             Kernel::Pluck(PluckVoice::start_acoustic(&p, sr, seed))
