@@ -136,6 +136,73 @@ def logmel_dist(xr, xf, sr, perceptual=True, **kw):
     }
 
 
+def mr_stft_dist(xr, xf, sr, perceptual=True):
+    """Multi-resolution STFT distance (256/1024/4096, K-weighted, onset-aligned):
+    single-window metrics miss transient-vs-tonal trades. Additive axis for now
+    (agents mid-round keep logmel continuity); becomes the headline next round."""
+    # onset-align: cross-correlate first 50 ms envelopes so micro-timing
+    # differences don't pollute timbre distance
+    n50 = int(0.05 * sr)
+    er, ef = np.abs(xr[:n50]), np.abs(xf[:n50])
+    if len(er) == len(ef) and len(er) > 64:
+        xc = np.correlate(er - er.mean(), ef - ef.mean(), mode="full")
+        lag = int(np.argmax(xc)) - (len(er) - 1)
+        if 0 < lag < n50:
+            xr = xr[lag:]
+        elif -n50 < lag < 0:
+            xf = xf[-lag:]
+    out = {}
+    for n in (256, 1024, 4096):
+        d = logmel_dist(xr, xf, sr, perceptual=perceptual,
+                        n=n, hop=n // 4, mels=min(64, n // 8), fmin=25.0)
+        out[f"w{n}"] = d["overall"]
+    out["mean"] = round(float(np.mean([out["w256"], out["w1024"], out["w4096"]])), 4)
+    return out
+
+
+def artifact_gates(xr, xf, sr, sr_ref=None):
+    """Adversarial sanity gates: a red gate means the spectral distances are
+    NOT to be trusted for this render (the loop twice optimized FOR artifacts
+    the refs could not see — 2026-07-12 audit). All computed on the render,
+    crest compared against the reference."""
+    gates = {}
+    # onset crest: attack (first 3 ms after onset) vs body (10 ms..60%) —
+    # render must not exceed the reference's crest by >6 dB (impulse/click
+    # artifacts). Onset = first sample above 2% of peak (refs have lead-in
+    # silence); both signals peak-referenced so loudness scaling cancels.
+    def crest_db(x):
+        pk = float(np.abs(x).max()) + 1e-12
+        on = int(np.argmax(np.abs(x) > 0.02 * pk))
+        seg = x[on:]
+        a = float(np.abs(seg[: int(sr * 0.003)]).max()) + 1e-9
+        b = float(np.abs(seg[int(sr * 0.01): max(int(len(seg) * 0.6), int(sr * 0.02))]).max()) + 1e-9
+        return 20.0 * np.log10(a / b)
+    cr, cf = crest_db(xr), crest_db(xf)
+    gates["onset_crest_db"] = {"render": round(cr, 1), "reference": round(cf, 1),
+                               "pass": bool(cr <= cf + 6.0)}
+    # adjacent-sample jump relative to own peak: a near-full-scale single-sample
+    # flip is always an artifact regardless of level (scale-invariant)
+    pk = float(np.abs(xr).max()) + 1e-12
+    j = float(np.abs(np.diff(xr)).max()) / pk
+    gates["max_sample_jump"] = {"value": round(j, 3), "pass": bool(j < 1.6)}
+    # ultrasonic ratio: energy above 16 kHz vs 1-8 kHz band (needs sr > 32k);
+    # references recorded at <=16 kHz cannot police this region
+    if sr > 33000:  # native render rate — never gate on the resampled signal
+        sp = np.abs(np.fft.rfft(xr * np.hanning(len(xr)))) ** 2
+        fr = np.fft.rfftfreq(len(xr), 1 / sr)
+        hi = float(sp[fr > 16000].sum())
+        # denominator = TOTAL audible energy, not a mid band: LF-dominant
+        # instruments (kick) have near-empty mids, which inflates a band ratio
+        total = float(sp[fr <= 16000].sum()) + 1e-12
+        r = hi / total
+        gates["ultrasonic_ratio"] = {"value": round(r, 4), "pass": bool(r < 0.05)}
+    # DC offset
+    dc = float(np.abs(np.mean(xr)))
+    gates["dc_offset"] = {"value": round(dc, 5), "pass": bool(dc < 0.01)}
+    gates["all_pass"] = bool(all(v["pass"] for v in gates.values() if isinstance(v, dict)))
+    return gates
+
+
 def crest_factor(x):
     rms = float(np.sqrt(np.mean(x ** 2)) + 1e-12)
     return round(float(np.max(np.abs(x))) / rms, 2)
@@ -253,6 +320,7 @@ def main():
     prof = PROFILES.get(profile, PROFILES["default"])
     xr, sr_r = load_mono(render_path)
     xf, sr_f = load_mono(ref_path)
+    gates = artifact_gates(xr, xf, sr_r, sr_ref=sr_f)  # native rate, pre-resample/pre-normalize
     sr = min(sr_r, sr_f)
     xr, xf = resample_to(xr, sr_r, sr), resample_to(xf, sr_f, sr)
     l_r, l_f = lufs(xr, sr), lufs(xf, sr)
@@ -280,6 +348,8 @@ def main():
         "envelope": {"render": envelope_stats(xr, sr), "reference": envelope_stats(xf, sr)},
         "partials": {"render": partials(xr, sr), "reference": partials(xf, sr)},
         "crest": {"render": crest_factor(xr), "reference": crest_factor(xf)},
+        "mr_stft": mr_stft_dist(xr, xf, sr, perceptual=not flat),
+        "gates": gates,
     }
     if "lf" in prof:
         lf = prof["lf"]
