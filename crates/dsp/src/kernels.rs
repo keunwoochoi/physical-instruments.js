@@ -235,14 +235,14 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
         Instrument::Guitar => 0.151,       // guitar r3 re-bake (radiation chain; was -27.4 LUFS at 0.126)
         Instrument::Bass => 0.63,         // round-2 re-bake (DI tilt body)
         Instrument::EPiano => 1.54,       // was -26.6 LUFS
-        Instrument::Drums => 0.56,        // drums r3 re-bake (kick vel law + snare band)
+        Instrument::Drums => 0.59,        // kick round re-bake (pop kick unchanged; family drifted -21.3)
         Instrument::SynthPad => 0.50,     // was -26.5 LUFS
         Instrument::Piano => 0.130, // piano r3 re-measure (board dip + radiation revoice; x1.46 per measure-loudness)
         Instrument::GuitarSteel => 0.362,   // re-bake after onset-impulse fix (the impulse carried 4.6 LU of K-weighted loudness)
         Instrument::GuitarElectric => 0.41, // electric r3 re-bake (bright-028 rig, pyloudnorm -22.5 pre-bake)
         Instrument::GuitarDistorted => 0.21, // electric r3 re-bake (drive-90 lead, tone 5.5k)
-        Instrument::DrumsRock => 0.38,      // drums r3 re-bake (rock snare 1.45 anchor)
-        Instrument::DrumsJazz => 0.85,      // drums r3 re-bake (brush GM38 + open kick)
+        Instrument::DrumsRock => 0.35,      // kick round re-bake (beater-transient kick, x0.93)
+        Instrument::DrumsJazz => 0.60,      // kick round re-bake (open membrane-modal kick ran +3 LU, x0.71)
     }
 }
 
@@ -4106,119 +4106,228 @@ impl DrumVoice {
         };
         match gm_note {
             35 | 36 => {
-                // Kick, kit-voiced (tuning + damping conventions: rock 22"
-                // muffled low w/ hard-beater slap at 2–4 kHz, pop tight and
-                // damped, jazz 18" tuned high and left open w/ felt beater —
-                // Owsinski, Recording Engineer's Handbook; Drum Tuning Bible;
-                // jazz-kick pitch ~78 Hz measured on the CC0 virtuosity kit).
-                // Velocity depth: hard hits drive the head further → higher
-                // initial pitch (membrane tension modulation, Rossing ch. 2)
-                // and a brighter, louder beater click (CC0 kick refs: 30 ms
-                // centroid 306 Hz hard vs 148 Hz soft).
-                // (f_end Hz, start ratio vel span, sweep tau s, t60, click base,
-                //  click vel span, click brightness, amp)
-                // De-danced round 3 (owner r2: "too electronic / dance music"):
-                // tension-modulation pitch shift decays with amplitude SQUARED
-                // (Rossing ch.2 / Fletcher-Rossing membrane nonlinearity), so
-                // the glide is spent in ~2x the envelope rate: tau 5-6.5 ms,
-                // start elevation <= ~1.35x. Measured on the CC0 vl4 kick:
-                // glide ratio 1.28 settling in ~3 ms; vl1 shows none. A 909
-                // whoop (2-3x over 15-40 ms) is exactly the "dance" signature.
-                // f_end: jazz 77 Hz (measured, 18" tuned high); rock 50 Hz
-                // (22" — 44 Hz read as sub-bass/808); pop 54 Hz tight.
-                let (f1, rv, sw, t60, ck0, ckv, ckb, amp) = match kit {
-                    KitStyle::Pop => (54.0, 0.22, 0.006, 0.22, 0.22, 0.85, 0.55, 0.9),
-                    KitStyle::Rock => (50.0, 0.26, 0.0065, 0.26, 0.30, 1.10, 0.66, 1.0),
-                    KitStyle::Jazz => (77.0, 0.18, 0.005, 0.30, 0.10, 0.50, 0.38, 0.8),
-                };
+                // Kick — three genuinely different INSTRUMENTS per kit (owner
+                // verdict 2026-07-12: the r3 kicks were one recorded drum
+                // re-voiced three ways). Each arm is fit to its own
+                // license-clean reference drum (ledger:
+                // scratchpad references/kick/SOURCES.txt):
+                //   Jazz — 18"-class open bop kick, felt beater: DrumGizmo
+                //     DRSKit close kick mic (CC-BY-4.0).
+                //   Rock — 22" pillow-damped, hard-beater: DrumGizmo
+                //     MuldjordKit (Tama Superstar) close mic (CC-BY-4.0),
+                //     Naked Drums 22" DI as sub anchor (CC-BY-4.0).
+                //   Pop  — unchanged r3 fit (CC0 virtuosity kick).
+                // Shared physics both arms keep (de-danced r3 law): tension-
+                // modulation pitch glide decays with amplitude SQUARED
+                // (Rossing/Fletcher membrane nonlinearity) → tau ~5-6 ms,
+                // start elevation <= ~1.35x; anything slower reads as a 909.
                 v.kind = DrumKind::Kick;
-                // contact ramp: felt (jazz) ~7 ms base, harder beaters ~5 ms;
-                // harder hits compress faster (same law as ModalVoice contact)
-                let contact_ms = match kit {
-                    KitStyle::Jazz => 7.0,
-                    _ => 5.0,
-                } * (1.35 - 0.5 * vel).max(0.5);
-                v.atk_ph = 0.0;
-                v.atk_dp = 1000.0 / (contact_ms * sr);
-                v.freq = f1 * (1.10 + rv * vel);
-                v.freq_end = f1;
-                v.sweep = (-1.0 / (sw * sr)).exp();
-                v.decay = t60_gain(t60, sr);
-                // dynamic law: refs span 26 dB LUFS from feathered (vl1) to
-                // slammed (vl4); linear-in-vel gave only ~10 dB. Head drive is
-                // supralinear in stick/beater speed (momentum + contact time)
-                v.amp = vel.powf(1.7) * amp;
-                v.click = ck0 + ckv * vel * vel;
-                v.hp_c = 0.08 + ckb * vel; // click lowpass: felt thud → hard slap
-                // resonant-head ring: after the batter transient the front head
-                // keeps singing at its own (slightly higher) tuning — refs hold
-                // an LF-band t60 of 1.1–1.3 s at EVERY velocity while the
-                // broadband envelope decays in ~0.25 s (two-stage tail).
-                // Jazz kicks are left open (long); rock/pop are muffled.
-                let (ring_t60, ring_amp) = match kit {
-                    KitStyle::Pop => (0.50, 0.30),
-                    KitStyle::Rock => (0.45, 0.30),
-                    KitStyle::Jazz => (1.35, 0.50),
-                };
-                v.life = ((t60 * 1.6).max(ring_t60 * 1.05).max(0.5) * sr) as u64;
-                // slap resonator: (freq, strength) per kit; amplitude ~vel^2
-                // (soft felt strokes barely knock; hard strokes do — refs:
-                // slap band −2.4 dB rel at vl4, −12.4 dB at vl1)
-                let (sf, sa) = match kit {
-                    KitStyle::Pop => (620.0, 2.0),
-                    KitStyle::Rock => (540.0, 3.2),
-                    KitStyle::Jazz => (700.0, 1.6),
-                };
-                // "openness": undamped heads keep their overtone band ringing
-                // (refs: 400–1500 Hz t60 0.6–0.9 s on the open jazz kick);
-                // pillow-muffled rock/pop kicks choke it within ~100 ms
-                let open = match kit {
-                    KitStyle::Pop => 1.6,
-                    KitStyle::Rock => 1.4,
-                    KitStyle::Jazz => 6.0,
-                };
-                let r = t60_gain(0.060 * open, sr);
-                let w = core::f32::consts::TAU * sf / sr;
-                v.sl_a1 = 2.0 * r * w.cos();
-                v.sl_r2 = r * r;
-                // √open normalization: longer ring at the same strike amplitude
-                // would inflate the 30 ms attack-window energy (it4 overshoot:
-                // jazz slap band went +10 dB); keep window level, extend ring.
-                // Compressive contact law on top: head tension nonlinearity
-                // limits the local knock displacement at high drive (ff hits
-                // were pinning the master knee ~+6 dB — an audible squash)
-                let a_raw = sa * vel.powf(1.05) / (open / 1.6f32).sqrt();
-                let a = a_raw / (1.0 + 0.18 * a_raw);
-                let phi = core::f32::consts::PI * Lcg(seed ^ 0x51a9 | 1).next();
-                v.sl_y1 = a * (phi - w).sin();
-                v.sl_y2 = a * (phi - 2.0 * w).sin();
-                // membrane overtone + shell knock: a real head is not a sine —
-                // fast inharmonic partial (~1.58x) and a wood knock (~3.4x)
-                v.has_modal = true;
-                v.modal = ModalVoice::start(
-                    f1,
-                    vel,
-                    sr,
-                    &[
-                        ModeDef { ratio: 1.04, amp: ring_amp, t60: ring_t60 },
-                        ModeDef {
-                            ratio: 1.58,
-                            amp: 0.5 / (open / 1.6f32).sqrt(),
-                            t60: 0.055 * open,
-                        },
-                        ModeDef {
-                            ratio: 3.4,
-                            amp: 0.28 / (open / 1.6f32).sqrt(),
-                            t60: 0.035 * open,
-                        },
-                    ],
-                    // impulse-style charge (longer pulses pump the LF ring mode
-                    // ~7 dB hot and darken the attack — measured it3 regression)
-                    0.6,
-                    0.0,
-                    0.0,
-                    seed ^ 0x6b1c,
-                );
+                match kit {
+                    KitStyle::Jazz => {
+                        // MEMBRANE-MODAL topology: the voice is a ringing
+                        // coupled-head pair, not a thump machine. Measured on
+                        // DRSKit close mic: partial ladder 70-86 Hz fund with
+                        // {1.36, 1.79, 2.07, 2.48, 2.98} overtones (air-loaded
+                        // two-head membrane — compressed vs ideal-membrane
+                        // ratios, Rossing ch.3), a WEAK ~0.66x undertone
+                        // (both-heads-in-phase air mode) that is prominent on
+                        // soft hits, fundamental t60 0.5-0.8 s (no pillow),
+                        // centroid(30 ms) 70-85 Hz (felt = almost no click),
+                        // crest 4.5-8 (round, never spiky).
+                        let f1 = 76.0;
+                        v.freq = f1 * (1.08 + 0.12 * vel);
+                        v.freq_end = f1;
+                        v.sweep = (-1.0 / (0.005 * sr)).exp();
+                        // amplitude-dependent damping: soft strokes ring
+                        // relatively longer (DRS LF at 0.3 s: -9 dB soft,
+                        // -17 mid, -21.5 hard rel the first 30 ms)
+                        v.decay = t60_gain(0.78 - 0.25 * vel, sr);
+                        // felt beater: long compliant contact, 10 ms base
+                        let contact_ms = 10.0 * (1.35 - 0.5 * vel).max(0.5);
+                        v.atk_ph = 0.0;
+                        v.atk_dp = 1000.0 / (contact_ms * sr);
+                        // feathering law: jazz players live at pp — measured
+                        // DRS layers span only ~10.6 LU (soft->hard), i.e.
+                        // amp is ~linear in vel, NOT the rock/pop supralinear
+                        v.amp = 0.85 * vel.powf(1.05);
+                        // felt click: tiny and dark (2-6 kHz sits ~-33 dB
+                        // under LF in the refs' first 30 ms)
+                        v.click = 0.06 + 0.30 * vel * vel;
+                        v.hp_c = 0.05 + 0.20 * vel;
+                        // felt-on-head knock, mild (400-1500 Hz band reads
+                        // -19..-24 dB rel LF on the refs; it2 was +17 dB hot
+                        // at a=0.86/t60 0.3 — felt barely knocks)
+                        let sf = 700.0;
+                        let r = t60_gain(0.15, sr);
+                        let w = core::f32::consts::TAU * sf / sr;
+                        v.sl_a1 = 2.0 * r * w.cos();
+                        v.sl_r2 = r * r;
+                        let a = 0.18 * vel.powf(1.05);
+                        let phi = core::f32::consts::PI * Lcg(seed ^ 0x51a9 | 1).next();
+                        v.sl_y1 = a * (phi - w).sin();
+                        v.sl_y2 = a * (phi - 2.0 * w).sin();
+                        v.has_modal = true;
+                        v.modal = ModalVoice::start(
+                            f1,
+                            vel,
+                            sr,
+                            &[
+                                // undertone: soft-forward (soft ref holds it
+                                // at -1.7 dB rel fund; hard at -13)
+                                ModeDef {
+                                    ratio: 0.66,
+                                    amp: 0.5 * (1.2 - 0.7 * vel),
+                                    t60: 0.50,
+                                },
+                                // resonant-head partner: the open two-stage
+                                // tail (rings past 0.6 s at every velocity)
+                                ModeDef { ratio: 1.04, amp: 0.48, t60: 1.45 - 0.40 * vel },
+                                // overtone ladder measured on the ff DRS hit
+                                // (101/125/145/174/209 Hz over 76): the open
+                                // heads hold these within -8..-25 dB of the
+                                // fundamental for the whole first half-second
+                                ModeDef { ratio: 1.33, amp: 0.70, t60: 0.90 },
+                                ModeDef { ratio: 1.65, amp: 0.55, t60: 0.75 },
+                                ModeDef { ratio: 1.91, amp: 0.42, t60: 0.65 },
+                                ModeDef { ratio: 2.28, amp: 0.40, t60: 0.55 },
+                                ModeDef { ratio: 2.75, amp: 0.25, t60: 0.45 },
+                            ],
+                            0.6,
+                            0.0,
+                            0.0,
+                            seed ^ 0x6b1c,
+                        );
+                        v.life = (1.40 * sr) as u64;
+                    }
+                    KitStyle::Rock => {
+                        // BEATER-TRANSIENT topology: hard slap + shell knock
+                        // over a short damped sub thump. Measured on the
+                        // MuldjordKit close mic: deep partials {~0.65, 1,
+                        // 1.72, 2.5}x of ~48 Hz, 2-6 kHz beater band at
+                        // -16.5 dB rel LF in the first 30 ms of ff (still
+                        // -21 dB at mf — the click is ALWAYS there), LF dead
+                        // ~29 dB down by 0.3 s (pillow), crest 15 at ff.
+                        let f1 = 48.0;
+                        v.freq = f1 * (1.12 + 0.20 * vel);
+                        v.freq_end = f1;
+                        v.sweep = (-1.0 / (0.006 * sr)).exp();
+                        // temporal shape: fast-decaying main thump with a
+                        // quiet slow LF residue (ring mode below); softer
+                        // hits ring freer (ref soft t60 1.04 vs hard 0.76)
+                        v.decay = t60_gain(0.75 - 0.26 * vel, sr);
+                        // hard beater: stiff, short contact
+                        let contact_ms = 2.5 * (1.35 - 0.5 * vel).max(0.5);
+                        v.atk_ph = 0.0;
+                        v.atk_dp = 1000.0 / (contact_ms * sr);
+                        // stomp law: rock kicks are played loud; the head
+                        // saturates at the top (measured +9.2 dB soft->mid
+                        // but only +2.3 dB mid->hard) — compressive knee
+                        v.amp = 2.3 * vel.powf(1.5) / (1.0 + 1.3 * vel * vel);
+                        // beater slap: bright, velocity-squared. The contact
+                        // burst alone is ~3 ms — the measured 2-6 kHz band
+                        // (-16.5 dB rel LF over 30 ms at ff) comes from the
+                        // batter head's HF modal cluster ringing on after the
+                        // beater leaves (pillow-damped t60 ~25 ms): post-
+                        // contact click ring via lp (level) / lp_c (decay)
+                        v.click = 0.10 + 3.20 * vel * vel;
+                        // the ref's attack noise RISES toward 2-6 kHz (hard
+                        // beater on a coated head): highpassed click (flag =
+                        // tone_amt) with ~1.2 kHz cut, vs the felt voicings'
+                        // lowpassed thud
+                        v.tone_amt = 1.0;
+                        v.hp_c = 0.08 + 0.10 * vel;
+                        v.lp = 0.8;
+                        v.lp_c = t60_gain(0.025, sr);
+                        // shell knock resonator (~540 Hz), damped fast
+                        // (it2: a=1.53 measured +28 dB over the close-mic ref)
+                        let sf = 540.0;
+                        let r = t60_gain(0.085, sr);
+                        let w = core::f32::consts::TAU * sf / sr;
+                        v.sl_a1 = 2.0 * r * w.cos();
+                        v.sl_r2 = r * r;
+                        let a_raw = 0.08 * vel.powf(1.05);
+                        let a = a_raw / (1.0 + 0.18 * a_raw);
+                        let phi = core::f32::consts::PI * Lcg(seed ^ 0x51a9 | 1).next();
+                        v.sl_y1 = a * (phi - w).sin();
+                        v.sl_y2 = a * (phi - 2.0 * w).sin();
+                        v.has_modal = true;
+                        let ms = 0.75 + 0.45 * vel; // mode-sustain vel scale
+                        v.modal = ModalVoice::start(
+                            f1,
+                            vel,
+                            sr,
+                            &[
+                                // sub undertone (in-phase air mode, ~31 Hz —
+                                // the strongest sustained partial on the
+                                // close-mic ref's 0.15-0.55 s window). Fast-
+                                // mode sustain scales with velocity (hard
+                                // strokes load the head, loosening the
+                                // pillow's grip — it6/it8 per-layer fits)
+                                ModeDef { ratio: 0.65, amp: 0.40, t60: 0.42 * ms },
+                                // quiet SLOW tail (ref: ~-21 dB residue at
+                                // t60 ~1 s under the fast thump), kept well
+                                // under the jazz kick's open ring at 0.6 s
+                                // (two-stage kit contrast)
+                                ModeDef { ratio: 1.04, amp: 0.12, t60: 0.90 },
+                                // 83/121 Hz pair: the pillow kills >150 Hz
+                                // but the ref holds these at -7 dB rel fund
+                                // through the half-second window
+                                ModeDef { ratio: 1.72, amp: 0.85, t60: 0.38 * ms },
+                                ModeDef { ratio: 2.52, amp: 1.80, t60: 0.34 * ms },
+                                // wood shell knock + upper head cluster
+                                // (a 22" head's (1,2)/(3,1)-family modes at
+                                // 150-250 Hz ring through the ref's tail)
+                                ModeDef { ratio: 3.40, amp: 0.30, t60: 0.30 },
+                                ModeDef { ratio: 3.90, amp: 0.35, t60: 0.45 },
+                            ],
+                            0.6,
+                            0.0,
+                            0.0,
+                            seed ^ 0x6b1c,
+                        );
+                        v.life = (0.75 * sr) as u64;
+                    }
+                    KitStyle::Pop => {
+                        // unchanged r3 fit (owner: pop matched its reference)
+                        let f1 = 54.0;
+                        v.freq = f1 * (1.10 + 0.22 * vel);
+                        v.freq_end = f1;
+                        v.sweep = (-1.0 / (0.006 * sr)).exp();
+                        v.decay = t60_gain(0.22, sr);
+                        let contact_ms = 5.0 * (1.35 - 0.5 * vel).max(0.5);
+                        v.atk_ph = 0.0;
+                        v.atk_dp = 1000.0 / (contact_ms * sr);
+                        v.amp = vel.powf(1.7) * 0.9;
+                        v.click = 0.22 + 0.85 * vel * vel;
+                        v.hp_c = 0.08 + 0.55 * vel;
+                        let (sf, sa, open) = (620.0, 2.0, 1.6f32);
+                        let r = t60_gain(0.060 * open, sr);
+                        let w = core::f32::consts::TAU * sf / sr;
+                        v.sl_a1 = 2.0 * r * w.cos();
+                        v.sl_r2 = r * r;
+                        let a_raw = sa * vel.powf(1.05) / (open / 1.6f32).sqrt();
+                        let a = a_raw / (1.0 + 0.18 * a_raw);
+                        let phi = core::f32::consts::PI * Lcg(seed ^ 0x51a9 | 1).next();
+                        v.sl_y1 = a * (phi - w).sin();
+                        v.sl_y2 = a * (phi - 2.0 * w).sin();
+                        v.has_modal = true;
+                        v.modal = ModalVoice::start(
+                            f1,
+                            vel,
+                            sr,
+                            &[
+                                ModeDef { ratio: 1.04, amp: 0.30, t60: 0.50 },
+                                ModeDef { ratio: 1.58, amp: 0.5, t60: 0.055 * open },
+                                ModeDef { ratio: 3.4, amp: 0.28, t60: 0.035 * open },
+                            ],
+                            0.6,
+                            0.0,
+                            0.0,
+                            seed ^ 0x6b1c,
+                        );
+                        v.life = ((0.22f32 * 1.6).max(0.50 * 1.05).max(0.5) * sr) as u64;
+                    }
+                }
             }
             38 | 40 => {
                 // Jazz GM 38 = BRUSH tap (GM 40 keeps the stick jazz snare).
@@ -4480,11 +4589,24 @@ impl DrumVoice {
                     // contact FORCE pulse sin²(π·ph) — noise exists only while
                     // beater and head touch, peaking mid-contact (felt thud at
                     // pp, hard slap at ff)
+                    // click noise tilt: tone_amt > 0.5 selects HIGHPASSED
+                    // noise (hard beater — spectrum rises toward 2-6 kHz),
+                    // else the lowpassed felt/plastic thud
                     if self.atk_ph < 1.0 {
                         let force = (core::f32::consts::PI * self.atk_ph).sin();
                         let n = self.rng.next();
                         self.hp += self.hp_c * (n - self.hp);
-                        s += self.click * self.hp * force * force;
+                        let cn = if self.tone_amt > 0.5 { n - self.hp } else { self.hp };
+                        s += self.click * cn * force * force;
+                    } else if self.lp > 1e-4 {
+                        // post-contact beater ring (rock voicing): the batter
+                        // head's HF modal cluster keeps sounding briefly after
+                        // the beater leaves — lp is its level, lp_c its decay
+                        let n = self.rng.next();
+                        self.hp += self.hp_c * (n - self.hp);
+                        let cn = if self.tone_amt > 0.5 { n - self.hp } else { self.hp };
+                        s += self.click * cn * self.lp;
+                        self.lp *= self.lp_c;
                     }
                     // beater slap ring (impulse initial condition, decays on its own)
                     let y = self.sl_a1 * self.sl_y1 - self.sl_r2 * self.sl_y2;
@@ -5740,6 +5862,63 @@ mod drum_kit_tests {
         let (lj, lr) = (late(&jazz), late(&rock));
         assert!(lj > 1e-4, "jazz kick tail dead at 0.6 s: {lj}");
         assert!(lr < lj * 0.5, "rock kick should be muffled vs jazz: rock {lr} jazz {lj}");
+    }
+
+    /// Kick-specialist round (2026-07-12): the three kits' kicks are
+    /// DIFFERENT INSTRUMENTS, each fit to its own reference drum —
+    /// jazz 18"-class bop kick ~76 Hz (DRSKit), rock 22" ~48 Hz
+    /// (MuldjordKit), pop tight 54 Hz (virtuosity). Checked at both rates.
+    #[test]
+    fn kick_kits_are_different_instruments() {
+        for &sr in &[44_100.0f32, 48_000.0] {
+            let jazz = render_kit(36, 1.0, sr, KitStyle::Jazz, 0.8);
+            let rock = render_kit(36, 1.0, sr, KitStyle::Rock, 0.8);
+            let pop = render_kit(36, 1.0, sr, KitStyle::Pop, 0.8);
+            let fj = peak_hz(&jazz, sr, 35.0, 130.0, 0.08, 0.24);
+            let fr = peak_hz(&rock, sr, 35.0, 130.0, 0.08, 0.24);
+            let fp = peak_hz(&pop, sr, 35.0, 130.0, 0.08, 0.24);
+            assert!((65.0..95.0).contains(&fj), "jazz kick fundamental {fj} Hz (want 65-95)");
+            assert!((40.0..56.0).contains(&fr), "rock kick fundamental {fr} Hz (want 40-56)");
+            assert!((48.0..62.0).contains(&fp), "pop kick fundamental {fp} Hz (want 48-62)");
+            assert!(
+                fj / fr > 1.35,
+                "sr {sr}: jazz ({fj}) must sit a clear interval above rock ({fr})"
+            );
+        }
+    }
+
+    /// Felt vs hard beater: the rock kick's 2–6 kHz beater band (first 30 ms,
+    /// ff) stands at least 10 dB closer to its LF body than the jazz kick's
+    /// on the coarse Goertzel scale (this fit measures ~12.5 dB; FFT band
+    /// energies read rock −19.7 dB rel LF vs jazz −43). And the rock hit
+    /// is the spikier waveform (refs: muld ff crest 15.2, DRS ff crest 8.3).
+    #[test]
+    fn kick_beater_contrast_is_kit_voiced() {
+        let sr = 48_000.0f32;
+        let jazz = render_kit(36, 0.95, sr, KitStyle::Jazz, 0.3);
+        let rock = render_kit(36, 0.95, sr, KitStyle::Rock, 0.3);
+        let rel = |x: &[f32]| {
+            let lf = band_mag(x, sr, 30.0, 150.0, 0.0, 0.030);
+            let hf = band_mag(x, sr, 2_000.0, 6_000.0, 0.0, 0.030);
+            20.0 * (hf / lf.max(1e-9)).log10()
+        };
+        let (rj, rr) = (rel(&jazz), rel(&rock));
+        assert!(
+            rr > rj + 10.0,
+            "hard-beater rock ({rr:.1} dB rel LF) vs felt jazz ({rj:.1}) contrast too small"
+        );
+        let crest = |x: &[f32]| {
+            let n = ((0.5 * sr) as usize).min(x.len());
+            let seg = &x[..n];
+            let pk = seg.iter().fold(0.0f32, |a, &s| a.max(s.abs()));
+            let rms = (seg.iter().map(|s| s * s).sum::<f32>() / n as f32).sqrt();
+            pk / rms.max(1e-9)
+        };
+        let (cj, cr) = (crest(&jazz), crest(&rock));
+        assert!(
+            cr > cj * 1.35,
+            "rock kick should be spikier than jazz: crest rock {cr:.1} jazz {cj:.1}"
+        );
     }
 
     /// Round-3 rock snare authority: the 400–1500 Hz crack band holds within
