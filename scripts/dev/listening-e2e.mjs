@@ -188,13 +188,23 @@ try {
   const fallbackPage = await fallbackContext.newPage();
   await fallbackPage.goto(campaignUrl, { waitUntil: "networkidle" });
   await completeSetup(fallbackPage, "storage-fallback-pilot");
-  for (let trial = 0; trial < 2; trial++) {
-    await answerAbTrial(fallbackPage);
-    await fallbackPage.getByRole("button", { name: trial === 0 ? "Save and continue" : "Submit session" }).click();
-  }
+  await answerAbTrial(fallbackPage);
+  await fallbackPage.getByRole("button", { name: "Save and continue" }).click();
+  const interruptedJsonText = await fallbackPage.locator("#manual-export").inputValue();
+  const interruptedJson = JSON.parse(interruptedJsonText);
+  const exportVisibleDuringProgress = await fallbackPage.locator("#manual-export-section").isVisible();
+  await fallbackPage.reload({ waitUntil: "networkidle" });
+  await fallbackPage.getByText("Recover from a manual session copy").click();
+  await fallbackPage.locator("#restore-json").fill(interruptedJsonText);
+  await fallbackPage.getByRole("button", { name: "Restore session JSON" }).click();
+  const restoredProgress = await fallbackPage.locator(".progress").innerText();
+  await answerAbTrial(fallbackPage);
+  await fallbackPage.getByRole("button", { name: "Submit session" }).click();
   const fallbackJson = JSON.parse(await fallbackPage.locator("#manual-export").inputValue());
   const fallbackStatus = await fallbackPage.locator("#status").innerText();
   const fallbackAssertions = {
+    inProgressCopyAvailable: exportVisibleDuringProgress && interruptedJson.trials.length === 1 && !interruptedJson.submitted_at,
+    restoredAfterInterruption: restoredProgress.includes("Trial 2 of 2") && fallbackJson.session_id === interruptedJson.session_id,
     completedWithoutStorage: fallbackJson.trials.length === 2 && Boolean(fallbackJson.submitted_at),
     manualCopyAvailable: fallbackJson.listener.id === "storage-fallback-pilot",
     explicitInMemoryWarning: fallbackStatus.includes("in memory") && fallbackStatus.includes("storage is unavailable"),

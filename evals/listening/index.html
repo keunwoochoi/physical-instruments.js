@@ -28,11 +28,20 @@
       <label class="check"><input id="volume" type="checkbox"> I set a comfortable fixed volume and will not change it during the session.</label>
       <button id="start">Start randomized session</button>
       <button id="resume" class="secondary" hidden>Resume saved session</button>
+      <details>
+        <summary>Recover from a manual session copy</summary>
+        <label>In-progress or completed raw session JSON<textarea id="restore-json" rows="8"></textarea></label>
+        <button id="restore" class="secondary" type="button">Restore session JSON</button>
+      </details>
     </section>
     <section id="trial" class="card" hidden></section>
     <section id="complete" class="card" hidden>
       <h2>Session complete</h2>
       <p>Your raw responses are stored only in this browser until you export them. Send the exported JSON to the experiment owner without editing it.</p>
+    </section>
+    <section id="manual-export-section" class="card" hidden>
+      <h2>Raw session recovery copy</h2>
+      <p>Save this JSON before leaving the page. An in-progress copy can be restored on this experiment page after an interruption.</p>
       <button id="download">Export raw session JSON</button>
       <button id="copy" class="secondary">Copy raw JSON</button>
       <button id="clear" class="secondary">Clear local copy</button>

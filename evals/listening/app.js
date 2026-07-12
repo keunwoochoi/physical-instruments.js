@@ -43,12 +43,22 @@ function refreshManualExport() {
   $("#manual-export").value = sessionJson();
 }
 
+function exposeManualExport() {
+  refreshManualExport();
+  $("#manual-export-section").hidden = false;
+}
+
 function persist() {
-  if (!session || !storageAvailable) return;
+  if (!session) return;
+  if (!storageAvailable) {
+    exposeManualExport();
+    return;
+  }
   try {
     localStorage.setItem(`ij-listening:${session.session_id}`, JSON.stringify(session));
   } catch (error) {
     storageAvailable = false;
+    exposeManualExport();
     setStatus(`Browser storage is unavailable (${error.name}). The session remains in memory; use export or manual copy before leaving.`);
   }
 }
@@ -213,7 +223,7 @@ function finish() {
   persist();
   $("#trial").hidden = true;
   $("#complete").hidden = false;
-  refreshManualExport();
+  exposeManualExport();
   setStatus(storageAvailable
     ? "Session stored locally. Export the raw JSON to preserve it outside this browser."
     : "Session is complete in memory. Browser storage is unavailable; export or copy the raw JSON before leaving.");
@@ -224,7 +234,22 @@ function beginSession(value) {
   trialIndex = session.trials.length;
   $("#setup").hidden = true;
   $("#resume").hidden = true;
+  persist();
   if (session.submitted_at) finish(); else showTrial();
+}
+
+function validateRestoredSession(value) {
+  if (!value || typeof value !== "object") throw new Error("session must be a JSON object");
+  if (value.experiment_id !== experiment.id || value.experiment_digest !== digest) throw new Error("session belongs to a different experiment or manifest");
+  if (!Number.isInteger(value.randomization?.seed)) throw new Error("session randomization seed is missing");
+  const expectedOrder = trialOrder(experiment, value.randomization.seed);
+  if (JSON.stringify(value.trial_order) !== JSON.stringify(expectedOrder)) throw new Error("session trial order does not match its sealed seed");
+  if (!Array.isArray(value.trials) || value.trials.length > expectedOrder.length) throw new Error("session trial evidence is incomplete or malformed");
+  const completedIds = value.trials.map((trial) => trial?.trial_id);
+  if (JSON.stringify(completedIds) !== JSON.stringify(expectedOrder.slice(0, completedIds.length))) throw new Error("completed trials are not a valid experiment prefix");
+  if (!value.session_id || !value.listener?.id || !value.setup?.volume_check) throw new Error("session identity or setup evidence is missing");
+  if (value.submitted_at && value.trials.length !== expectedOrder.length) throw new Error("submitted session is missing trials");
+  return value;
 }
 
 $("#start").addEventListener("click", () => {
@@ -252,6 +277,16 @@ $("#start").addEventListener("click", () => {
 });
 
 $("#resume").addEventListener("click", () => beginSession(recoverableSession));
+
+$("#restore").addEventListener("click", () => {
+  try {
+    const restored = validateRestoredSession(JSON.parse($("#restore-json").value));
+    beginSession(restored);
+    setStatus(restored.submitted_at ? "Completed session restored from manual JSON." : `In-progress session restored at trial ${restored.trials.length + 1}.`);
+  } catch (error) {
+    setStatus(`Session restore failed: ${error.message}`);
+  }
+});
 
 $("#download").addEventListener("click", () => {
   refreshManualExport();

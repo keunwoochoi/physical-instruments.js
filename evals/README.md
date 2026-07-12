@@ -28,7 +28,7 @@ The runner refuses missing references, absent held-out cases, corpus-axis contra
 
 When a baseline-backed campaign reaches `candidate` or `listening_required`, the runner writes a sealed participant-facing `listening/` bundle inside the iteration instead of a label-revealing A/B page. The public manifest and media URLs contain only opaque condition IDs; the separately sealed `listening-analysis.json` outside that served directory owns roles, source/prepared-audio digests, gain provenance, and exact campaign identity. The runner requires identical case manifests, reference digests, render protocols, sample rates, channels, frame counts, and durations before pairing anything, then normalizes each condition to the declared BS.1770 target.
 
-Serve only the public `listening/` directory over localhost so the private role map is not participant-accessible, keep playback volume fixed, complete every condition through to the end, and export the raw session JSON. Validate and analyze exports with the private analysis manifest that was sealed into the iteration root:
+Serve only the public `listening/` directory over localhost so the private role map is not participant-accessible, keep playback volume fixed, complete every condition through to the end, and export the raw session JSON. If browser storage fails, save the recovery JSON exposed during the session; paste it into the same experiment page's recovery control after an interruption. Validate and analyze exports with the private analysis manifest that was sealed into the iteration root:
 
 ```sh
 cd /path/to/iteration/listening && python3 -m http.server 8175

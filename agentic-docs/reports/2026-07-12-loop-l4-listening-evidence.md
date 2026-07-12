@@ -12,7 +12,7 @@ Status: validation evidence for issue #23 and PR #31; synthetic sessions validat
 - The runner refuses a listening pair unless its case-manifest digest, reference digest, role, render metadata, sample rate, channels, frame count, and duration match. The full-file level-matching window is explicit rather than inferred.
 - The browser uses exclusive start-from-zero playback without native per-player volume, seeking, or overlap controls. Submission requires the experiment-declared number of completed plays for every visible condition, and the analyzer independently excludes incomplete playback.
 - Raw listener responses, pseudonymous listener/setup metadata, starts, completed plays, listened duration, seed, randomized order, exclusions, and uncertainty remain in the JSON analysis. Duplicate session IDs, duplicate listener IDs, and mixed human/synthetic pools fail closed; A/B ties remain explicit. `quality_verdict` is always null.
-- Interrupted sessions recover completed trials from local storage. Storage failures do not strand evidence: the in-memory session continues and the completed JSON is always exposed for manual copy as well as download.
+- Interrupted sessions recover completed trials from local storage. When storage fails, the page immediately exposes and continuously refreshes an in-progress JSON recovery copy; that copy can be restored after an interruption and remains available for manual copy or download.
 
 ## Hidden-reference and anchor pilot
 
@@ -20,7 +20,7 @@ The committed equation-generated MUSHRA pilot contains one explicit reference, o
 
 ## Campaign round trip
 
-The L2 campaign runner now replaces its label-revealing A/B page with a sealed public `listening/` experiment and a private `listening-analysis.json` key whenever a baseline-backed run reaches `candidate` or `listening_required`. The audit creates a temporary two-trial campaign, prepares its level-matched bundle, verifies that the participant JSON, media IDs, filenames, URLs, and visible text contain no condition role, plays every condition to completion with exclusive controls, reloads after trial one, resumes trial two, exports a browser session, and passes that exact export through the Python analyzer. A second run blocks local-storage writes and still completes through the in-memory/manual-copy fallback. Chromium and WebKit are both exercised; browser and Python experiment digests, presentation order, trial order, playback evidence, raw choice, raw-session retention, and null verdict all agree.
+The L2 campaign runner now replaces its label-revealing A/B page with a sealed public `listening/` experiment and a private `listening-analysis.json` key whenever a baseline-backed run reaches `candidate` or `listening_required`. The audit creates a temporary two-trial campaign, prepares its level-matched bundle, verifies that the participant JSON, media IDs, filenames, URLs, and visible text contain no condition role, plays every condition to completion with exclusive controls, reloads after trial one, resumes trial two, exports a browser session, and passes that exact export through the Python analyzer. A second run blocks local-storage writes, captures the exposed in-progress recovery JSON after trial one, reloads, restores that copy, and completes the session without losing evidence. Chromium and WebKit are both exercised; browser and Python experiment digests, presentation order, trial order, playback evidence, raw choice, raw-session retention, and null verdict all agree.
 
 ## Deliberate limits
 
