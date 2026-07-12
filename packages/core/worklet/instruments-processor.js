@@ -99,6 +99,8 @@ class InstrumentsProcessor extends AudioWorkletProcessor {
     else if (e.kind === "off") x.ij_note_off(p, e.track, e.midi);
     else if (e.kind === "pedal") x.ij_pedal(p, e.track, e.on);
     else if (e.kind === "track") x.ij_set_track(p, e.track, e.inst, e.gain, e.pan);
+    else if (e.kind === "reverb") x.ij_set_reverb(p, e.reverb);
+    else if (e.kind === "room") x.ij_set_room(p, e.track, e.send);
   }
 
   process(_inputs, outputs) {

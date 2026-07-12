@@ -117,90 +117,255 @@ impl TrackBus {
     }
 }
 
-/// Shared room stage (audit 2026-07-12): ONE per engine — every track sends a
-/// little into the same small studio room, which is what glues an arrangement
-/// into a record instead of N anechoic close mics. 11 ms pre-delay → 6 sparse
-/// early reflections (alternating L/R signs for decorrelation) + a 4-line FDN
-/// tail (orthogonal butterfly feedback, per-line HF damping, RT60 ≈ 0.38 s).
-/// Allocation happens once in `new`; the audio path is allocation-free.
-struct Room {
+/// Shared spatial stage (audit 2026-07-12; reverb menu per Keunwoo
+/// 2026-07-13 "let's add several reverb choices"): ONE per engine — every
+/// track sends into the same space, which is what glues an arrangement into a
+/// record instead of N anechoic close mics. Five voicings share one topology
+/// (pre-delay → optional input-diffusion allpasses → sparse early taps →
+/// 4-line FDN with orthogonal butterfly feedback, per-line HF damping, and
+/// optional per-line dispersion allpasses for the spring chirp):
+///   Off · Room (default glue, RT60 0.38 s) · Hall (1.9 s, darker, late
+///   earlies) · Plate (bright dense 1.3 s, no earlies) · Spring (dispersive
+///   boing, dark, 1.6 s).
+/// All buffers are allocated ONCE at max capacity in `new`; switching types
+/// only rewrites lengths/gains and clears state — the audio path and the
+/// control path are both allocation-free.
+pub const REVERB_OFF: u32 = 0;
+pub const REVERB_ROOM: u32 = 1;
+pub const REVERB_HALL: u32 = 2;
+pub const REVERB_PLATE: u32 = 3;
+pub const REVERB_SPRING: u32 = 4;
+
+struct Reverb {
+    kind: u32,
+    sr: f32,
+    wet: f32,
     pre: Vec<f32>,
+    pre_len: usize,
     pre_pos: usize,
+    // input diffusion (hall/plate/spring): two short feedback allpasses
+    apd: [Vec<f32>; 2],
+    apd_len: [usize; 2],
+    apd_pos: [usize; 2],
+    apd_g: f32,
     early: Vec<f32>,
+    early_len: usize,
     early_pos: usize,
     taps: [(usize, f32); 6],
+    n_taps: usize,
     fdn: [Vec<f32>; 4],
+    fdn_len: [usize; 4],
     fdn_pos: [usize; 4],
     fdn_g: [f32; 4],
     damp: [f32; 4],
     damp_c: f32,
+    // spring dispersion: 2 first-order allpasses in each feedback path
+    disp_g: f32,
+    disp_x: [[f32; 4]; 2],
+    disp_y: [[f32; 4]; 2],
 }
 
-impl Room {
+impl Reverb {
     fn new(sr: f32) -> Self {
-        let ms = |m: f32| ((m * 1e-3 * sr) as usize) | 1; // odd lengths: no common factors
-        let taps_ms = [13.1, 19.7, 26.3, 34.9, 43.7, 52.9];
-        let gains = [0.62, -0.50, 0.42, -0.33, 0.26, -0.20];
-        let mut taps = [(0usize, 0f32); 6];
-        for i in 0..6 {
-            taps[i] = (ms(taps_ms[i]), gains[i]);
-        }
-        let dl = [41.7, 53.3, 63.1, 74.3].map(ms);
-        const RT60: f32 = 0.38;
-        let mut fdn_g = [0.0f32; 4];
-        for i in 0..4 {
-            fdn_g[i] = 10f32.powf(-3.0 * dl[i] as f32 / (RT60 * sr));
-        }
-        Self {
-            pre: vec![0.0; ms(11.0)],
+        let ms = |m: f32| (((m * 1e-3 * sr) as usize) | 1).max(3);
+        let mut r = Self {
+            kind: REVERB_ROOM,
+            sr,
+            wet: 1.0,
+            pre: vec![0.0; ms(40.0)],
+            pre_len: 3,
             pre_pos: 0,
-            early: vec![0.0; ms(53.0) + 1],
+            apd: [vec![0.0; ms(10.0)], vec![0.0; ms(10.0)]],
+            apd_len: [3, 3],
+            apd_pos: [0, 0],
+            apd_g: 0.0,
+            early: vec![0.0; ms(95.0)],
+            early_len: 3,
             early_pos: 0,
-            taps,
-            fdn: dl.map(|n| vec![0.0; n]),
+            taps: [(0, 0.0); 6],
+            n_taps: 0,
+            fdn: [vec![0.0; ms(120.0)], vec![0.0; ms(120.0)], vec![0.0; ms(120.0)], vec![0.0; ms(120.0)]],
+            fdn_len: [3; 4],
             fdn_pos: [0; 4],
-            fdn_g,
+            fdn_g: [0.0; 4],
             damp: [0.0; 4],
-            // HF dies faster than LF in a real room: one-pole at ~4.5 kHz in
-            // each feedback path
-            damp_c: 1.0 - (-core::f32::consts::TAU * 4500.0 / sr).exp(),
+            damp_c: 0.0,
+            disp_g: 0.0,
+            disp_x: [[0.0; 4]; 2],
+            disp_y: [[0.0; 4]; 2],
+        };
+        r.configure(REVERB_ROOM);
+        r
+    }
+
+    /// Switch voicing: rewrite lengths/gains, clear state. No allocation —
+    /// lengths clamp to the capacities reserved in `new`.
+    fn configure(&mut self, kind: u32) {
+        let sr = self.sr;
+        let ms = |m: f32| (((m * 1e-3 * sr) as usize) | 1).max(3);
+        self.kind = kind;
+        // (pre ms, apd g, apd ms pair, tap table, fdn ms, rt60, damp hz, disp g, wet)
+        struct Cfg {
+            pre: f32,
+            apd_g: f32,
+            apd_ms: [f32; 2],
+            taps_ms: [f32; 6],
+            taps_g: [f32; 6],
+            n_taps: usize,
+            fdn_ms: [f32; 4],
+            rt60: f32,
+            damp_hz: f32,
+            disp_g: f32,
+            wet: f32,
         }
+        let c = match kind {
+            REVERB_HALL => Cfg {
+                pre: 24.0,
+                apd_g: 0.6,
+                apd_ms: [5.3, 8.9],
+                taps_ms: [19.3, 29.1, 41.9, 57.7, 71.3, 88.9],
+                taps_g: [0.38, -0.32, 0.27, -0.22, 0.18, -0.14],
+                n_taps: 6,
+                fdn_ms: [61.4, 77.9, 91.3, 109.7],
+                rt60: 1.9,
+                damp_hz: 3200.0,
+                disp_g: 0.0,
+                wet: 0.9,
+            },
+            REVERB_PLATE => Cfg {
+                pre: 4.0,
+                apd_g: 0.7,
+                apd_ms: [4.7, 7.3],
+                taps_ms: [0.0; 6],
+                taps_g: [0.0; 6],
+                n_taps: 0,
+                fdn_ms: [23.9, 31.7, 41.3, 49.9],
+                rt60: 1.3,
+                damp_hz: 6500.0,
+                disp_g: 0.0,
+                wet: 1.0,
+            },
+            REVERB_SPRING => Cfg {
+                pre: 7.0,
+                apd_g: 0.5,
+                apd_ms: [3.1, 5.9],
+                taps_ms: [0.0; 6],
+                taps_g: [0.0; 6],
+                n_taps: 0,
+                fdn_ms: [31.1, 37.3, 43.7, 51.1],
+                rt60: 1.6,
+                damp_hz: 2800.0,
+                disp_g: 0.55,
+                wet: 1.1,
+            },
+            // Room is also the fallback for unknown kinds
+            _ => Cfg {
+                pre: 11.0,
+                apd_g: 0.0,
+                apd_ms: [5.0, 8.0],
+                taps_ms: [13.1, 19.7, 26.3, 34.9, 43.7, 52.9],
+                taps_g: [0.62, -0.50, 0.42, -0.33, 0.26, -0.20],
+                n_taps: 6,
+                fdn_ms: [41.7, 53.3, 63.1, 74.3],
+                rt60: 0.38,
+                damp_hz: 4500.0,
+                disp_g: 0.0,
+                wet: 1.0,
+            },
+        };
+        self.pre_len = ms(c.pre).min(self.pre.len());
+        self.apd_g = c.apd_g;
+        for k in 0..2 {
+            self.apd_len[k] = ms(c.apd_ms[k]).min(self.apd[k].len());
+        }
+        self.n_taps = c.n_taps;
+        let mut max_tap = 3;
+        for i in 0..6 {
+            let d = ms(c.taps_ms[i].max(0.1)).min(self.early.len() - 1);
+            self.taps[i] = (d, c.taps_g[i]);
+            if i < c.n_taps && d > max_tap {
+                max_tap = d;
+            }
+        }
+        self.early_len = (max_tap + 1).min(self.early.len());
+        for k in 0..4 {
+            self.fdn_len[k] = ms(c.fdn_ms[k]).min(self.fdn[k].len());
+            self.fdn_g[k] = 10f32.powf(-3.0 * self.fdn_len[k] as f32 / (c.rt60 * sr));
+        }
+        self.damp_c = 1.0 - (-core::f32::consts::TAU * c.damp_hz / sr).exp();
+        self.disp_g = c.disp_g;
+        self.wet = c.wet;
+        // clear state (memset of preallocated buffers — no allocation)
+        self.pre.fill(0.0);
+        self.early.fill(0.0);
+        for k in 0..2 {
+            self.apd[k].fill(0.0);
+        }
+        for k in 0..4 {
+            self.fdn[k].fill(0.0);
+        }
+        self.pre_pos = 0;
+        self.early_pos = 0;
+        self.apd_pos = [0, 0];
+        self.fdn_pos = [0; 4];
+        self.damp = [0.0; 4];
+        self.disp_x = [[0.0; 4]; 2];
+        self.disp_y = [[0.0; 4]; 2];
     }
 
     /// Adds the wet signal for `input` (mono send bus) into out_l/out_r.
+    /// Branch-wraps instead of `%` throughout (the modulo version measured
+    /// ~3.8 budget points on the full demo); positions only ever step by 1
+    /// and tap offsets are < buffer length, so a conditional subtract is exact.
     fn process(&mut self, input: &[f32], out_l: &mut [f32], out_r: &mut [f32], frames: usize) {
-        // branch-wraps instead of `%` throughout: the modulo version measured
-        // ~3.8 budget points on the full demo; positions only ever step by 1
-        // and tap offsets are < buffer length, so a single conditional subtract
-        // is exact
-        let el = self.early.len();
-        let pl = self.pre.len();
+        if self.kind == REVERB_OFF {
+            return;
+        }
+        let el = self.early_len;
+        let pl = self.pre_len;
+        let wet = self.wet;
         for i in 0..frames {
             // pre-delay
-            let x = self.pre[self.pre_pos];
+            let mut x = self.pre[self.pre_pos];
             self.pre[self.pre_pos] = input[i];
             self.pre_pos += 1;
             if self.pre_pos >= pl {
                 self.pre_pos = 0;
             }
-            // early reflections from a shared tapped line
-            self.early[self.early_pos] = x;
-            let (mut e_l, mut e_r) = (0.0f32, 0.0f32);
-            for (k, (d, g)) in self.taps.iter().enumerate() {
-                let mut idx = self.early_pos + el - d;
-                if idx >= el {
-                    idx -= el;
-                }
-                let s = self.early[idx] * g;
-                if k & 1 == 0 {
-                    e_l += s;
-                } else {
-                    e_r += s;
+            // input diffusion (feedback allpasses; g=0 bypasses cheaply)
+            if self.apd_g > 0.0 {
+                for k in 0..2 {
+                    let p = self.apd_pos[k];
+                    let d = self.apd[k][p];
+                    let w = x + self.apd_g * d;
+                    self.apd[k][p] = flush_denormal(w);
+                    x = d - self.apd_g * w;
+                    self.apd_pos[k] = p + 1;
+                    if self.apd_pos[k] >= self.apd_len[k] {
+                        self.apd_pos[k] = 0;
+                    }
                 }
             }
-            self.early_pos += 1;
-            if self.early_pos >= el {
-                self.early_pos = 0;
+            // early reflections from a shared tapped line
+            let (mut e_l, mut e_r) = (0.0f32, 0.0f32);
+            if self.n_taps > 0 {
+                self.early[self.early_pos] = x;
+                for (k, (d, g)) in self.taps[..self.n_taps].iter().enumerate() {
+                    let mut idx = self.early_pos + el - d;
+                    if idx >= el {
+                        idx -= el;
+                    }
+                    let s = self.early[idx] * g;
+                    if k & 1 == 0 {
+                        e_l += s;
+                    } else {
+                        e_r += s;
+                    }
+                }
+                self.early_pos += 1;
+                if self.early_pos >= el {
+                    self.early_pos = 0;
+                }
             }
             // FDN tail: read heads, orthogonal butterfly, damped feedback
             let mut r = [0.0f32; 4];
@@ -212,18 +377,32 @@ impl Room {
             let mixed = [0.5 * (a + c), 0.5 * (b + d), 0.5 * (a - c), 0.5 * (b - d)];
             for k in 0..4 {
                 self.damp[k] += self.damp_c * (mixed[k] - self.damp[k]);
-                let w = flush_denormal((self.damp[k] * self.fdn_g[k]) + 0.25 * x);
+                let mut w = self.damp[k] * self.fdn_g[k];
+                // spring chirp: first-order dispersion allpasses in the loop
+                if self.disp_g > 0.0 {
+                    for st in 0..2 {
+                        let y = -self.disp_g * w + self.disp_x[st][k]
+                            + self.disp_g * self.disp_y[st][k];
+                        self.disp_x[st][k] = w;
+                        self.disp_y[st][k] = y;
+                        w = y;
+                    }
+                }
+                let w = flush_denormal(w + 0.25 * x);
                 self.fdn[k][self.fdn_pos[k]] = w;
                 self.fdn_pos[k] += 1;
-                if self.fdn_pos[k] >= self.fdn[k].len() {
+                if self.fdn_pos[k] >= self.fdn_len[k] {
                     self.fdn_pos[k] = 0;
                 }
             }
-            out_l[i] += e_l + 0.7 * (r[0] - r[2]);
-            out_r[i] += e_r + 0.7 * (r[1] - r[3]);
+            out_l[i] += wet * (e_l + 0.7 * (r[0] - r[2]));
+            out_r[i] += wet * (e_r + 0.7 * (r[1] - r[3]));
         }
         for k in 0..4 {
             self.damp[k] = flush_denormal(self.damp[k]);
+            for st in 0..2 {
+                self.disp_y[st][k] = flush_denormal(self.disp_y[st][k]);
+            }
         }
     }
 }
@@ -236,7 +415,7 @@ pub struct Engine {
     track_r: [f32; MAX_BLOCK],
     voice_buf: [f32; MAX_BLOCK],
     symp: Vec<SympBank>,
-    room: Room,
+    reverb: Reverb,
     room_in: [f32; MAX_BLOCK],
     pub out_l: [f32; MAX_BLOCK],
     pub out_r: [f32; MAX_BLOCK],
@@ -298,7 +477,7 @@ impl Engine {
             track_r: [0.0; MAX_BLOCK],
             voice_buf: [0.0; MAX_BLOCK],
             symp,
-            room: Room::new(sample_rate),
+            reverb: Reverb::new(sample_rate),
             room_in: [0.0; MAX_BLOCK],
             out_l: [0.0; MAX_BLOCK],
             out_r: [0.0; MAX_BLOCK],
@@ -500,6 +679,10 @@ impl Engine {
     }
 
     /// Sustain pedal (CC64). Pedal-up releases every note whose note-off was deferred.
+    pub fn set_reverb(&mut self, kind: u32) {
+        self.reverb.configure(kind.min(REVERB_SPRING));
+    }
+
     pub fn set_room(&mut self, track: usize, send: f32) {
         if track < MAX_TRACKS {
             self.tracks[track].room_send = send.clamp(0.0, 1.0);
@@ -751,7 +934,7 @@ impl Engine {
         }
 
         // shared room stage: wet added on top of the dry buses (see Room)
-        self.room
+        self.reverb
             .process(&self.room_in, &mut self.out_l, &mut self.out_r, frames);
 
         // master safety: transparent below ~-12 dBFS, soft-limits above
@@ -811,6 +994,15 @@ pub mod ffi {
     pub extern "C" fn ij_set_track(p: *mut Engine, track: u32, inst: u32, gain: f32, pan: f32) {
         if let Some(e) = engine(p) {
             e.set_track(track as usize, Instrument::from_u32(inst), gain, pan);
+        }
+    }
+
+    /// Select the shared reverb voicing: 0 off, 1 room (default), 2 hall,
+    /// 3 plate, 4 spring. Control-path only; allocation-free.
+    #[no_mangle]
+    pub extern "C" fn ij_set_reverb(p: *mut Engine, kind: u32) {
+        if let Some(e) = engine(p) {
+            e.set_reverb(kind);
         }
     }
 
@@ -1563,6 +1755,41 @@ mod tests {
             }
         }
         assert!(differs, "room stage is inaudible even with default sends");
+    }
+
+    #[test]
+    fn reverb_menu_voicings_behave() {
+        // hall rings longer than room; off is bone dry; all finite
+        let tail_rms = |kind: u32| -> f64 {
+            let mut e = Engine::new(48000.0);
+            e.set_reverb(kind);
+            e.set_track(0, Instrument::Drums, 0.8, 0.0);
+            e.note_on(0, 38, 1.0);
+            let mut acc = 0.0f64;
+            let mut n = 0usize;
+            let mut done = 0usize;
+            // measure 0.5-1.0 s (snare itself is long gone; the tail remains)
+            while done < 48_000 {
+                e.process(128);
+                if done >= 24_000 {
+                    for i in 0..128 {
+                        assert!(e.out_l[i].is_finite());
+                        acc += (e.out_l[i] as f64).powi(2);
+                        n += 1;
+                    }
+                }
+                done += 128;
+            }
+            (acc / n as f64).sqrt()
+        };
+        let off = tail_rms(REVERB_OFF);
+        let room = tail_rms(REVERB_ROOM);
+        let hall = tail_rms(REVERB_HALL);
+        let plate = tail_rms(REVERB_PLATE);
+        let spring = tail_rms(REVERB_SPRING);
+        assert!(hall > room * 2.0, "hall {hall} not longer than room {room}");
+        assert!(off < room * 0.8, "off {off} vs room {room} — sends leaking?");
+        assert!(plate > off && spring > off, "plate/spring inaudible");
     }
 
 }

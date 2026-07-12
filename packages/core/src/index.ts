@@ -50,6 +50,12 @@ export type InstrumentGroup =
   | "guitar-steel"
   | "guitar-electric"
   | "guitar-distorted"
+  // naming aliases (Keunwoo 2026-07-12): resolve to the same engines
+  | "guitar-acoustic"
+  | "guitar-acoustic-nylon"
+  | "guitar-acoustic-steel"
+  | "bass-electric"
+  | "electric-bass"
   | "unknown";
 
 /** Engine-side instrument ids (crates/dsp kernels::Instrument). */
@@ -132,6 +138,10 @@ export interface EngineStats {
   droppedQuanta: number;
 }
 
+/** Shared spatial stage voicings ("several reverb choices" — Keunwoo 2026-07-13). */
+export type ReverbType = "off" | "room" | "hall" | "plate" | "spring";
+const REVERB_ID: Record<ReverbType, number> = { off: 0, room: 1, hall: 2, plate: 3, spring: 4 };
+
 export interface Engine {
   /** Resolves when the worklet + WASM are live and the first note can sound instantly. */
   readonly ready: Promise<void>;
@@ -142,6 +152,8 @@ export interface Engine {
   /** Play a full (possibly multi-track) timeline. Resolves when playback finishes. */
   play(notes: readonly NoteEvent[], options?: PlayOptions): Promise<void>;
   stop(): void;
+  /** Select the shared reverb voicing (default "room" — subtle glue, not an effect). */
+  setReverb(type: ReverbType): void;
   /** Deterministic offline bounce → stereo WAV bytes (16-bit PCM, or float32 via options). */
   renderOffline(notes: readonly NoteEvent[], options?: RenderOptions): Promise<Uint8Array>;
   onStats(cb: (stats: EngineStats) => void): void;
@@ -164,8 +176,10 @@ const SCHED_LEAD = 0.08; // seconds of lead-in when playing a timeline
 interface WorkletEvent {
   type: "event";
   when: number;
-  kind: "on" | "off" | "track" | "pedal";
-  track: number;
+  kind: "on" | "off" | "track" | "pedal" | "reverb" | "room";
+  track?: number;
+  reverb?: number;
+  send?: number;
   midi?: number;
   vel?: number;
   inst?: number;
@@ -390,6 +404,11 @@ export async function createEngine(options: EngineOptions = {}): Promise<Engine>
     },
     stop() {
       node.port.postMessage({ type: "allOff" });
+    },
+    setReverb(type) {
+      const reverb = REVERB_ID[type];
+      if (reverb === undefined) throw new Error(`unknown reverb type: ${type}`);
+      node.port.postMessage({ type: "events", list: [{ type: "event", when: 0, kind: "reverb", reverb }] });
     },
     async renderOffline(notes, options = {}) {
       const duration =

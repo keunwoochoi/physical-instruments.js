@@ -96,6 +96,15 @@
       </select>
     </label>
     <label>Velocity <input type="range" id="vel" min="10" max="127" value="96" /></label>
+    <label>Reverb
+      <select id="reverb">
+        <option value="room" selected>Room</option>
+        <option value="hall">Hall</option>
+        <option value="plate">Plate</option>
+        <option value="spring">Spring</option>
+        <option value="off">Off</option>
+      </select>
+    </label>
   </div>
 
   <div id="keys"></div>
@@ -147,6 +156,7 @@
             ? status(`engine live — voices: ${s.activeVoices} — ⚠ ${s.droppedQuanta} dropped quanta (processor fell behind)`, true)
             : status(`engine live — voices: ${s.activeVoices}`));
         status("engine live — play something");
+        $("reverb").addEventListener("change", () => engine.setReverb($("reverb").value));
       } catch (err) {
         status(`engine failed: ${err.message}`, true); // loud on failure
         throw err;
