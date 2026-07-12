@@ -94,29 +94,40 @@ pub const MAX_BODY_MODES: usize = 8;
 /// reason bare EKS guitars sound thin (listening note 2026-07-11).
 pub fn body_defaults(inst: Instrument) -> (f32, &'static [(f32, f32, f32)]) {
     match inst {
-        // acoustic guitars: A0 Helmholtz air mode, T1 top plate, mid-mode ladder
+        // Acoustic guitars: modes FIT to the NSynth reference clusters'
+        // early-spectrum envelopes (2026-07-11 loop). The resonator peak gain is
+        // |H|peak ≈ g/(2·sin(2πf/sr)), so g = P·2·sin(2πf/48k) for a desired
+        // peak P relative to the dry path — the previous rows implied P≈55
+        // (+35 dB) at ~100 Hz and drowned both guitars in lows.
+        // Nylon (refs 010/014): A0 ~100 Hz, broad T1 region 165–210 Hz (the ref
+        // cluster's strongest formant — E2's h2 rides it), gentle mid ladder,
+        // nothing above ~1.1 kHz (nylon HF dies in the string, not the body).
         Instrument::Guitar => (
-            0.55,
+            0.45,
             &[
-                (98.0, 0.28, 1.5),
-                (196.0, 0.20, 1.9),
-                (292.0, 0.14, 1.1),
-                (428.0, 0.10, 0.85),
-                (555.0, 0.08, 0.6),
-                (712.0, 0.06, 0.45),
-                (1050.0, 0.045, 0.3),
+                (100.0, 0.30, 0.042),  // P=1.6 A0 Helmholtz
+                (170.0, 0.22, 0.116),  // P=2.6 T1 lower skirt
+                (208.0, 0.20, 0.131),  // P=2.4 T1
+                (300.0, 0.14, 0.078),  // P=1.0 T2/back
+                (425.0, 0.12, 0.145),  // P=1.3
+                (560.0, 0.10, 0.139),  // P=0.95
+                (720.0, 0.09, 0.198),  // P=1.05
+                (1100.0, 0.06, 0.187), // P=0.65
             ],
         ),
+        // Steel (refs 015/030/021): weak below ~170 Hz, broad 230–1800 plateau
+        // with peaks near 400/900/1500, slow rolloff to 5 kHz (dreadnought-ish).
         Instrument::GuitarSteel => (
-            0.55,
+            0.35,
             &[
-                (102.0, 0.26, 1.4),
-                (208.0, 0.18, 1.8),
-                (315.0, 0.13, 1.0),
-                (460.0, 0.09, 0.8),
-                (610.0, 0.075, 0.6),
-                (890.0, 0.055, 0.45),
-                (1280.0, 0.04, 0.3),
+                (105.0, 0.30, 0.019), // P=0.7 A0
+                (235.0, 0.22, 0.080), // P=1.3 T1
+                (400.0, 0.16, 0.230), // P=2.2
+                (620.0, 0.12, 0.195), // P=1.2
+                (900.0, 0.10, 0.470), // P=2.0
+                (1400.0, 0.08, 0.658), // P=1.8
+                (2200.0, 0.06, 0.686), // P=1.2
+                (3600.0, 0.045, 0.908), // P=1.0
             ],
         ),
         // piano: soundboard low-mode ladder (broad, subtle — per-voice knock stays)
@@ -151,15 +162,14 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
         Instrument::Vibraphone => 4.9,    // was -30.5 LUFS
         Instrument::Glockenspiel => 28.0, // was -39.6 LUFS (tiny raw kernel level)
         Instrument::MusicBox => 14.8,     // was -35.6 LUFS
-        Instrument::Guitar => 0.85,       // was -26.7 LUFS
+        Instrument::Guitar => 0.20,       // re-baked 2026-07-11 (acoustic rework ran -13.3 LUFS at 0.85)
         Instrument::Bass => 0.70,         // was -25.3 LUFS
         Instrument::EPiano => 1.47,       // was -26.6 LUFS
         Instrument::Drums => 0.61,        // was -27.4 LUFS
         Instrument::SynthPad => 0.48,     // was -26.5 LUFS
         Instrument::Piano => 0.11,          // v3 hammer runs hot; measured -13.5 LUFS pre-correction
-        Instrument::GuitarSteel => 0.76,    // was -25.2 LUFS
-        Instrument::GuitarElectric => 0.73, // re-measured 2026-07-11 after the
-        // electric string/pickup rework: -23.9 LUFS at makeup 0.95 (marimba -26.2)
+        Instrument::GuitarSteel => 0.52,    // re-baked 2026-07-11 (acoustic rework ran -22.9 LUFS at 0.76)
+        Instrument::GuitarElectric => 0.73, // re-measured after the electric rework: -23.9 LUFS at 0.95
         Instrument::GuitarDistorted => 0.21, // -17.9 LUFS at makeup 0.55 (high gain)
     }
 }
@@ -362,15 +372,13 @@ pub struct PluckVoice {
     ap_c: f32,
     ap_x1: f32,
     ap_y1: f32,
-    // Second string polarization (electrics only; pol2_on=false elsewhere and the
-    // whole block is skipped). Weinreich 1977: the vertical polarization couples
-    // strongly to the bridge and decays fast, the horizontal one rings on,
-    // slightly detuned — the two-stage decay every real electric shows.
-    pol2_on: bool,
-    // magnetic pickup senses string VELOCITY, not displacement (Zollner ch.4):
-    // first-difference differentiator, unity-normalized at f0. 0.0 = off.
-    diff_g: f32,
-    diff_x1: f32,
+    level: f32,
+    life: u64,
+    age: u64,
+    sr: f32,
+    // --- acoustic-guitar extensions (inert for the legacy constructor) ---
+    /// second polarization (vertical): its own loop, slightly detuned, faster
+    /// decay — two-stage decay + natural unison chorus (Weinreich 1977).
     buf2: [f32; PLUCK_BUF],
     len2: usize,
     pos2: usize,
@@ -379,13 +387,133 @@ pub struct PluckVoice {
     ap2_c: f32,
     ap2_x1: f32,
     ap2_y1: f32,
-    level: f32,
-    life: u64,
-    age: u64,
-    sr: f32,
+    pol_mix: f32,
+    /// stiffness dispersion allpass (steel strings; 0 = off)
+    disp_c: f32,
+    d1_x1: f32,
+    d1_y1: f32,
+    /// bridge-force output tap: leaky first difference ≈ string slope at the
+    /// bridge (force drives the body, displacement does not radiate). 0 = off.
+    br_rho: f32,
+    br_x1: f32,
+    /// tension modulation: hard plucks start sharp and settle (band-limited —
+    /// the fractional-delay allpass coefficient follows a smoothed env²).
+    tm_dev: f32,
+    tm_env: f32,
+    tm_c: f32,
+    tm_norm: f32,
+    frac1: f32,
+    frac2: f32,
+    /// f0 > 0 marks the acoustic path (per-period loss calibration, new damp)
+    f0: f32,
+}
+
+/// Acoustic-guitar pluck parameters (nylon/steel diverge through these).
+pub struct AcPluck {
+    pub f0: f32,
+    pub vel: f32,
+    /// fundamental decay target (s) — per-period loss is calibrated to hit it
+    pub t60_f0: f32,
+    /// loop lowpass coefficient: sets HF decay relative to the fundamental
+    pub lp_c: f32,
+    /// pluck point as a fraction of string length (comb is inherent in the shape)
+    pub pick_pos: f32,
+    /// contact-patch width as a fraction of string length (finger flesh ≫ pick
+    /// tip); band-limits the WHOLE initial condition to ~len/width harmonics
+    pub contact: f32,
+    /// localized release-snap bump (velocity component of the initial condition)
+    pub snap: f32,
+    /// pick/finger contact noise mixed into the initial shape
+    pub scrape: f32,
+    /// second-polarization output level (0 = single string)
+    pub pol_mix: f32,
+    pub pol_detune_cents: f32,
+    /// polarization-2 fundamental t60 = t60_f0 × this ratio
+    pub pol_t60_ratio: f32,
+    /// stiffness dispersion allpass coefficient (0 = none)
+    pub disp_c: f32,
+    /// initial tension-mod sharpening at vel = 1 (cents; small — refs show ≤3c)
+    pub tm_cents: f32,
+    /// bridge differencer leak (0 = raw displacement out)
+    pub br_rho: f32,
+    pub level: f32,
+}
+
+/// One-pole loop lowpass y += c(x−y): magnitude at ω (for loss calibration).
+#[inline]
+fn onepole_mag(c: f32, w: f32) -> f32 {
+    let b = 1.0 - c;
+    c / (1.0 - 2.0 * b * w.cos() + b * b).sqrt()
+}
+
+/// One-pole loop lowpass phase delay in samples at ω (exact, not the DC approx).
+#[inline]
+fn onepole_delay(c: f32, w: f32) -> f32 {
+    let b = 1.0 - c;
+    let ph = (b * w.sin()).atan2(1.0 - b * w.cos());
+    ph / w
+}
+
+/// First-order allpass (a + z⁻¹)/(1 + a z⁻¹) phase delay in samples at ω.
+#[inline]
+fn allpass_delay(a: f32, w: f32) -> f32 {
+    let (sw, cw) = w.sin_cos();
+    let th_n = (-sw).atan2(a + cw);
+    let th_d = (-a * sw).atan2(1.0 + a * cw);
+    -(th_n - th_d) / w
+}
+
+/// Per-period amplitude ratio hitting `t60` seconds at frequency `f0`:
+/// G^(t60·f0) = 10^-3  ⇒  G = 10^(−3/(t60·f0)).
+#[inline]
+fn per_period_gain(t60: f32, f0: f32) -> f32 {
+    if t60 <= 0.0 {
+        0.0
+    } else {
+        (10.0f32).powf(-3.0 / (t60 * f0))
+    }
 }
 
 impl PluckVoice {
+    /// All-inert extension state (legacy constructor + base for the acoustic one).
+    fn blank() -> Self {
+        Self {
+            buf: [0.0; PLUCK_BUF],
+            len: 2,
+            pos: 0,
+            lp: 0.0,
+            lp_c: 0.5,
+            loss: 0.0,
+            ap_c: 0.0,
+            ap_x1: 0.0,
+            ap_y1: 0.0,
+            level: 0.0,
+            life: 0,
+            age: 0,
+            sr: 48_000.0,
+            buf2: [0.0; PLUCK_BUF],
+            len2: 2,
+            pos2: 0,
+            lp2: 0.0,
+            loss2: 0.0,
+            ap2_c: 0.0,
+            ap2_x1: 0.0,
+            ap2_y1: 0.0,
+            pol_mix: 0.0,
+            disp_c: 0.0,
+            d1_x1: 0.0,
+            d1_y1: 0.0,
+            br_rho: 0.0,
+            br_x1: 0.0,
+            tm_dev: 0.0,
+            tm_env: 0.0,
+            tm_c: 0.0,
+            tm_norm: 0.0,
+            frac1: 0.0,
+            frac2: 0.0,
+            f0: 0.0,
+        }
+    }
     pub fn start(f0: f32, vel: f32, sr: f32, t60: f32, bright: f32, pick_pos: f32, seed: u32) -> Self {
         // Loop-filter tuning compensation (Jaffe-Smith): the one-pole loop lowpass
         // delays the loop by ~(1-c)/c samples, and c depends on brightness/velocity —
@@ -400,30 +528,14 @@ impl PluckVoice {
         let frac = (total - len as f32).clamp(0.1, 1.5);
         let ap_c = (1.0 - frac) / (1.0 + frac);
         let mut v = Self {
-            buf: [0.0; PLUCK_BUF],
             len,
-            pos: 0,
-            lp: 0.0,
             lp_c,
             loss: t60_gain(t60, sr),
             ap_c,
-            ap_x1: 0.0,
-            ap_y1: 0.0,
-            pol2_on: false,
-            diff_g: 0.0,
-            diff_x1: 0.0,
-            buf2: [0.0; PLUCK_BUF],
-            len2: 2,
-            pos2: 0,
-            lp2: 0.0,
-            loss2: 0.0,
-            ap2_c: 0.0,
-            ap2_x1: 0.0,
-            ap2_y1: 0.0,
             level: 0.5 * (0.35 + 0.65 * vel),
             life: ((t60 * 1.5) * sr) as u64,
-            age: 0,
             sr,
+            ..Self::blank()
         };
         // Excitation pre-loaded into the delay line: velocity-lowpassed noise,
         // comb-filtered at the pick position (Jaffe-Smith), DC-removed.
@@ -449,133 +561,212 @@ impl PluckVoice {
         v
     }
 
-    /// Electric solid-body voicing (GuitarElectric / GuitarDistorted only — the
-    /// acoustic `start` laws above are untouched). Differences, physically:
-    /// - Loss is dominated by the bridge/internal damping (`loss`), NOT the loop
-    ///   lowpass: a solid body radiates almost nothing, so t60 is long and nearly
-    ///   register-flat (NSynth guitar_electronic refs: t60_early ≈ 3.4–4.8 s from
-    ///   E1 to C5). The loop lowpass applies once per round trip (f0 times/sec),
-    ///   so its per-pass attenuation must shrink as f0 rises or trebles die —
-    ///   key-track lp_c toward 1.0 up the neck (Jaffe & Smith 1983 loss scaling).
-    pub fn start_electric(midi: u32, f0: f32, vel: f32, sr: f32, dist: bool, seed: u32) -> Self {
-        let key = ((midi as f32) - 40.0) / 44.0; // 0 = E2 … 1 = C6
-        // dist: heavy strings + amp compression read as longer sustain; the pick
-        // signal into a high-gain chain is bright (bridge pickup, tone full up)
-        let t60 = if dist { 6.0 } else { 4.6 };
-        // per-pass brightness: refs lose ~35 dB/s at 1 kHz in the low register
-        // while H2..H5 barely decay — a steep loop corner, key-tracked so the
-        // per-second HF decay stays register-flat (Valimaki et al. 1996 loop fit)
-        let mut lp_c = (0.42 + 0.62 * key + 0.06 * vel).clamp(0.30, 0.985);
-        if dist {
-            lp_c = (lp_c + 0.08).min(0.985);
+    /// Acoustic guitar string (nylon/steel): displacement-release excitation,
+    /// per-period loss calibrated to a fundamental t60, two polarizations,
+    /// optional stiffness dispersion, bridge-force output, light tension mod.
+    ///
+    /// Decay calibration: in a KS loop each circulating wave sample passes the
+    /// loss/lowpass ONCE PER PERIOD, so the per-application gain for a target
+    /// t60(f0) is 10^(−3/(t60·f0)) — the legacy per-sample t60_gain() would be
+    /// ~len× too slow (root cause of the flat guitar envelopes, 2026-07-11).
+    /// Harmonic n additionally sees |H_lp(f_n)| per period, which is what gives
+    /// the measured frequency-dependent t60 ladder (Välimäki/Jaffe-Smith).
+    pub fn start_acoustic(p: &AcPluck, sr: f32, seed: u32) -> Self {
+        let period = sr / p.f0;
+        let w0 = core::f32::consts::TAU * p.f0 / sr;
+        // Keep |H_lp(f0)| ≥ target per-period gain so loss ≤ 1 (loop stable at
+        // every frequency including DC). If the requested loop filter is too dark
+        // to sustain the fundamental, brighten it minimally — physically, thin
+        // sustaining trebles are never felt-dark.
+        let g0 = per_period_gain(p.t60_f0, p.f0);
+        let mut lp_c = p.lp_c.clamp(0.05, 0.995);
+        while onepole_mag(lp_c, w0) < g0 && lp_c < 0.99 {
+            lp_c += 0.01;
         }
-        let lp_delay = (1.0 - lp_c) / lp_c;
-        let period = sr / f0;
-        let total = (period - lp_delay).max(3.0);
-        let len = ((total - 0.5).floor() as usize).clamp(2, PLUCK_BUF - 1);
-        let frac = (total - len as f32).clamp(0.1, 1.5);
-        let ap_c = (1.0 - frac) / (1.0 + frac);
-        // Second polarization (Weinreich 1977): rings ~2.5× longer, +0.5 cents
-        // detuned (bridge admittance differs in the two planes), plucked at ~0.3
-        // of the main amplitude — gives the fast-early/slow-late two-stage decay
-        // measured in every NSynth electric ref (t60 0.1–0.4 s ≈ 3.5 s but
-        // 0.8–1.8 s ≈ 6–20 s).
-        let t60_slow = if dist { 12.0 } else { 9.0 };
-        let f2 = f0 * 1.000289; // +0.5 cents
-        let total2 = (sr / f2 - lp_delay).max(3.0);
+        let loss = (g0 / onepole_mag(lp_c, w0)).min(0.99995);
+
+        // Tuning: subtract exact loop-filter + dispersion phase delays at f0.
+        let disp_on = p.disp_c > 0.0;
+        let d_lp = onepole_delay(lp_c, w0);
+        let d_disp = if disp_on { allpass_delay(p.disp_c, w0) } else { 0.0 };
+        let total = (period - d_lp - d_disp).max(3.0);
+        // Bias the fraction high when tension-mod wants sharpening headroom.
+        let bias = if p.tm_cents > 0.0 { 1.45 } else { 0.5 };
+        let len = ((total - bias).ceil() as usize).clamp(2, PLUCK_BUF - 1);
+        let frac1 = (total - len as f32).clamp(0.1, 1.5);
+
+        // Second polarization: detuned by a couple cents, faster decay
+        // (vertical motion pumps the bridge harder — Weinreich 1977 two-stage).
+        let f2 = p.f0 * (p.pol_detune_cents / 1200.0).exp2();
+        let total2 = (sr / f2 - d_lp).max(3.0);
         let len2 = ((total2 - 0.5).floor() as usize).clamp(2, PLUCK_BUF - 1);
         let frac2 = (total2 - len2 as f32).clamp(0.1, 1.5);
-        let mut v = Self {
-            buf: [0.0; PLUCK_BUF],
-            len,
-            pos: 0,
-            lp: 0.0,
-            lp_c,
-            // Loop loss is applied once per ROUND TRIP (f0 times a second), not per
-            // sample — the per-period gain for a wanted t60 is g = 10^(−3·P/t60)
-            // (Jaffe & Smith 1983), i.e. t60_gain evaluated at rate f0, not sr.
-            // (t60_gain(t60, sr) here would leave the fundamental ringing ~sr/f0
-            //  times too long — measured 40 s instead of 4 s at f0 = 87 Hz.)
-            loss: t60_gain(t60, f0),
-            ap_c,
-            ap_x1: 0.0,
-            ap_y1: 0.0,
-            pol2_on: true,
-            diff_g: 1.0 / (2.0 * (core::f32::consts::PI * f0 / sr).sin()).max(1e-3),
-            diff_x1: 0.0,
-            buf2: [0.0; PLUCK_BUF],
-            len2,
-            pos2: 0,
-            lp2: 0.0,
-            loss2: t60_gain(t60_slow, f2),
-            ap2_c: (1.0 - frac2) / (1.0 + frac2),
-            ap2_x1: 0.0,
-            ap2_y1: 0.0,
-            // Velocity moves loudness far less than timbre on an electric (NSynth
-            // layer spread ≈ 5 LU, most of it spectral): keep the level curve
-            // shallow and let the pick corner carry the dynamics. Mild key boost
-            // compensates the short upper strings' lower energy (P72 was −18 LU).
-            level: 0.52 * (0.72 + 0.28 * vel) * (1.0 + 0.35 * key.max(0.0)),
-            life: ((t60_slow + 0.5) * sr) as u64,
-            age: 0,
-            sr,
+        let g2 = per_period_gain(p.t60_f0 * p.pol_t60_ratio.max(0.05), f2);
+        let loss2 = (g2 / onepole_mag(lp_c, w0)).min(0.99995);
+
+        // Tension modulation depth: cents → samples of delay reduction, limited
+        // by the allpass fraction headroom (band-limited by a ~6 Hz env² follower).
+        let tm_dev = if p.tm_cents > 0.0 {
+            (period * p.tm_cents * p.vel * p.vel * core::f32::consts::LN_2 / 1200.0)
+                .min(frac1 - 0.12)
+                .max(0.0)
+        } else {
+            0.0
         };
-        // excitation: a pick pluck is a released displacement triangle ≈ 1/n²
-        // harmonic tilt (−12 dB/oct; Smith PASP, pluck excitation), so shape the
-        // noise with TWO cascaded one-pole lowpasses. Velocity moves the corner
-        // (flesh-soft ≈ 200 Hz → hard plectrum ≈ 1.6 kHz), matching the NSynth
-        // refs where the spectral knee scales with velocity but the cliff stays.
-        // pick point at 0.28 of the sounding length (first comb dip ≈ H3.6);
-        // bridge-side and velocity-tracked variants both measured worse
-        let pick_pos = 0.28;
+
+        // Bridge differencer kills the fundamental (−38 dB at E2): renormalize
+        // output level to the |H_br| magnitude at 3·f0, so the force spectrum's
+        // TILT is kept but overall loudness stays register-comparable.
+        let level = if p.br_rho > 0.0 {
+            let w3 = (3.0 * w0).min(core::f32::consts::FRAC_PI_2);
+            let mag = (1.0 - 2.0 * p.br_rho * w3.cos() + p.br_rho * p.br_rho).sqrt();
+            p.level / mag.max(1e-3)
+        } else {
+            p.level
+        };
+        let mut v = Self {
+            len,
+            lp_c,
+            loss,
+            ap_c: (1.0 - frac1) / (1.0 + frac1),
+            level,
+            life: ((p.t60_f0 * 1.6 + 0.5) * sr) as u64,
+            sr,
+            len2,
+            loss2,
+            ap2_c: (1.0 - frac2) / (1.0 + frac2),
+            pol_mix: p.pol_mix,
+            disp_c: if disp_on { p.disp_c } else { 0.0 },
+            br_rho: p.br_rho,
+            tm_dev,
+            tm_c: 1.0 - (-core::f32::consts::TAU * 6.0 / sr).exp(),
+            frac1,
+            frac2,
+            f0: p.f0,
+            ..Self::blank()
+        };
+
+        // --- pick-release excitation (displacement initial condition) ---
+        // A pluck is a RELEASE of a displaced string: triangle peaked at the pick
+        // point (harmonic amps ∝ sin(nπβ)/n² — the pick-position comb is inherent),
+        // corner rounded by pick/finger compliance, plus a localized release-snap
+        // bump (velocity component) and a dash of contact noise.
         let mut rng = Lcg(seed | 1);
-        // corner is flatter in velocity than energy is (NSynth layers: the knee
-        // moves ~1 octave from pp to ff, not 3) and tracks register upward
-        let mut fc = ((120.0 + 300.0 * vel) * (1.0 + 1.0 * key)).clamp(80.0, 0.35 * sr);
-        if dist {
-            fc = (fc * 2.5).min(0.35 * sr);
-        }
-        let exc_c = 1.0 - (-core::f32::consts::TAU * fc / sr).exp();
-        let mut lp1 = 0.0f32;
-        let mut lp = 0.0f32;
+        let pk = ((p.pick_pos * len as f32) as usize).clamp(2, len - 2);
         let mut tmp = [0.0f32; PLUCK_BUF];
-        for t in tmp.iter_mut().take(len) {
-            lp1 += exc_c * (rng.next() - lp1);
-            lp += exc_c * (lp1 - lp);
-            *t = lp;
+        for (i, t) in tmp.iter_mut().enumerate().take(len) {
+            *t = if i <= pk {
+                i as f32 / pk as f32
+            } else {
+                (len - i) as f32 / (len - pk) as f32
+            };
         }
-        let p = ((pick_pos * len as f32) as usize).clamp(1, len - 1);
+        // release snap: narrow raised-cosine bump at the pick point (the corner
+        // the pick leaves as it lets go); NSynth refs show attack brightness
+        // grows with velocity but far less than linearly
+        if p.snap > 0.0 {
+            let wdt = ((len as f32 * 0.008) as usize + 2).min(len / 4);
+            let amp = p.snap * (0.35 + 0.65 * p.vel);
+            for j in 0..(2 * wdt) {
+                let i = (pk + len - wdt + j) % len;
+                let ph = j as f32 / (2 * wdt) as f32;
+                tmp[i] += amp * 0.5 * (1.0 - (core::f32::consts::TAU * ph).cos());
+            }
+        }
+        // contact noise (pick scrape / fingertip friction) near the pick point
+        if p.scrape > 0.0 {
+            let wdt = (len / 8).max(4);
+            for j in 0..wdt {
+                let i = (pk + len - wdt / 2 + j) % len;
+                tmp[i] += p.scrape * (0.35 + 0.65 * p.vel) * rng.next() * 0.5;
+            }
+        }
+        // compliance: the contact patch (fingertip flesh ≫ pick tip) rounds the
+        // WHOLE initial condition. Two circular moving-average passes of width
+        // contact·len ≈ triangular kernel: first spectral null at n = len/width,
+        // so the excitation bandwidth is a physical fraction of f0 — the fixed
+        // [1,2,1] smoothing this replaces barely filtered long strings.
+        let cw = ((p.contact * (1.2 - 0.2 * p.vel) * len as f32) as usize).clamp(1, len / 4);
+        if cw > 1 {
+            let mut acc = [0.0f32; PLUCK_BUF];
+            for _ in 0..2 {
+                let mut sum = 0.0;
+                for j in 0..cw {
+                    sum += tmp[j];
+                }
+                let inv = 1.0 / cw as f32;
+                for (i, a) in acc.iter_mut().enumerate().take(len) {
+                    *a = sum * inv;
+                    sum += tmp[(i + cw) % len] - tmp[i];
+                }
+                tmp[..len].copy_from_slice(&acc[..len]);
+            }
+        }
+        // DC removal, then load both polarizations (pol2 gets the same shape —
+        // it IS the same string; only its loop differs)
         let mut mean = 0.0;
-        for i in 0..len {
-            let comb = tmp[i] - 0.9 * tmp[(i + len - p) % len];
-            v.buf[i] = comb;
-            mean += comb;
+        for t in tmp.iter().take(len) {
+            mean += *t;
         }
         mean /= len as f32;
-        for b in v.buf.iter_mut().take(len) {
-            *b -= mean;
+        for i in 0..len {
+            v.buf[i] = tmp[i] - mean;
         }
-        // pick displaces mostly one plane; ~0.3 leaks into the slow polarization
-        for i in 0..v.len2 {
-            v.buf2[i] = 0.3 * v.buf[i % len];
+        if p.pol_mix > 0.0 {
+            for i in 0..len2 {
+                // resample the len-shape onto len2 (nearest is fine: ±2 cents)
+                let src = (i * len) / len2;
+                v.buf2[i] = tmp[src] - mean;
+            }
+        }
+        // Tension mod follows the STRING displacement power (excitation shape is
+        // peak-normalized ~1); the string is maximally elongated at release, so
+        // the glide starts sharp and settles as the note decays.
+        v.tm_norm = 1.0;
+        if v.tm_dev > 0.0 {
+            v.tm_env = 1.0;
+            let f1 = (frac1 - v.tm_dev).clamp(0.1, 1.5);
+            v.ap_c = (1.0 - f1) / (1.0 + f1);
+            let f2 = (frac2 - v.tm_dev).clamp(0.1, 1.5);
+            v.ap2_c = (1.0 - f2) / (1.0 + f2);
         }
         v
     }
 
     pub fn render(&mut self, out: &mut [f32]) -> bool {
+        // Tension modulation, once per block: the smoothed env² pulls the tuning
+        // allpass fraction down (string starts sharp, settles as it decays).
+        // Coefficient steps are ≤0.5 cent per 128-frame block — inaudible zipper,
+        // provably band-limited (env is a 6 Hz one-pole of the output power).
+        if self.tm_dev > 0.0 {
+            let dev = self.tm_dev * self.tm_env.min(1.0);
+            let f1 = (self.frac1 - dev).clamp(0.1, 1.5);
+            self.ap_c = (1.0 - f1) / (1.0 + f1);
+            let f2 = (self.frac2 - dev).clamp(0.1, 1.5);
+            self.ap2_c = (1.0 - f2) / (1.0 + f2);
+        }
         for o in out.iter_mut() {
             let y = self.buf[self.pos];
             // loop lowpass (string damping / brightness)
             self.lp += self.lp_c * (y - self.lp);
+            // stiffness dispersion (steel): first-order allpass delays highs
+            let s = if self.disp_c > 0.0 {
+                let d = self.disp_c * (self.lp - self.d1_y1) + self.d1_x1;
+                self.d1_x1 = self.lp;
+                self.d1_y1 = d;
+                d
+            } else {
+                self.lp
+            };
             // fractional-delay allpass keeps the string in tune
-            let ap = self.ap_c * (self.lp - self.ap_y1) + self.ap_x1;
-            self.ap_x1 = self.lp;
+            let ap = self.ap_c * (s - self.ap_y1) + self.ap_x1;
+            self.ap_x1 = s;
             self.ap_y1 = ap;
             self.buf[self.pos] = ap * self.loss;
             self.pos = (self.pos + 1) % self.len;
-            let mut s = y;
-            // slow horizontal polarization (electrics only)
-            if self.pol2_on {
+            let mut mix = y;
+            // second polarization (own loop; summed at the bridge)
+            if self.pol_mix > 0.0 {
                 let y2 = self.buf2[self.pos2];
                 self.lp2 += self.lp_c * (y2 - self.lp2);
                 let ap2 = self.ap2_c * (self.lp2 - self.ap2_y1) + self.ap2_x1;
@@ -583,35 +774,47 @@ impl PluckVoice {
                 self.ap2_y1 = ap2;
                 self.buf2[self.pos2] = ap2 * self.loss2;
                 self.pos2 = (self.pos2 + 1) % self.len2;
-                s += y2;
+                mix += self.pol_mix * y2;
             }
-            if self.diff_g > 0.0 {
-                let d = (s - self.diff_x1) * self.diff_g;
-                self.diff_x1 = s;
-                s = d;
+            if self.tm_dev > 0.0 {
+                let p = mix * mix * self.tm_norm;
+                self.tm_env += self.tm_c * (p - self.tm_env);
             }
-            *o += s * self.level;
+            // bridge force ≈ leaky first difference of displacement (+6 dB/oct):
+            // what actually drives the top plate (Fletcher & Rossing ch. 9)
+            let outv = if self.br_rho > 0.0 {
+                let f = mix - self.br_rho * self.br_x1;
+                self.br_x1 = mix;
+                f
+            } else {
+                mix
+            };
+            *o += outv * self.level;
         }
-        self.diff_x1 = flush_denormal(self.diff_x1);
         self.lp = flush_denormal(self.lp);
         self.ap_y1 = flush_denormal(self.ap_y1);
-        self.lp2 = flush_denormal(self.lp2);
-        self.ap2_y1 = flush_denormal(self.ap2_y1);
+        if self.pol_mix > 0.0 {
+            self.lp2 = flush_denormal(self.lp2);
+            self.ap2_y1 = flush_denormal(self.ap2_y1);
+        }
+        if self.disp_c > 0.0 {
+            self.d1_y1 = flush_denormal(self.d1_y1);
+        }
+        self.tm_env = flush_denormal(self.tm_env);
+        self.br_x1 = flush_denormal(self.br_x1);
         self.age += out.len() as u64;
         self.age < self.life
     }
 
     pub fn damp(&mut self) {
-        if self.pol2_on {
-            // electric fret/finger release: NSynth refs decay at t60 ≈ 0.3 s after
-            // note-off. Loss basis is per round trip (rate f0 = sr/len), see above.
-            let f0 = self.sr / self.len.max(2) as f32;
-            self.loss = t60_gain(0.30, f0);
+        if self.f0 > 0.0 {
+            // acoustic path: per-period loss for a ~90 ms release (finger/palm
+            // damping), voice retired shortly after
+            self.loss = per_period_gain(0.09, self.f0);
             self.loss2 = self.loss;
-            self.life = self.age + (0.45 * self.sr) as u64;
+            self.life = self.age + (0.25 * self.sr) as u64;
         } else {
             self.loss = t60_gain(0.07, self.sr);
-            self.loss2 = t60_gain(0.07, self.sr);
             self.life = self.age + (0.1 * self.sr) as u64;
         }
     }
@@ -913,6 +1116,280 @@ impl PianoVoice {
             st.loss = t60_gain(0.12, self.sr);
         }
         self.life = self.age + (0.25 * self.sr) as u64;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ElectricVoice — the electric-guitar string (agent-tuned; split from PluckVoice at merge
+// so the acoustic and electric reference-matched implementations stay byte-faithful)
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy)]
+pub struct ElectricVoice {
+    buf: [f32; PLUCK_BUF],
+    len: usize,
+    pos: usize,
+    /// loop one-pole lowpass state + coefficient (brightness)
+    lp: f32,
+    lp_c: f32,
+    /// per-sample loop loss
+    loss: f32,
+    /// fractional-delay allpass
+    ap_c: f32,
+    ap_x1: f32,
+    ap_y1: f32,
+    // Second string polarization (electrics only; pol2_on=false elsewhere and the
+    // whole block is skipped). Weinreich 1977: the vertical polarization couples
+    // strongly to the bridge and decays fast, the horizontal one rings on,
+    // slightly detuned — the two-stage decay every real electric shows.
+    pol2_on: bool,
+    // magnetic pickup senses string VELOCITY, not displacement (Zollner ch.4):
+    // first-difference differentiator, unity-normalized at f0. 0.0 = off.
+    diff_g: f32,
+    diff_x1: f32,
+    buf2: [f32; PLUCK_BUF],
+    len2: usize,
+    pos2: usize,
+    lp2: f32,
+    loss2: f32,
+    ap2_c: f32,
+    ap2_x1: f32,
+    ap2_y1: f32,
+    level: f32,
+    life: u64,
+    age: u64,
+    sr: f32,
+}
+
+impl ElectricVoice {
+    pub fn start(f0: f32, vel: f32, sr: f32, t60: f32, bright: f32, pick_pos: f32, seed: u32) -> Self {
+        // Loop-filter tuning compensation (Jaffe-Smith): the one-pole loop lowpass
+        // delays the loop by ~(1-c)/c samples, and c depends on brightness/velocity —
+        // a fixed compensation detunes the string with velocity. Subtract the actual
+        // filter delay, and bias the allpass fraction into [0.5, 1.5) so its pole
+        // stays well inside the unit circle (ill-conditioned as frac→0).
+        let lp_c = (bright * (0.35 + 0.6 * vel)).clamp(0.05, 0.995);
+        let lp_delay = (1.0 - lp_c) / lp_c;
+        let period = sr / f0;
+        let total = (period - lp_delay).max(3.0);
+        let len = ((total - 0.5).floor() as usize).clamp(2, PLUCK_BUF - 1);
+        let frac = (total - len as f32).clamp(0.1, 1.5);
+        let ap_c = (1.0 - frac) / (1.0 + frac);
+        let mut v = Self {
+            buf: [0.0; PLUCK_BUF],
+            len,
+            pos: 0,
+            lp: 0.0,
+            lp_c,
+            loss: t60_gain(t60, sr),
+            ap_c,
+            ap_x1: 0.0,
+            ap_y1: 0.0,
+            pol2_on: false,
+            diff_g: 0.0,
+            diff_x1: 0.0,
+            buf2: [0.0; PLUCK_BUF],
+            len2: 2,
+            pos2: 0,
+            lp2: 0.0,
+            loss2: 0.0,
+            ap2_c: 0.0,
+            ap2_x1: 0.0,
+            ap2_y1: 0.0,
+            level: 0.5 * (0.35 + 0.65 * vel),
+            life: ((t60 * 1.5) * sr) as u64,
+            age: 0,
+            sr,
+        };
+        // Excitation pre-loaded into the delay line: velocity-lowpassed noise,
+        // comb-filtered at the pick position (Jaffe-Smith), DC-removed.
+        let mut rng = Lcg(seed | 1);
+        let mut lp = 0.0f32;
+        let exc_c = 0.25 + 0.72 * vel; // soft pluck = duller excitation
+        let mut tmp = [0.0f32; PLUCK_BUF];
+        for t in tmp.iter_mut().take(len) {
+            lp += exc_c * (rng.next() - lp);
+            *t = lp;
+        }
+        let p = ((pick_pos * len as f32) as usize).clamp(1, len - 1);
+        let mut mean = 0.0;
+        for i in 0..len {
+            let comb = tmp[i] - 0.9 * tmp[(i + len - p) % len];
+            v.buf[i] = comb;
+            mean += comb;
+        }
+        mean /= len as f32;
+        for b in v.buf.iter_mut().take(len) {
+            *b -= mean;
+        }
+        v
+    }
+
+    /// Electric solid-body voicing (GuitarElectric / GuitarDistorted only — the
+    /// acoustic `start` laws above are untouched). Differences, physically:
+    /// - Loss is dominated by the bridge/internal damping (`loss`), NOT the loop
+    ///   lowpass: a solid body radiates almost nothing, so t60 is long and nearly
+    ///   register-flat (NSynth guitar_electronic refs: t60_early ≈ 3.4–4.8 s from
+    ///   E1 to C5). The loop lowpass applies once per round trip (f0 times/sec),
+    ///   so its per-pass attenuation must shrink as f0 rises or trebles die —
+    ///   key-track lp_c toward 1.0 up the neck (Jaffe & Smith 1983 loss scaling).
+    pub fn start_electric(midi: u32, f0: f32, vel: f32, sr: f32, dist: bool, seed: u32) -> Self {
+        let key = ((midi as f32) - 40.0) / 44.0; // 0 = E2 … 1 = C6
+        // dist: heavy strings + amp compression read as longer sustain; the pick
+        // signal into a high-gain chain is bright (bridge pickup, tone full up)
+        let t60 = if dist { 6.0 } else { 4.6 };
+        // per-pass brightness: refs lose ~35 dB/s at 1 kHz in the low register
+        // while H2..H5 barely decay — a steep loop corner, key-tracked so the
+        // per-second HF decay stays register-flat (Valimaki et al. 1996 loop fit)
+        let mut lp_c = (0.42 + 0.62 * key + 0.06 * vel).clamp(0.30, 0.985);
+        if dist {
+            lp_c = (lp_c + 0.08).min(0.985);
+        }
+        let lp_delay = (1.0 - lp_c) / lp_c;
+        let period = sr / f0;
+        let total = (period - lp_delay).max(3.0);
+        let len = ((total - 0.5).floor() as usize).clamp(2, PLUCK_BUF - 1);
+        let frac = (total - len as f32).clamp(0.1, 1.5);
+        let ap_c = (1.0 - frac) / (1.0 + frac);
+        // Second polarization (Weinreich 1977): rings ~2.5× longer, +0.5 cents
+        // detuned (bridge admittance differs in the two planes), plucked at ~0.3
+        // of the main amplitude — gives the fast-early/slow-late two-stage decay
+        // measured in every NSynth electric ref (t60 0.1–0.4 s ≈ 3.5 s but
+        // 0.8–1.8 s ≈ 6–20 s).
+        let t60_slow = if dist { 12.0 } else { 9.0 };
+        let f2 = f0 * 1.000289; // +0.5 cents
+        let total2 = (sr / f2 - lp_delay).max(3.0);
+        let len2 = ((total2 - 0.5).floor() as usize).clamp(2, PLUCK_BUF - 1);
+        let frac2 = (total2 - len2 as f32).clamp(0.1, 1.5);
+        let mut v = Self {
+            buf: [0.0; PLUCK_BUF],
+            len,
+            pos: 0,
+            lp: 0.0,
+            lp_c,
+            // Loop loss is applied once per ROUND TRIP (f0 times a second), not per
+            // sample — the per-period gain for a wanted t60 is g = 10^(−3·P/t60)
+            // (Jaffe & Smith 1983), i.e. t60_gain evaluated at rate f0, not sr.
+            // (t60_gain(t60, sr) here would leave the fundamental ringing ~sr/f0
+            //  times too long — measured 40 s instead of 4 s at f0 = 87 Hz.)
+            loss: t60_gain(t60, f0),
+            ap_c,
+            ap_x1: 0.0,
+            ap_y1: 0.0,
+            pol2_on: true,
+            diff_g: 1.0 / (2.0 * (core::f32::consts::PI * f0 / sr).sin()).max(1e-3),
+            diff_x1: 0.0,
+            buf2: [0.0; PLUCK_BUF],
+            len2,
+            pos2: 0,
+            lp2: 0.0,
+            loss2: t60_gain(t60_slow, f2),
+            ap2_c: (1.0 - frac2) / (1.0 + frac2),
+            ap2_x1: 0.0,
+            ap2_y1: 0.0,
+            // Velocity moves loudness far less than timbre on an electric (NSynth
+            // layer spread ≈ 5 LU, most of it spectral): keep the level curve
+            // shallow and let the pick corner carry the dynamics. Mild key boost
+            // compensates the short upper strings' lower energy (P72 was −18 LU).
+            level: 0.52 * (0.72 + 0.28 * vel) * (1.0 + 0.35 * key.max(0.0)),
+            life: ((t60_slow + 0.5) * sr) as u64,
+            age: 0,
+            sr,
+        };
+        // excitation: a pick pluck is a released displacement triangle ≈ 1/n²
+        // harmonic tilt (−12 dB/oct; Smith PASP, pluck excitation), so shape the
+        // noise with TWO cascaded one-pole lowpasses. Velocity moves the corner
+        // (flesh-soft ≈ 200 Hz → hard plectrum ≈ 1.6 kHz), matching the NSynth
+        // refs where the spectral knee scales with velocity but the cliff stays.
+        // pick point at 0.28 of the sounding length (first comb dip ≈ H3.6);
+        // bridge-side and velocity-tracked variants both measured worse
+        let pick_pos = 0.28;
+        let mut rng = Lcg(seed | 1);
+        // corner is flatter in velocity than energy is (NSynth layers: the knee
+        // moves ~1 octave from pp to ff, not 3) and tracks register upward
+        let mut fc = ((120.0 + 300.0 * vel) * (1.0 + 1.0 * key)).clamp(80.0, 0.35 * sr);
+        if dist {
+            fc = (fc * 2.5).min(0.35 * sr);
+        }
+        let exc_c = 1.0 - (-core::f32::consts::TAU * fc / sr).exp();
+        let mut lp1 = 0.0f32;
+        let mut lp = 0.0f32;
+        let mut tmp = [0.0f32; PLUCK_BUF];
+        for t in tmp.iter_mut().take(len) {
+            lp1 += exc_c * (rng.next() - lp1);
+            lp += exc_c * (lp1 - lp);
+            *t = lp;
+        }
+        let p = ((pick_pos * len as f32) as usize).clamp(1, len - 1);
+        let mut mean = 0.0;
+        for i in 0..len {
+            let comb = tmp[i] - 0.9 * tmp[(i + len - p) % len];
+            v.buf[i] = comb;
+            mean += comb;
+        }
+        mean /= len as f32;
+        for b in v.buf.iter_mut().take(len) {
+            *b -= mean;
+        }
+        // pick displaces mostly one plane; ~0.3 leaks into the slow polarization
+        for i in 0..v.len2 {
+            v.buf2[i] = 0.3 * v.buf[i % len];
+        }
+        v
+    }
+
+    pub fn render(&mut self, out: &mut [f32]) -> bool {
+        for o in out.iter_mut() {
+            let y = self.buf[self.pos];
+            // loop lowpass (string damping / brightness)
+            self.lp += self.lp_c * (y - self.lp);
+            // fractional-delay allpass keeps the string in tune
+            let ap = self.ap_c * (self.lp - self.ap_y1) + self.ap_x1;
+            self.ap_x1 = self.lp;
+            self.ap_y1 = ap;
+            self.buf[self.pos] = ap * self.loss;
+            self.pos = (self.pos + 1) % self.len;
+            let mut s = y;
+            // slow horizontal polarization (electrics only)
+            if self.pol2_on {
+                let y2 = self.buf2[self.pos2];
+                self.lp2 += self.lp_c * (y2 - self.lp2);
+                let ap2 = self.ap2_c * (self.lp2 - self.ap2_y1) + self.ap2_x1;
+                self.ap2_x1 = self.lp2;
+                self.ap2_y1 = ap2;
+                self.buf2[self.pos2] = ap2 * self.loss2;
+                self.pos2 = (self.pos2 + 1) % self.len2;
+                s += y2;
+            }
+            if self.diff_g > 0.0 {
+                let d = (s - self.diff_x1) * self.diff_g;
+                self.diff_x1 = s;
+                s = d;
+            }
+            *o += s * self.level;
+        }
+        self.diff_x1 = flush_denormal(self.diff_x1);
+        self.lp = flush_denormal(self.lp);
+        self.ap_y1 = flush_denormal(self.ap_y1);
+        self.lp2 = flush_denormal(self.lp2);
+        self.ap2_y1 = flush_denormal(self.ap2_y1);
+        self.age += out.len() as u64;
+        self.age < self.life
+    }
+
+    pub fn damp(&mut self) {
+        if self.pol2_on {
+            // electric fret/finger release: NSynth refs decay at t60 ≈ 0.3 s after
+            // note-off. Loss basis is per round trip (rate f0 = sr/len), see above.
+            let f0 = self.sr / self.len.max(2) as f32;
+            self.loss = t60_gain(0.30, f0);
+            self.loss2 = self.loss;
+            self.life = self.age + (0.45 * self.sr) as u64;
+        } else {
+            self.loss = t60_gain(0.07, self.sr);
+            self.loss2 = t60_gain(0.07, self.sr);
+            self.life = self.age + (0.1 * self.sr) as u64;
+        }
     }
 }
 
@@ -1233,6 +1710,7 @@ pub enum Kernel {
     Off,
     Modal(ModalVoice),
     Pluck(PluckVoice),
+    EPluck(ElectricVoice),
     Drum(DrumVoice),
     Synth(SynthVoice),
     Piano(PianoVoice),
@@ -1337,9 +1815,36 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
             seed,
         )),
         Instrument::Guitar => {
-            let key = ((midi as f32) - 40.0) / 44.0;
-            let t60 = (4.2 - 2.6 * key).clamp(0.8, 4.2);
-            Kernel::Pluck(PluckVoice::start(f0, vel, sr, t60, 0.55, 0.28, seed))
+            // nylon: near-lossless bright loop (refs 010/014: all harmonics decay
+            // at similar slow rates at E2); darkness comes from the finger-release
+            // excitation, not loop damping. Fundamental t60 rises with register
+            // in the NSynth nylon sources.
+            let key = (((midi as f32) - 40.0) / 44.0).clamp(0.0, 1.0);
+            let p = AcPluck {
+                f0,
+                vel,
+                t60_f0: 8.0 + 4.0 * key,
+                lp_c: 0.97 - 0.10 * key + 0.02 * vel,
+                pick_pos: 0.20,
+                contact: 0.045,
+                snap: 0.5,
+                scrape: 0.06,
+                pol_mix: 0.35,
+                pol_detune_cents: 2.2,
+                pol_t60_ratio: 0.55,
+                disp_c: 0.0,
+                // no tension glide: nylon refs show none, and the glide beat
+                // against the polarization detune measurably hurt C5
+                tm_cents: 0.0,
+                // displacement tap: the NSynth nylon sources are fundamental-
+                // dominant in mid/high register; low-register h2 emphasis comes
+                // from the body's T1 mode, not a global force tilt
+                br_rho: 0.0,
+                // register slope ~12 dB/key (within-source NSynth slope is
+                // ~9 dB/key; cross-source fits inflate it); mild velocity curve
+                level: 0.5 * (0.55 + 0.45 * vel) * (1.4 * key.min(0.9)).exp(),
+            };
+            Kernel::Pluck(PluckVoice::start_acoustic(&p, sr, seed))
         }
         Instrument::Bass => {
             // warm fingered upright/electric hybrid: dark loop, pluck near the neck
@@ -1374,48 +1879,126 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
         Instrument::SynthPad => Kernel::Synth(SynthVoice::start(f0, vel, sr)),
         Instrument::Piano => Kernel::Piano(PianoVoice::start(midi, f0, vel, sr, seed)),
         Instrument::GuitarSteel => {
-            // bright bronze-wound pluck, pick closer to the bridge than the nylon
-            let key = ((midi as f32) - 40.0) / 44.0;
-            let t60 = (5.0 - 2.8 * key).clamp(1.0, 5.0);
-            Kernel::Pluck(PluckVoice::start(f0, vel, sr, t60, 0.68, 0.20, seed))
+            // steel: darker loop than nylon in RELATIVE terms (h12/h1 t60 ratio
+            // ~1/3 in ref 015) but a much brighter pick excitation near the
+            // bridge; fundamental t60 falls from ~12 s (E2) to ~2.3 s (C5).
+            let key = (((midi as f32) - 40.0) / 44.0).clamp(0.0, 1.0);
+            let p = AcPluck {
+                f0,
+                vel,
+                t60_f0: (12.0 - 13.0 * key).clamp(2.0, 12.0),
+                // sustain brightness is velocity-independent in the refs —
+                // velocity lives in the excitation, not the loop
+                lp_c: 0.57 + 0.28 * key,
+                pick_pos: 0.14,
+                contact: 0.010,
+                snap: 2.5,
+                scrape: 0.35,
+                pol_mix: 0.3,
+                pol_detune_cents: 1.5,
+                pol_t60_ratio: 0.55,
+                disp_c: 0.0,
+                // hard low plucks start a few cents sharp and settle — the steel
+                // "twang" onset (Tolonen/Välimäki/Karjalainen 2000); NSynth refs
+                // show ≤3 cents, so this stays subtle
+                tm_cents: 4.0,
+                br_rho: 0.995,
+                level: 0.5 * (0.55 + 0.45 * vel) * (0.83 * key).exp(),
+            };
+            Kernel::Pluck(PluckVoice::start_acoustic(&p, sr, seed))
         }
-        Instrument::GuitarElectric | Instrument::GuitarDistorted => {
-            // solid-body voicing lives in start_electric; the amp/pickup character
-            // comes from the track bus stages (pickup_defaults / amp_defaults)
-            let dist = inst == Instrument::GuitarDistorted;
-            Kernel::Pluck(PluckVoice::start_electric(midi, f0, vel, sr, dist, seed))
-        }
+        Instrument::GuitarElectric | Instrument::GuitarDistorted => Kernel::EPluck(
+            ElectricVoice::start_electric(midi, f0, vel, sr, inst == Instrument::GuitarDistorted, seed),
+        )
     }
 }
 
 #[cfg(test)]
-mod diag {
+mod tests {
     use super::*;
 
-    /// The electric string must actually decay at its designed rate: the loop
-    /// loss is per ROUND TRIP (rate f0), and the historical per-sample math left
-    /// the fundamental ringing ~sr/f0 times too long (40 s at 87 Hz). Guard it.
-    #[test]
-    fn electric_string_decays_at_designed_rate() {
-        for sr in [44_100.0f32, 48_000.0f32] {
-            let mut v = PluckVoice::start_electric(41, midi_to_hz(41.0), 1.0, sr, false, 12345);
-            let mut out = vec![0.0f32; (2.5 * sr) as usize];
-            for chunk in out.chunks_mut(128) {
-                v.render(chunk);
+    fn render_pluck(inst: Instrument, midi: u32, vel: f32, sr: f32, secs: f32) -> Vec<f32> {
+        let mut k = start_voice(inst, midi, vel, sr, 12345);
+        let total = (secs * sr) as usize;
+        let mut out = vec![0.0f32; total];
+        for chunk in out.chunks_mut(128) {
+            if let Kernel::Pluck(p) = &mut k {
+                p.render(chunk);
             }
-            let rms = |t0: f32, t1: f32| -> f32 {
-                let seg = &out[(t0 * sr) as usize..(t1 * sr) as usize];
-                (seg.iter().map(|s| s * s).sum::<f32>() / seg.len() as f32).sqrt()
-            };
-            let early = rms(0.1, 0.3).max(1e-9);
-            let late = rms(2.1, 2.3).max(1e-9);
-            let drop_db = 20.0 * (early / late).log10();
-            // t60 4.6 s sustain + 9 s slow polarization: expect roughly 6-20 dB
-            // over 2 s; <2 dB means the loss bug is back, >30 dB means it chokes
-            assert!(
-                (2.0..30.0).contains(&drop_db),
-                "sr={sr}: electric decay over 2 s = {drop_db:.1} dB"
-            );
+        }
+        out
+    }
+
+    fn autocorr_pitch(x: &[f32], sr: f32, lo: f32, hi: f32) -> f32 {
+        let min_lag = (sr / hi) as usize;
+        let max_lag = ((sr / lo) as usize).min(x.len() / 2);
+        let n = x.len() - max_lag;
+        let corr = |lag: usize| -> f32 { (0..n).map(|i| x[i] * x[i + lag]).sum() };
+        let mut best_lag = min_lag;
+        let mut best = f32::NEG_INFINITY;
+        for lag in min_lag..=max_lag {
+            let c = corr(lag);
+            if c > best {
+                best = c;
+                best_lag = lag;
+            }
+        }
+        let (a, b, c) = (corr(best_lag - 1), corr(best_lag), corr(best_lag + 1));
+        let denom = a - 2.0 * b + c;
+        let delta = if denom.abs() > 1e-9 { 0.5 * (a - c) / denom } else { 0.0 };
+        sr / (best_lag as f32 + delta.clamp(-0.5, 0.5))
+    }
+
+    /// Steel-string tuning at both deploy sample rates (the acoustic constructor
+    /// has its own delay budget: exact loop-lowpass phase delay + tension-mod
+    /// fraction bias) — protocol: delay math changes need 44.1k AND 48k coverage.
+    #[test]
+    fn steel_e3_in_tune_both_rates_and_velocities() {
+        for sr in [44_100.0f32, 48_000.0f32] {
+            for vel in [0.25f32, 1.0f32] {
+                let out = render_pluck(Instrument::GuitarSteel, 52, vel, sr, 1.0);
+                let tail = &out[(0.5 * sr) as usize..];
+                let f = autocorr_pitch(tail, sr, 100.0, 400.0);
+                let want = midi_to_hz(52.0);
+                assert!(
+                    (f - want).abs() < want * 0.015,
+                    "sr={sr} vel={vel}: {f} Hz, want {want}"
+                );
+            }
+        }
+    }
+
+    /// Guards the per-period loss calibration: a nylon E2 must actually decay
+    /// (the per-sample t60_gain bug made guitar envelopes flat for seconds).
+    #[test]
+    fn nylon_e2_decays_like_its_t60() {
+        let sr = 48_000.0f32;
+        let out = render_pluck(Instrument::Guitar, 40, 0.8, sr, 3.5);
+        let rms = |a: &[f32]| (a.iter().map(|s| s * s).sum::<f32>() / a.len() as f32).sqrt();
+        let early = rms(&out[(0.2 * sr) as usize..(0.7 * sr) as usize]);
+        let late = rms(&out[(2.8 * sr) as usize..(3.3 * sr) as usize]);
+        let drop_db = 20.0 * (early / late.max(1e-9)).log10();
+        // t60_f0 = 8 s → fundamental alone drops ~19.5 dB over 2.6 s; brighter
+        // partials decay faster, so demand at least ~12 dB and at most ~45 dB
+        assert!(
+            (12.0..45.0).contains(&drop_db),
+            "E2 envelope drop {drop_db} dB over 2.6 s (want physical decay)"
+        );
+    }
+
+    /// The acoustic loop must be stable everywhere: loss ≤ 1 by construction
+    /// even where the requested loop filter is darker than the sustain target.
+    #[test]
+    fn acoustic_loop_gain_never_exceeds_unity() {
+        for midi in [28u32, 40, 52, 64, 76, 88] {
+            for vel in [0.1f32, 1.0] {
+                for inst in [Instrument::Guitar, Instrument::GuitarSteel] {
+                    if let Kernel::Pluck(p) = start_voice(inst, midi, vel, 48_000.0, 7) {
+                        assert!(p.loss <= 1.0, "{inst:?} midi={midi} loss={}", p.loss);
+                        assert!(p.loss2 <= 1.0, "{inst:?} midi={midi} loss2={}", p.loss2);
+                    }
+                }
+            }
         }
     }
 }
