@@ -233,6 +233,10 @@ impl Engine {
                 | Instrument::Bass
                 | Instrument::SynthPad
                 | Instrument::Piano
+                // electrics: fretted strings damp on release (NSynth refs decay at
+                // t60 ≈ 0.3 s after note-off; see PluckVoice::damp electric branch)
+                | Instrument::GuitarElectric
+                | Instrument::GuitarDistorted
         );
         if !damps {
             return;

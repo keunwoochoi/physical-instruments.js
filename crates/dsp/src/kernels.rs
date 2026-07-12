@@ -355,6 +355,19 @@ pub struct PluckVoice {
     ap_c: f32,
     ap_x1: f32,
     ap_y1: f32,
+    // Second string polarization (electrics only; pol2_on=false elsewhere and the
+    // whole block is skipped). Weinreich 1977: the vertical polarization couples
+    // strongly to the bridge and decays fast, the horizontal one rings on,
+    // slightly detuned — the two-stage decay every real electric shows.
+    pol2_on: bool,
+    buf2: [f32; PLUCK_BUF],
+    len2: usize,
+    pos2: usize,
+    lp2: f32,
+    loss2: f32,
+    ap2_c: f32,
+    ap2_x1: f32,
+    ap2_y1: f32,
     level: f32,
     life: u64,
     age: u64,
@@ -385,6 +398,15 @@ impl PluckVoice {
             ap_c,
             ap_x1: 0.0,
             ap_y1: 0.0,
+            pol2_on: false,
+            buf2: [0.0; PLUCK_BUF],
+            len2: 2,
+            pos2: 0,
+            lp2: 0.0,
+            loss2: 0.0,
+            ap2_c: 0.0,
+            ap2_x1: 0.0,
+            ap2_y1: 0.0,
             level: 0.5 * (0.35 + 0.65 * vel),
             life: ((t60 * 1.5) * sr) as u64,
             age: 0,
@@ -433,6 +455,16 @@ impl PluckVoice {
         let len = ((total - 0.5).floor() as usize).clamp(2, PLUCK_BUF - 1);
         let frac = (total - len as f32).clamp(0.1, 1.5);
         let ap_c = (1.0 - frac) / (1.0 + frac);
+        // Second polarization (Weinreich 1977): rings ~2.5× longer, +0.5 cents
+        // detuned (bridge admittance differs in the two planes), plucked at ~0.3
+        // of the main amplitude — gives the fast-early/slow-late two-stage decay
+        // measured in every NSynth electric ref (t60 0.1–0.4 s ≈ 3.5 s but
+        // 0.8–1.8 s ≈ 6–20 s).
+        let t60_slow = 9.0;
+        let f2 = f0 * 1.000289; // +0.5 cents
+        let total2 = (sr / f2 - lp_delay).max(3.0);
+        let len2 = ((total2 - 0.5).floor() as usize).clamp(2, PLUCK_BUF - 1);
+        let frac2 = (total2 - len2 as f32).clamp(0.1, 1.5);
         let mut v = Self {
             buf: [0.0; PLUCK_BUF],
             len,
@@ -448,8 +480,17 @@ impl PluckVoice {
             ap_c,
             ap_x1: 0.0,
             ap_y1: 0.0,
+            pol2_on: true,
+            buf2: [0.0; PLUCK_BUF],
+            len2,
+            pos2: 0,
+            lp2: 0.0,
+            loss2: t60_gain(t60_slow, f2),
+            ap2_c: (1.0 - frac2) / (1.0 + frac2),
+            ap2_x1: 0.0,
+            ap2_y1: 0.0,
             level: 0.5 * (0.35 + 0.65 * vel),
-            life: ((t60 * 1.5) * sr) as u64,
+            life: ((t60_slow + 0.5) * sr) as u64,
             age: 0,
             sr,
         };
@@ -481,6 +522,10 @@ impl PluckVoice {
         for b in v.buf.iter_mut().take(len) {
             *b -= mean;
         }
+        // pick displaces mostly one plane; ~0.3 leaks into the slow polarization
+        for i in 0..v.len2 {
+            v.buf2[i] = 0.3 * v.buf[i % len];
+        }
         v
     }
 
@@ -495,17 +540,41 @@ impl PluckVoice {
             self.ap_y1 = ap;
             self.buf[self.pos] = ap * self.loss;
             self.pos = (self.pos + 1) % self.len;
-            *o += y * self.level;
+            let mut s = y;
+            // slow horizontal polarization (electrics only)
+            if self.pol2_on {
+                let y2 = self.buf2[self.pos2];
+                self.lp2 += self.lp_c * (y2 - self.lp2);
+                let ap2 = self.ap2_c * (self.lp2 - self.ap2_y1) + self.ap2_x1;
+                self.ap2_x1 = self.lp2;
+                self.ap2_y1 = ap2;
+                self.buf2[self.pos2] = ap2 * self.loss2;
+                self.pos2 = (self.pos2 + 1) % self.len2;
+                s += y2;
+            }
+            *o += s * self.level;
         }
         self.lp = flush_denormal(self.lp);
         self.ap_y1 = flush_denormal(self.ap_y1);
+        self.lp2 = flush_denormal(self.lp2);
+        self.ap2_y1 = flush_denormal(self.ap2_y1);
         self.age += out.len() as u64;
         self.age < self.life
     }
 
     pub fn damp(&mut self) {
-        self.loss = t60_gain(0.07, self.sr);
-        self.life = self.age + (0.1 * self.sr) as u64;
+        if self.pol2_on {
+            // electric fret/finger release: NSynth refs decay at t60 ≈ 0.3 s after
+            // note-off. Loss basis is per round trip (rate f0 = sr/len), see above.
+            let f0 = self.sr / self.len.max(2) as f32;
+            self.loss = t60_gain(0.30, f0);
+            self.loss2 = self.loss;
+            self.life = self.age + (0.45 * self.sr) as u64;
+        } else {
+            self.loss = t60_gain(0.07, self.sr);
+            self.loss2 = t60_gain(0.07, self.sr);
+            self.life = self.age + (0.1 * self.sr) as u64;
+        }
     }
 }
 
