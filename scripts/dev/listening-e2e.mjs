@@ -197,6 +197,21 @@ try {
   const analysisPath = join(downloads, "campaign-analysis.json");
   runPython(["scripts/dev/listening.py", "analyze", analysis, campaignSessionPath, "--out", analysisPath]);
   const campaignAnalysis = JSON.parse(await readFile(analysisPath, "utf8"));
+  const errorCountBeforeMetadataFailure = errors.length;
+  await page.route("**/*.wav", (route) => route.abort());
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForFunction(() => document.querySelector("#status")?.textContent.startsWith("Stored session retained but could not be verified"));
+  const transientRecoveryStatus = await page.locator("#status").innerText();
+  const transientMetadataFailureRetainedSession = await page.evaluate(
+    (key) => localStorage.getItem(key) !== null && document.querySelector("#resume")?.hidden === true,
+    `ij-listening:${campaignSession.session_id}`,
+  );
+  await page.unroute("**/*.wav");
+  await page.reload({ waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "Recover completed session" }).waitFor();
+  const expectedMetadataErrors = errors.splice(errorCountBeforeMetadataFailure);
+  const metadataFailureWasExplicit = transientRecoveryStatus.startsWith("Stored session retained but could not be verified")
+    && expectedMetadataErrors.every((message) => message.includes("net::ERR_FAILED"));
   await page.evaluate((valid) => {
     const corrupt = structuredClone(valid);
     corrupt.session_id = "corrupt-stored-session";
@@ -226,6 +241,8 @@ try {
     corruptStoredSessionRejected: storedRecovery.corruptRemoved,
     malformedStoredSessionRejected: storedRecovery.malformedRemoved,
     invalidStorageWarningShown: recoveryStatus.startsWith("Discarded "),
+    transientMetadataFailureRetainedSession,
+    metadataFailureWasExplicit,
     noVerdict: campaignAnalysis.quality_verdict === null,
   };
 

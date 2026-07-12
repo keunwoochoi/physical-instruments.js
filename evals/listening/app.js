@@ -16,6 +16,8 @@ let trialIndex = 0;
 let activeAudio = null;
 let storageAvailable = true;
 
+class RetryableRecoveryError extends Error {}
+
 $("#title").textContent = experiment.title;
 $("#instructions").textContent = experiment.instructions;
 
@@ -85,6 +87,10 @@ async function recoverStoredSession() {
       try {
         return await validateRestoredSession(entry.value);
       } catch (error) {
+        if (error instanceof RetryableRecoveryError) {
+          setStatus(`Stored session retained but could not be verified (${error.message}). Restore connectivity and reload to retry.`);
+          continue;
+        }
         localStorage.removeItem(entry.key);
         setStatus(`Discarded invalid stored session (${error.message}). Use a known-good manual recovery copy if available.`);
       }
@@ -270,16 +276,16 @@ function durationMs(path) {
   if (!durationCache.has(url)) {
     const pending = new Promise((resolve, reject) => {
       const audio = new Audio();
-      const timeout = setTimeout(() => reject(new Error("audio metadata timed out")), 10000);
+      const timeout = setTimeout(() => reject(new RetryableRecoveryError("audio metadata timed out")), 10000);
       audio.preload = "metadata";
       audio.addEventListener("loadedmetadata", () => {
         clearTimeout(timeout);
-        if (!Number.isFinite(audio.duration) || audio.duration <= 0) reject(new Error("audio duration is invalid"));
+        if (!Number.isFinite(audio.duration) || audio.duration <= 0) reject(new RetryableRecoveryError("audio duration is unavailable"));
         else resolve(Math.round(audio.duration * 1000));
       }, { once: true });
       audio.addEventListener("error", () => {
         clearTimeout(timeout);
-        reject(new Error("audio metadata could not be loaded"));
+        reject(new RetryableRecoveryError("audio metadata could not be loaded"));
       }, { once: true });
       audio.src = url;
     }).catch((error) => {
