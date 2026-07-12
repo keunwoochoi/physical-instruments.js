@@ -598,6 +598,11 @@ pub struct PianoVoice {
     h_p: f32,
     h_gain: f32,
     h_active: bool,
+    // Stulov hysteretic felt: F = K·(cᵖ + τ0·d(cᵖ)/dt) — loading is stiffer than
+    // unloading (Stulov, JASA 1995; Hall & Askenfelt), steepening the pulse front.
+    // A symmetric half-sine pulse left the attack ~12 dB short around partial 5.
+    h_tau: f32,
+    h_cp1: f32,
     // soundboard/case knock: 3 fixed low modes excited by the hammer pulse
     body_a1: [f32; 3],
     body_r2: [f32; 3],
@@ -710,6 +715,8 @@ impl PianoVoice {
             h_p,
             h_gain: 260.0, // force→displacement-wave coupling, tuned via piano-audition peaks
             h_active: true,
+            h_tau: 1.5e-4 * sr,
+            h_cp1: 0.0,
             body_a1: [0.0; 3],
             body_r2: [0.0; 3],
             body_y1: [0.0; 3],
@@ -760,7 +767,11 @@ impl PianoVoice {
                 }
                 y_s *= inv_n;
                 let comp = self.h_x - y_s;
-                let f = if comp > 0.0 { self.h_k * comp.powf(self.h_p) } else { 0.0 };
+                let cp = if comp > 0.0 { comp.powf(self.h_p) } else { 0.0 };
+                // Stulov hysteresis (see field docs): boost the loading edge,
+                // relax the unloading edge; force stays repulsive (≥ 0)
+                let f = (self.h_k * (cp + self.h_tau * (cp - self.h_cp1))).max(0.0);
+                self.h_cp1 = cp;
                 self.h_v -= f;
                 self.h_x += self.h_v;
                 if f > 0.0 {
