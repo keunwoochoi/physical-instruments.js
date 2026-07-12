@@ -1514,6 +1514,98 @@ impl ElectricVoice {
 }
 
 // ---------------------------------------------------------------------------
+// Sympathetic resonance bank (pedal bloom) — the sound of a piano's lifted
+// dampers: undamped strings driven by everything else on the track. Twelve
+// dark, long-ringing string loops at harmonic-rich tunings; input is injected
+// INTO the loops so resonance builds and sings (Bank 2003 efficient
+// sympathetic simulation; Rings-style resonator lineage).
+// ---------------------------------------------------------------------------
+
+pub const SYMP_STRINGS: usize = 12;
+const SYMP_BUF: usize = 1024;
+/// C2 G2 C3 E3 G3 A#3 C4 D4 E4 G4 A4 C5 — spread of common overtone anchors
+const SYMP_TUNING: [u32; SYMP_STRINGS] = [36, 43, 48, 52, 55, 58, 60, 62, 64, 67, 69, 72];
+
+#[derive(Clone)]
+pub struct SympBank {
+    bufs: [[f32; SYMP_BUF]; SYMP_STRINGS],
+    len: [usize; SYMP_STRINGS],
+    pos: [usize; SYMP_STRINGS],
+    lp: [f32; SYMP_STRINGS],
+    loss_open: [f32; SYMP_STRINGS],
+    loss_damped: [f32; SYMP_STRINGS],
+    open: bool,
+    /// smoothed input send (ramps with the pedal so engagement doesn't click)
+    send: f32,
+    send_target: f32,
+    send_c: f32,
+    pub enabled: bool,
+    wet: f32,
+}
+
+impl SympBank {
+    pub fn new(sr: f32) -> Self {
+        let mut b = Self {
+            bufs: [[0.0; SYMP_BUF]; SYMP_STRINGS],
+            len: [2; SYMP_STRINGS],
+            pos: [0; SYMP_STRINGS],
+            lp: [0.0; SYMP_STRINGS],
+            loss_open: [0.0; SYMP_STRINGS],
+            loss_damped: [0.0; SYMP_STRINGS],
+            open: false,
+            send: 0.0,
+            send_target: 0.0,
+            send_c: 1.0 - (-1.0 / (0.015 * sr)).exp(),
+            enabled: false,
+            wet: 0.4,
+        };
+        for (i, &m) in SYMP_TUNING.iter().enumerate() {
+            let f0 = midi_to_hz(m as f32);
+            b.len[i] = ((sr / f0 - 0.5) as usize).clamp(2, SYMP_BUF - 1);
+            // per-period loss (the fleet's convergent lesson): long open ring,
+            // fast collapse when the dampers fall back
+            b.loss_open[i] = 10f32.powf(-3.0 / (5.0 * f0));
+            b.loss_damped[i] = 10f32.powf(-3.0 / (0.15 * f0));
+        }
+        b
+    }
+
+    pub fn set_pedal(&mut self, on: bool) {
+        self.open = on;
+        self.send_target = if on { 1.0 } else { 0.0 };
+    }
+
+    /// True while the bank could still be audible (skip processing otherwise).
+    pub fn ringing(&self) -> bool {
+        self.send > 1e-4 || self.open
+    }
+
+    #[inline]
+    pub fn tick(&mut self, input: f32) -> f32 {
+        self.send += self.send_c * (self.send_target - self.send);
+        let inj = input * self.send * (1.0 / SYMP_STRINGS as f32) * 0.9;
+        let mut sum = 0.0;
+        for i in 0..SYMP_STRINGS {
+            let p = self.pos[i];
+            let y = self.bufs[i][p];
+            // dark loop: sympathetic strings answer mostly with their lower partials
+            self.lp[i] += 0.22 * (y - self.lp[i]);
+            let loss = if self.open { self.loss_open[i] } else { self.loss_damped[i] };
+            self.bufs[i][p] = self.lp[i] * loss + inj;
+            self.pos[i] = (p + 1) % self.len[i];
+            sum += y;
+        }
+        sum * self.wet
+    }
+
+    pub fn flush(&mut self) {
+        for i in 0..SYMP_STRINGS {
+            self.lp[i] = flush_denormal(self.lp[i]);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Subtractive synth pad — two polyBLEP saws → 2-pole lowpass → ADSR
 // (classic-synth track per PRINCIPLES #5; polyBLEP keeps the top end alias-free,
 //  which is the producer persona's #1 dismissal criterion)
@@ -1725,6 +1817,17 @@ impl CymbalVoice {
                 self.y2[i] *= k;
             }
         }
+    }
+
+    /// Hi-hat choke / hand mute: collapse every band's tail fast (pedal closing
+    /// clamps the plates), kill the strike bed, end the voice shortly after.
+    fn choke(&mut self, sr: f32) {
+        let d = t60_gain(0.045, sr);
+        for i in 0..self.n_bands {
+            self.wash_dec[i] = d;
+        }
+        self.burst_env = 0.0;
+        self.life = self.age + (0.12 * sr) as u64;
     }
 
     fn push_band(&mut self, b: CymBand, sr: f32) {
@@ -2080,6 +2183,16 @@ enum DrumKind {
 }
 
 impl DrumVoice {
+    /// Choke this drum voice (engine-level note interaction, e.g. closed hat
+    /// cutting a ringing open hat).
+    pub fn choke(&mut self, sr: f32) {
+        if self.kind == DrumKind::Cymbal {
+            self.cym.choke(sr);
+        }
+        self.decay = t60_gain(0.03, sr);
+        self.life = self.life.min(self.age + (0.12 * sr) as u64);
+    }
+
     pub fn start(gm_note: u32, vel: f32, sr: f32, seed: u32) -> Self {
         let mut v = Self {
             kind: DrumKind::Noise,

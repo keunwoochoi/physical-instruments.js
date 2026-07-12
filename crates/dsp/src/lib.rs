@@ -15,7 +15,7 @@ pub mod kernels;
 
 use kernels::{
     amp_defaults, body_defaults, makeup_gain, pickup_defaults, start_voice, voice_pan, Instrument,
-    Kernel, Voice, MAX_BLOCK, MAX_BODY_MODES,
+    Kernel, SympBank, Voice, MAX_BLOCK, MAX_BODY_MODES,
 };
 
 pub const MAX_VOICES: usize = 64;
@@ -95,6 +95,7 @@ pub struct Engine {
     track_l: [f32; MAX_BLOCK],
     track_r: [f32; MAX_BLOCK],
     voice_buf: [f32; MAX_BLOCK],
+    symp: Vec<SympBank>,
     pub out_l: [f32; MAX_BLOCK],
     pub out_r: [f32; MAX_BLOCK],
     seed: u32,
@@ -105,6 +106,7 @@ impl Engine {
     pub fn new(sample_rate: f32) -> Self {
         let mut voices = Vec::with_capacity(MAX_VOICES);
         voices.resize(MAX_VOICES, Voice::off());
+        let symp = (0..MAX_TRACKS).map(|_| SympBank::new(sample_rate)).collect();
         Self {
             sample_rate,
             voices,
@@ -139,6 +141,7 @@ impl Engine {
             track_l: [0.0; MAX_BLOCK],
             track_r: [0.0; MAX_BLOCK],
             voice_buf: [0.0; MAX_BLOCK],
+            symp,
             out_l: [0.0; MAX_BLOCK],
             out_r: [0.0; MAX_BLOCK],
             seed: 0x1234_5678,
@@ -174,6 +177,8 @@ impl Engine {
                 t.body_y2[0][i] = 0.0;
                 t.body_y2[1][i] = 0.0;
             }
+            // sympathetic resonance (pedal bloom): pianos only for now
+            self.symp[track].enabled = instrument == Instrument::Piano;
             // magnetic-pickup resonance (electrics): RBJ resonant lowpass
             let (pf, pq) = pickup_defaults(instrument);
             t.pk_on = pf > 0.0;
@@ -199,6 +204,17 @@ impl Engine {
         }
         let inst = self.tracks[track].instrument;
         self.seed = self.seed.wrapping_mul(747796405).wrapping_add(2891336453);
+        // hi-hat choke: a closed hat (42/44) physically clamps a ringing open hat (46)
+        if inst == Instrument::Drums && (midi == 42 || midi == 44) {
+            let sr = self.sample_rate;
+            for v in self.voices.iter_mut() {
+                if v.active() && v.track as usize == track && v.midi == 46 {
+                    if let Kernel::Drum(d) = &mut v.kernel {
+                        d.choke(sr);
+                    }
+                }
+            }
+        }
         // voice choice: retrigger same (track,pitch) > free slot > oldest (steal)
         let mut slot = None;
         for (i, v) in self.voices.iter().enumerate() {
@@ -277,6 +293,9 @@ impl Engine {
             return;
         }
         self.tracks[track].pedal = on;
+        if self.symp[track].enabled {
+            self.symp[track].set_pedal(on);
+        }
         if on {
             return;
         }
@@ -357,6 +376,21 @@ impl Engine {
                 v.age += frames as u64;
                 if !alive {
                     v.kernel = Kernel::Off;
+                }
+            }
+            // sympathetic resonance (pedal bloom): fed by the track's own sound,
+            // returned to both channels; keeps ringing after the source damps
+            if self.symp[t].enabled && (any || self.symp[t].ringing()) {
+                let bank = &mut self.symp[t];
+                for i in 0..frames {
+                    let m = (self.track_l[i] + self.track_r[i]) * 0.5;
+                    let res = bank.tick(m) * core::f32::consts::FRAC_1_SQRT_2;
+                    self.track_l[i] += res;
+                    self.track_r[i] += res;
+                }
+                bank.flush();
+                if bank.ringing() {
+                    any = true;
                 }
             }
             let (tl, tr) = self.tracks[t].targets();
@@ -902,6 +936,42 @@ mod tests {
         let peak = late.iter().fold(0.0f32, |a, &s| a.max(s.abs()));
         assert!(peak < 1e-3, "pad still sounding 3.3 s after release: {peak}");
         assert_eq!(e.active_voices(), 0, "released pad voice not reclaimed");
+    }
+
+    #[test]
+    fn sympathetic_bank_blooms_with_pedal_and_dies_without() {
+        use kernels::SympBank;
+        let sr = 48_000.0;
+        let mut b = SympBank::new(sr);
+        b.enabled = true;
+        b.set_pedal(true);
+        // excite with a decaying burst (stands in for a struck chord)
+        let mut env = 1.0f32;
+        let mut rng = 0x1234u32;
+        for _ in 0..(0.1 * sr) as usize {
+            rng = rng.wrapping_mul(1664525).wrapping_add(1013904223);
+            let n = (rng >> 9) as f32 * (2.0 / 8388608.0) - 1.0;
+            b.tick(n * env * 0.3);
+            env *= 0.9995;
+        }
+        // source silent now: the bank must keep singing (this IS the bloom)
+        let mut e_ring = 0.0f64;
+        for _ in 0..(0.5 * sr) as usize {
+            let y = b.tick(0.0);
+            e_ring += (y as f64) * (y as f64);
+        }
+        assert!(e_ring > 1e-4, "no sympathetic ring after excitation: {e_ring}");
+        // pedal up: dampers fall, ring collapses fast
+        b.set_pedal(false);
+        for _ in 0..(0.5 * sr) as usize {
+            b.tick(0.0);
+        }
+        let mut e_dead = 0.0f64;
+        for _ in 0..(0.2 * sr) as usize {
+            let y = b.tick(0.0);
+            e_dead += (y as f64) * (y as f64);
+        }
+        assert!(e_dead < e_ring * 1e-3, "dampers failed: ring={e_ring} dead={e_dead}");
     }
 
     #[test]
