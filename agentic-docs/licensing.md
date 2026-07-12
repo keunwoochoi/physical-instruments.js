@@ -35,7 +35,7 @@ The permissive license is part of the product. This file is the single owner of 
 |---|---|---|---|
 | NSynth test set (Engel et al. 2017, Magenta/Google) | CC-BY 4.0 | local reference corpus for render↔reference comparison (scratchpad only) | NOT committed to the repo; if references ever ship, add attribution per CC-BY |
 | virtuosity-drums (github.com/studiorack/virtuosity-drums) | CC0-1.0 (verified) | ride + hi-hat measurement targets for the cymbal engine (scratchpad only) | not committed; CC0 = no attribution required (provenance kept anyway) |
-| VSCO-2-CE (github.com/sgossner/VSCO-2-CE) | CC0-1.0 (verified) | crash measurement target (scratchpad only) | not committed |
+| VSCO-2-CE (github.com/sgossner/VSCO-2-CE) | CC0-1.0 (verified) | crash measurement target + Upright Piano 44.1 kHz refs (Player_dyn{1,2,3}_rr1_{006,014,026}.wav → A1/C♯3/C♯5, piano round-2 full-band checks; scratchpad only) | not committed |
 
 ## Port ledger
 
