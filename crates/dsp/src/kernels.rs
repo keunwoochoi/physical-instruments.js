@@ -299,7 +299,7 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
         Instrument::MusicBox => 14.8,     // was -35.6 LUFS
         Instrument::Guitar => 0.159,       // body-round 0.181 x room 0.88 (verify by sweep)
         Instrument::Bass => 0.60,         // room-stage re-bake 2026-07-12 (was 0.63)
-        Instrument::EPiano => 1.48,       // room-stage re-bake 2026-07-12 (was 1.54)
+        Instrument::EPiano => 1.11,       // EP r2 re-bake (pyloudnorm): tine/pickup rebuild ran +2.5 LU hot, ×0.75 (was 1.48)
         Instrument::Drums => 0.58,        // drums r4 0.61 x room 0.95 (verify by sweep)
         Instrument::SynthPad => 0.47,     // room-stage re-bake 2026-07-12 (was 0.50)
         Instrument::Piano => 0.066, // P1 per-key calibration re-bake (per-key LUFS trims raised the mid; was -14.9 LUFS at 0.130, x0.51 per measure-loudness)
