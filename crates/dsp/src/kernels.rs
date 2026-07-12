@@ -364,6 +364,10 @@ pub struct PluckVoice {
     // strongly to the bridge and decays fast, the horizontal one rings on,
     // slightly detuned — the two-stage decay every real electric shows.
     pol2_on: bool,
+    // magnetic pickup senses string VELOCITY, not displacement (Zollner ch.4):
+    // first-difference differentiator, unity-normalized at f0. 0.0 = off.
+    diff_g: f32,
+    diff_x1: f32,
     buf2: [f32; PLUCK_BUF],
     len2: usize,
     pos2: usize,
@@ -403,6 +407,8 @@ impl PluckVoice {
             ap_x1: 0.0,
             ap_y1: 0.0,
             pol2_on: false,
+            diff_g: 0.0,
+            diff_x1: 0.0,
             buf2: [0.0; PLUCK_BUF],
             len2: 2,
             pos2: 0,
@@ -450,7 +456,7 @@ impl PluckVoice {
     ///   key-track lp_c toward 1.0 up the neck (Jaffe & Smith 1983 loss scaling).
     pub fn start_electric(midi: u32, f0: f32, vel: f32, sr: f32, seed: u32) -> Self {
         let key = ((midi as f32) - 40.0) / 44.0; // 0 = E2 … 1 = C6
-        let t60 = 4.0;
+        let t60 = 4.6;
         // per-pass brightness: refs lose ~35 dB/s at 1 kHz in the low register
         // while H2..H5 barely decay — a steep loop corner, key-tracked so the
         // per-second HF decay stays register-flat (Valimaki et al. 1996 loop fit)
@@ -487,6 +493,8 @@ impl PluckVoice {
             ap_x1: 0.0,
             ap_y1: 0.0,
             pol2_on: true,
+            diff_g: 1.0 / (2.0 * (core::f32::consts::PI * f0 / sr).sin()).max(1e-3),
+            diff_x1: 0.0,
             buf2: [0.0; PLUCK_BUF],
             len2,
             pos2: 0,
@@ -515,7 +523,7 @@ impl PluckVoice {
         let mut rng = Lcg(seed | 1);
         // corner is flatter in velocity than energy is (NSynth layers: the knee
         // moves ~1 octave from pp to ff, not 3) and tracks register upward
-        let fc = ((300.0 + 750.0 * vel) * (1.0 + 0.8 * key)).clamp(120.0, 0.35 * sr);
+        let fc = ((120.0 + 300.0 * vel) * (1.0 + 1.0 * key)).clamp(80.0, 0.35 * sr);
         let exc_c = 1.0 - (-core::f32::consts::TAU * fc / sr).exp();
         let mut lp1 = 0.0f32;
         let mut lp = 0.0f32;
@@ -566,8 +574,14 @@ impl PluckVoice {
                 self.pos2 = (self.pos2 + 1) % self.len2;
                 s += y2;
             }
+            if self.diff_g > 0.0 {
+                let d = (s - self.diff_x1) * self.diff_g;
+                self.diff_x1 = s;
+                s = d;
+            }
             *o += s * self.level;
         }
+        self.diff_x1 = flush_denormal(self.diff_x1);
         self.lp = flush_denormal(self.lp);
         self.ap_y1 = flush_denormal(self.ap_y1);
         self.lp2 = flush_denormal(self.lp2);
