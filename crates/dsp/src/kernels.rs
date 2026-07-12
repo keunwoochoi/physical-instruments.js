@@ -503,11 +503,16 @@ pub struct PluckVoice {
     tm_norm: f32,
     frac1: f32,
     frac2: f32,
-    /// direct contact-click transient: decaying HP-shaped noise added to the
-    /// output (attack splash / release pluck-off), not stored in the string
+    /// direct contact-click transient: decaying band-passed noise added to the
+    /// output (attack splash / release pluck-off), not stored in the string.
+    /// Differenced noise alone tilts +6 dB/oct to Nyquist — a hi-hat-like tick
+    /// the 16 kHz refs can't penalize (real pick scrape lives ~1-6 kHz), so the
+    /// difference is followed by a one-pole LP (tr_lc) at ~4.2 kHz.
     tr_env: f32,
     tr_dec: f32,
     tr_hp: f32,
+    tr_lp: f32,
+    tr_lc: f32,
     tr_rng: Lcg,
     /// release voicing: post-note-off t60 and pluck-off click level
     rel_t60: f32,
@@ -1051,6 +1056,8 @@ impl PluckVoice {
             tr_env: 0.0,
             tr_dec: 0.0,
             tr_hp: 0.0,
+            tr_lp: 0.0,
+            tr_lc: 0.0,
             tr_rng: Lcg(1),
             rel_t60: 0.0,
             rel_click: 0.0,
@@ -1346,8 +1353,13 @@ impl PluckVoice {
             frac2,
             // contact click: ~35 ms HP-shaped noise burst, velocity-scaled like
             // the snap; scaled by the pre-acceleration level (see level_tr)
-            tr_env: p.click * (0.35 + 0.65 * p.vel) * level_tr,
+            // quadratic velocity law: refs' attack/body crest collapses from
+            // ~0 dB at ff to −22 dB at pp — soft plucks have almost no scrape
+            tr_env: p.click * (0.1 + 0.9 * p.vel * p.vel) * level_tr,
             tr_dec: t60_gain(0.035, sr),
+            // scrape band LP at 4.2 kHz; ×1.3 output comp keeps the in-band
+            // (≤6 kHz) scrape level the refs were fit against (see tr_lc docs)
+            tr_lc: 1.0 - (-core::f32::consts::TAU * 4200.0 / sr).exp(),
             tr_rng: Lcg(seed.rotate_left(13) | 1),
             rel_t60: p.rel_t60,
             rel_click: p.rel_click,
@@ -1432,14 +1444,10 @@ impl PluckVoice {
                 v.buf2[i] = tmp[src] - mean;
             }
         }
-        // Prime the output differencers with the t=0 signal so sample 0 is
-        // differenced like every other sample instead of passing as a raw
-        // impulse (which the level renorm then amplifies ~1/|H(3f0)| per tap).
-        if p.br_rho > 0.0 {
-            let m0 = v.buf[0] + p.pol_mix * v.buf2[0];
-            v.br_x1 = m0;
-            v.acc_x1 = m0 * (1.0 - p.br_rho);
-        }
+        // (differencer priming happens AFTER the mode-exact carrier loads
+        // below — load_carrier rewrites buf/buf2, and priming from the stale
+        // pre-carrier shape passed the mismatch through both renormalized
+        // differencers as a ±full-scale 2-sample impulse at onset.)
         // Tension mod follows the STRING displacement power (excitation shape is
         // peak-normalized ~1); the string is maximally elongated at release, so
         // the glide starts sharp and settles as the note decays.
@@ -1512,6 +1520,18 @@ impl PluckVoice {
             for k in 0..disp_n {
                 v.ds2x[k] = st2.dsx[k] as f32;
                 v.ds2y[k] = st2.dsy[k] as f32;
+            }
+        }
+        // Prime the output differencers (and radiation HP) with the true t=0
+        // signal — the FINAL carrier buffers — so sample 0 is differenced like
+        // every other sample instead of passing as a raw impulse (which the
+        // level renorm then amplifies ~1/|H(3f0)| per tap).
+        if p.br_rho > 0.0 {
+            let m0 = v.buf[0] + p.pol_mix * v.buf2[0];
+            v.br_x1 = m0;
+            v.acc_x1 = m0 * (1.0 - p.br_rho);
+            if v.rad_k > 0.0 {
+                v.rad_x1 = m0 * (1.0 - p.br_rho) * (1.0 - p.acc_rho) * v.level;
             }
         }
         v
@@ -1612,11 +1632,14 @@ impl PluckVoice {
                 outv = a;
             }
             let mut sig = outv * self.level;
-            // direct contact-click transient (bypasses the string loop)
+            // direct contact-click transient (bypasses the string loop):
+            // differenced noise band-limited to the pick-scrape band (tr_lc)
             if self.tr_env > 1e-7 {
                 let n = self.tr_rng.next();
-                sig += self.tr_env * 0.5 * (n - self.tr_hp);
+                let d = 0.5 * (n - self.tr_hp);
                 self.tr_hp = n;
+                self.tr_lp += self.tr_lc * (d - self.tr_lp);
+                sig += self.tr_env * 1.3 * self.tr_lp;
                 self.tr_env *= self.tr_dec;
             }
             // radiation monopole high-pass (see rad_k docs)
@@ -1647,6 +1670,7 @@ impl PluckVoice {
             self.ds2y[k] = flush_denormal(self.ds2y[k]);
         }
         self.tm_env = flush_denormal(self.tm_env);
+        self.tr_lp = flush_denormal(self.tr_lp);
         self.br_x1 = flush_denormal(self.br_x1);
         self.acc_x1 = flush_denormal(self.acc_x1);
         self.rad_y1 = flush_denormal(self.rad_y1);
