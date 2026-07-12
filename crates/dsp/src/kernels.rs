@@ -1391,20 +1391,31 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
 #[cfg(test)]
 mod diag {
     use super::*;
+
+    /// The electric string must actually decay at its designed rate: the loop
+    /// loss is per ROUND TRIP (rate f0), and the historical per-sample math left
+    /// the fundamental ringing ~sr/f0 times too long (40 s at 87 Hz). Guard it.
     #[test]
-    fn diag_electric_kernel_decay() {
-        let sr = 48000.0;
-        let mut v = PluckVoice::start_electric(41, midi_to_hz(41.0), 1.0, sr, false, 12345);
-        let mut out = vec![0.0f32; (4.0 * sr) as usize];
-        for chunk in out.chunks_mut(128) {
-            v.render(chunk);
+    fn electric_string_decays_at_designed_rate() {
+        for sr in [44_100.0f32, 48_000.0f32] {
+            let mut v = PluckVoice::start_electric(41, midi_to_hz(41.0), 1.0, sr, false, 12345);
+            let mut out = vec![0.0f32; (2.5 * sr) as usize];
+            for chunk in out.chunks_mut(128) {
+                v.render(chunk);
+            }
+            let rms = |t0: f32, t1: f32| -> f32 {
+                let seg = &out[(t0 * sr) as usize..(t1 * sr) as usize];
+                (seg.iter().map(|s| s * s).sum::<f32>() / seg.len() as f32).sqrt()
+            };
+            let early = rms(0.1, 0.3).max(1e-9);
+            let late = rms(2.1, 2.3).max(1e-9);
+            let drop_db = 20.0 * (early / late).log10();
+            // t60 4.6 s sustain + 9 s slow polarization: expect roughly 6-20 dB
+            // over 2 s; <2 dB means the loss bug is back, >30 dB means it chokes
+            assert!(
+                (2.0..30.0).contains(&drop_db),
+                "sr={sr}: electric decay over 2 s = {drop_db:.1} dB"
+            );
         }
-        let hop = (0.1 * sr) as usize;
-        let mut dbs = Vec::new();
-        for w in out.chunks(hop).take(20) {
-            let rms = (w.iter().map(|s| s * s).sum::<f32>() / w.len() as f32).sqrt();
-            dbs.push(format!("{:.1}", 20.0 * (rms + 1e-9).log10()));
-        }
-        eprintln!("KERNEL-ONLY env dB: {}", dbs.join(" "));
     }
 }
