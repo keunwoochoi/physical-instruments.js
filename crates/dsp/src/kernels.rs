@@ -1926,10 +1926,23 @@ impl CymbalVoice {
 
     /// Ride cymbal (GM 51/59): clear inharmonic stick ping over a mid-blooming
     /// wash with a very long, frequency-sloped decay.
-    fn ride(vel: f32, sr: f32, seed: u32) -> Self {
+    ///
+    /// Kit voicing follows production convention, not guesswork (the standard
+    /// manufacturer voicing axes — jazz rides "dark/warm/washy", rock rides
+    /// "bright/cutting ping", e.g. Zildjian K vs A lineage; Owsinski,
+    /// *Recording Engineer's Handbook*, genre drum-sound notes): rock = louder
+    /// stick ping + brighter contact; jazz = wash-forward, darker top, longer
+    /// tail, and ~1 dB hotter because the ride carries the time.
+    fn ride(vel: f32, sr: f32, seed: u32, kit: KitStyle) -> Self {
+        // (ping, wash, chick, decay, amp, HF shelf >5 kHz)
+        let (m_ping, m_wash, m_chick, m_dec, m_amp, m_hf) = match kit {
+            KitStyle::Pop => (1.0f32, 0.92f32, 1.0f32, 1.0f32, 1.0f32, 0.75f32),
+            KitStyle::Rock => (1.55, 1.05, 1.25, 1.0, 1.1, 0.85),
+            KitStyle::Jazz => (0.95, 1.22, 0.80, 1.08, 1.12, 0.62),
+        };
         let mut v = Self::new(seed);
         v.burst_dec = t60_gain(0.030, sr);
-        v.amp = 0.9 * (0.25 + 0.75 * vel);
+        v.amp = 0.9 * m_amp * (0.25 + 0.75 * vel);
         v.life = (5.0 * sr) as u64;
         let mut jit = Lcg(seed ^ 0x51de | 1);
         // strike-impulse scale: rings must sit just above the noise-fed wash
@@ -1954,7 +1967,7 @@ impl CymbalVoice {
                 CymBand {
                     freq: f,
                     ring_t60: ring,
-                    burst: burst * imp * vel.powf(0.8),
+                    burst: burst * imp * m_ping * vel.powf(0.8),
                     chick: 0.0,
                     wash: 0.0,
                     decay_t60: ring,
@@ -1976,7 +1989,7 @@ impl CymbalVoice {
             // modal, never white). Bands charge from noise in ~1/BW ≈ 20/f s.
             let ring = 44.0 / f;
             // decay: LF rings ~5.6 s, 12 kHz ~1.8 s (measured slope of CC0 ride)
-            let decay = (5.2 * (1500.0 / f).sqrt()).clamp(1.7, 5.6);
+            let decay = (5.2 * (1500.0 / f).sqrt()).clamp(1.7, 5.6) * m_dec;
             // bloom: mids arrive latest/deepest (1–2 kHz band peaks ~60 ms late)
             let (bloom_frac, bloom_tau) = if f < 700.0 {
                 (0.15, 0.015)
@@ -2003,10 +2016,10 @@ impl CymbalVoice {
             let lnw = (f / 3000.0).ln();
             let shape = (1.0 + 0.45 * (-lnw * lnw / 0.8).exp())
                 * if f < 500.0 { (f / 500.0).powf(1.5) } else { 1.0 }
-                * if f > 5000.0 { 0.75 } else { 1.0 };
-            let wash = 0.5 * dip * shape;
+                * if f > 5000.0 { m_hf } else { 1.0 };
+            let wash = 0.5 * m_wash * dip * shape;
             // chick: treble-tilted contact noise, ~2× the wash gain up top
-            let chick = 1.4 * (f / 6000.0).powf(0.8).min(2.2) * vel.powf(1.2);
+            let chick = 1.4 * m_chick * (f / 6000.0).powf(0.8).min(2.2) * vel.powf(1.2);
             v.push_band(
                 CymBand {
                     freq: f,
@@ -2028,11 +2041,21 @@ impl CymbalVoice {
     /// Crash cymbal (GM 49/57): explosive wash whose brightness BLOOMS after
     /// the hit (reference centroid rises 1.8→7.7 kHz into ~50 ms; every band
     /// peaks 45–170 ms late, lower-mids last), then a fast, bright decay.
-    fn crash(vel: f32, sr: f32, seed: u32) -> Self {
+    ///
+    /// Kit voicing: rock crashes are bigger/heavier and mixed "washier" —
+    /// longer sustain, more wash (Owsinski, genre conventions); jazz crashes
+    /// are thin and fast, closer to accents than explosions.
+    fn crash(vel: f32, sr: f32, seed: u32, kit: KitStyle) -> Self {
+        // (wash, decay, amp, life s)
+        let (m_wash, m_dec, m_amp, life_s) = match kit {
+            KitStyle::Pop => (1.0f32, 1.0f32, 1.0f32, 3.8f32),
+            KitStyle::Rock => (1.18, 1.25, 1.05, 4.6),
+            KitStyle::Jazz => (1.0, 0.85, 0.92, 3.4),
+        };
         let mut v = Self::new(seed);
         v.burst_dec = t60_gain(0.045, sr);
-        v.amp = 1.15 * (0.25 + 0.75 * vel);
-        v.life = (3.8 * sr) as u64;
+        v.amp = 1.15 * m_amp * (0.25 + 0.75 * vel);
+        v.life = (life_s * sr) as u64;
         let mut jit = Lcg(seed ^ 0xc4a5 | 1);
         let imp = 0.08;
 
@@ -2058,7 +2081,7 @@ impl CymbalVoice {
             let f = 380.0 * (16000.0f32 / 380.0).powf(t) * (1.0 + 0.05 * jit.next());
             let ring = 44.0 / f;
             // faster, brighter decay than the ride: mids ~3 s, top ~1.4 s
-            let decay = (2.8 * (2000.0 / f).powf(0.35)).clamp(1.4, 3.4);
+            let decay = (2.8 * (2000.0 / f).powf(0.35)).clamp(1.4, 3.4) * m_dec;
             // deep bloom everywhere; lower-mids arrive LAST (ref: 500–1 kHz
             // band peaks at ~170 ms, HF at ~50 ms)
             // near-total bloom: the crash starts as a dark thud and the
@@ -2075,7 +2098,7 @@ impl CymbalVoice {
             // brightness arrives via the bloom, not the contact (iteration 24)
             let lnr = (f / 2500.0).ln();
             let burst = (0.12 + 0.9 * (-lnr * lnr / 1.2).exp()) * vel.powf(0.7) * imp;
-            let wash = 0.62 * if f < 700.0 { (f / 700.0).powf(1.2) } else { 1.0 };
+            let wash = 0.62 * m_wash * if f < 700.0 { (f / 700.0).powf(1.2) } else { 1.0 };
             let chick = 0.12 * (f / 6000.0).powf(0.8).min(2.0) * vel.powf(1.2);
             v.push_band(
                 CymBand {
@@ -2240,11 +2263,23 @@ impl CymbalVoice {
     /// Hi-hats (GM 42/44 closed, 46 open): small bright plates. Closed chokes
     /// in ~0.4 s with no bloom; open sizzles for seconds with a mild mid bloom
     /// (reference band t60s hump at 1–2 kHz).
-    fn hat(open: bool, vel: f32, sr: f32, seed: u32) -> Self {
+    ///
+    /// Velocity depth (round-1 producer finding: kit velocity was level-only):
+    /// harder closed hits are brighter AND sizzle longer — plates are never
+    /// fully clamped, hard sticks push them apart (CC0 closed-hat refs: onset
+    /// centroid 6.9 kHz at vl3 vs 3.2 kHz at vl1). Jazz hats sit softer and
+    /// slightly sloshier; rock hats brighter (production convention, Owsinski).
+    fn hat(open: bool, vel: f32, sr: f32, seed: u32, kit: KitStyle) -> Self {
+        // (amp, chick, closed-decay)
+        let (m_amp, m_chick, m_cdec) = match kit {
+            KitStyle::Pop => (1.0f32, 1.0f32, 1.0f32),
+            KitStyle::Rock => (1.05, 1.2, 1.0),
+            KitStyle::Jazz => (0.82, 0.85, 1.15),
+        };
         let mut v = Self::new(seed);
         v.burst_dec = t60_gain(0.012, sr);
-        v.amp = if open { 0.68 } else { 0.5 } * (0.3 + 0.7 * vel);
-        v.life = if open { (3.2 * sr) as u64 } else { (0.7 * sr) as u64 };
+        v.amp = if open { 0.68 } else { 0.5 } * m_amp * (0.3 + 0.7 * vel);
+        v.life = if open { (3.2 * sr) as u64 } else { (0.9 * sr) as u64 };
         let mut jit = Lcg(seed ^ 0x4a75 | 1);
         if open {
             // tonal skeleton measured from the CC0 open-hat sustain:
@@ -2277,11 +2312,15 @@ impl CymbalVoice {
             let f = 550.0 * (15500.0f32 / 550.0).powf(t) * (1.0 + 0.05 * jit.next());
             let ring = (44.0 / f).min(0.03);
             let decay = if open {
-                // measured hump: ~5 s at 1.6 kHz, ~1.5 s at 12 kHz
+                // measured hump: ~5 s at 1.6 kHz, ~1.5 s at 12 kHz; softer
+                // strokes ring the open plates a little shorter
                 let lnh = (f / 1600.0).ln();
-                (0.8 + 4.0 * (-lnh * lnh / 2.4).exp()).clamp(0.8, 4.8)
+                (0.8 + 4.0 * (-lnh * lnh / 2.4).exp()).clamp(0.8, 4.8) * (0.75 + 0.35 * vel)
             } else {
+                // velocity-openness: hard closed hits sizzle longer
                 (0.45 * (3000.0 / f).powf(0.25)).clamp(0.22, 0.55)
+                    * (0.75 + 0.50 * vel)
+                    * m_cdec
             };
             let (bloom_frac, bloom_tau) = if open && f > 800.0 && f < 3500.0 {
                 (0.5 * (0.4 + 0.6 * vel), 0.050)
@@ -2292,9 +2331,15 @@ impl CymbalVoice {
             let burst = (0.10 + 1.1 * (-lnr * lnr / 1.0).exp()) * vel.powf(0.7) * 0.13;
             let wash = 0.5
                 * if f < 1200.0 { (f / 1200.0).powf(1.4) } else { 1.0 }
-                * if open && f > 6000.0 { 0.75 } else { 1.0 };
-            let chick =
-                if open { 0.8 } else { 1.5 } * (f / 6000.0).powf(0.7).min(2.0) * vel.powf(1.1);
+                * if open && f > 6000.0 { 0.75 } else { 1.0 }
+                // velocity-brightness: the closed hat's top end scales with
+                // velocity beyond the level curve (onset centroid doubles
+                // vl1→vl3 in the refs)
+                * if !open && f > 5000.0 { 0.55 + 0.55 * vel } else { 1.0 };
+            let chick = if open { 0.8 } else { 1.5 }
+                * m_chick
+                * (f / 6000.0).powf(0.7).min(2.0)
+                * vel.powf(1.1);
             v.push_band(
                 CymBand {
                     freq: f,
@@ -2332,6 +2377,17 @@ pub struct DrumVoice {
     hp_c: f32,
     noise_amt: f32,
     tone_amt: f32,
+    /// kick beater-click gain (velocity-shaped; hp/hp_c double as the click's
+    /// brightness lowpass for the Kick kind)
+    click: f32,
+    /// beater "slap" resonator: an impulse-rung two-pole at the head's
+    /// overtone region (~500–700 Hz, t60 ~30 ms) — the mid-band knock that
+    /// separates a hard beater hit from the pitched fundamental (CC0 hard-kick
+    /// refs hold the 400–1500 Hz attack band within ~2 dB of the fundamental)
+    sl_a1: f32,
+    sl_r2: f32,
+    sl_y1: f32,
+    sl_y2: f32,
     modal: ModalVoice,
     has_modal: bool,
     cym: CymbalVoice,
@@ -2359,7 +2415,6 @@ impl DrumVoice {
     }
 
     pub fn start(gm_note: u32, vel: f32, sr: f32, seed: u32, kit: KitStyle) -> Self {
-        let _ = kit; // kit-specific voicing lands with the round-2 voicing passes
         let mut v = Self {
             kind: DrumKind::Noise,
             phase: 0.0,
@@ -2373,6 +2428,11 @@ impl DrumVoice {
             hp_c: 0.2,
             noise_amt: 1.0,
             tone_amt: 0.0,
+            click: 0.0,
+            sl_a1: 0.0,
+            sl_r2: 0.0,
+            sl_y1: 0.0,
+            sl_y2: 0.0,
             modal: ModalVoice::start(200.0, 0.0, sr, &[], 1.0, 0.0, 0.0, seed),
             has_modal: false,
             cym: CymbalVoice::new(seed),
@@ -2382,59 +2442,113 @@ impl DrumVoice {
         };
         match gm_note {
             35 | 36 => {
-                // kick: 110→43 Hz sweep, soft knee
+                // Kick, kit-voiced (tuning + damping conventions: rock 22"
+                // muffled low w/ hard-beater slap at 2–4 kHz, pop tight and
+                // damped, jazz 18" tuned high and left open w/ felt beater —
+                // Owsinski, Recording Engineer's Handbook; Drum Tuning Bible;
+                // jazz-kick pitch ~78 Hz measured on the CC0 virtuosity kit).
+                // Velocity depth: hard hits drive the head further → higher
+                // initial pitch (membrane tension modulation, Rossing ch. 2)
+                // and a brighter, louder beater click (CC0 kick refs: 30 ms
+                // centroid 306 Hz hard vs 148 Hz soft).
+                // (f_start base, vel span, f_end, sweep s, t60, click base,
+                //  click vel span, click brightness, amp)
+                let (f0, f0v, f1, sw, t60, ck0, ckv, ckb, amp) = match kit {
+                    KitStyle::Pop => (90.0, 35.0, 45.0, 0.032, 0.30, 0.15, 0.75, 0.55, 0.9),
+                    KitStyle::Rock => (95.0, 45.0, 41.0, 0.040, 0.50, 0.20, 1.00, 0.64, 0.95),
+                    KitStyle::Jazz => (120.0, 40.0, 72.0, 0.028, 0.35, 0.08, 0.45, 0.38, 0.8),
+                };
                 v.kind = DrumKind::Kick;
-                v.freq = 110.0;
-                v.freq_end = 43.0;
-                v.sweep = (-1.0 / (0.035 * sr)).exp();
-                v.decay = t60_gain(0.42, sr);
-                v.amp = vel * 0.9;
-                v.life = (0.6 * sr) as u64;
+                v.freq = f0 + f0v * vel;
+                v.freq_end = f1;
+                v.sweep = (-1.0 / (sw * sr)).exp();
+                v.decay = t60_gain(t60, sr);
+                v.amp = vel * amp;
+                v.click = ck0 + ckv * vel * vel;
+                v.hp_c = 0.08 + ckb * vel; // click lowpass: felt thud → hard slap
+                v.life = ((t60 * 1.6).max(0.5) * sr) as u64;
+                // slap resonator: (freq, strength) per kit; amplitude ~vel^2
+                // (soft felt strokes barely knock; hard strokes do — refs:
+                // slap band −2.4 dB rel at vl4, −12.4 dB at vl1)
+                let (sf, sa) = match kit {
+                    KitStyle::Pop => (620.0, 1.7),
+                    KitStyle::Rock => (540.0, 2.4),
+                    KitStyle::Jazz => (700.0, 1.5),
+                };
+                let r = t60_gain(0.060, sr);
+                let w = core::f32::consts::TAU * sf / sr;
+                v.sl_a1 = 2.0 * r * w.cos();
+                v.sl_r2 = r * r;
+                let a = sa * vel.powf(1.05);
+                let phi = core::f32::consts::PI * Lcg(seed ^ 0x51a9 | 1).next();
+                v.sl_y1 = a * (phi - w).sin();
+                v.sl_y2 = a * (phi - 2.0 * w).sin();
             }
             38 | 40 => {
-                // snare: two shell modes + bright wire noise
-                v.decay = t60_gain(0.16, sr);
-                v.hp_c = 0.35;
-                v.noise_amt = 0.5 + 0.5 * vel;
+                // Snare, kit-voiced: shell fundamental + coupled-head partials
+                // (ratios 1.3–3.0 measured on the CC0 virtuosity snare, 182 Hz
+                // fundamental). Conventions: pop = tight/bright/damped; rock =
+                // deeper shell tuned lower, longer ring; jazz = tuned high with
+                // the shell singing through the wires (Drum Tuning Bible;
+                // Owsinski). Velocity: wires dominate soft hits, shell tone
+                // grows with velocity (soft ref is relatively wire-bright) —
+                // wires get a level floor, the modal shell scales with vel.
+                // (shell Hz, decay, hp_c, noise base, noise vel span,
+                //  modal gain, life s)
+                let (shell, dec, hpc, n0, nv, mg, life) = match kit {
+                    KitStyle::Pop => (186.0, 0.14, 0.40, 0.30, 0.60, 0.40, 0.32),
+                    KitStyle::Rock => (158.0, 0.22, 0.24, 0.33, 0.62, 0.55, 0.42),
+                    KitStyle::Jazz => (214.0, 0.20, 0.32, 0.24, 0.55, 0.60, 0.40),
+                };
+                v.decay = t60_gain(dec, sr);
+                v.hp_c = hpc;
+                // velocity lives HERE (wires floor + span) and in the shell's
+                // modal excitation — not in v.amp, or the wires pick up a
+                // second vel factor and soft hits lose their relative wire
+                // brightness (the CC0 soft snare is wire-forward)
+                v.amp = 0.95;
+                v.noise_amt = n0 + nv * vel;
                 v.has_modal = true;
+                let dl = dec / 0.14; // shell ring scales with the kit's looseness
                 v.modal = ModalVoice::start(
-                    186.0,
+                    shell,
                     vel,
                     sr,
                     &[
-                        ModeDef { ratio: 1.0, amp: 0.9, t60: 0.11 },
-                        ModeDef { ratio: 1.78, amp: 0.55, t60: 0.08 },
+                        ModeDef { ratio: 1.0, amp: 1.0, t60: 0.11 * dl },
+                        ModeDef { ratio: 1.55, amp: 0.6, t60: 0.08 * dl },
+                        ModeDef { ratio: 2.1, amp: 0.3, t60: 0.06 * dl },
                     ],
-                    0.4,
+                    mg,
                     0.0,
                     0.0,
                     seed ^ 0x9e37,
                 );
-                v.life = (0.35 * sr) as u64;
+                v.life = (life * sr) as u64;
             }
             42 | 44 => {
                 // closed hat (44 = pedal: slightly softer/shorter via velocity)
                 v.kind = DrumKind::Cymbal;
-                v.cym = CymbalVoice::hat(false, if gm_note == 44 { vel * 0.8 } else { vel }, sr, seed);
+                v.cym = CymbalVoice::hat(false, if gm_note == 44 { vel * 0.8 } else { vel }, sr, seed, kit);
                 v.life = v.cym.life;
             }
             46 => {
                 // open hat
                 v.kind = DrumKind::Cymbal;
-                v.cym = CymbalVoice::hat(true, vel, sr, seed);
+                v.cym = CymbalVoice::hat(true, vel, sr, seed, kit);
                 v.life = v.cym.life;
             }
             49 | 57 => {
                 // crash
                 v.kind = DrumKind::Cymbal;
-                v.cym = CymbalVoice::crash(vel, sr, seed);
+                v.cym = CymbalVoice::crash(vel, sr, seed, kit);
                 v.life = v.cym.life;
             }
             51 | 59 => {
                 // ride BOW: banded-noise resonator bank (see CymbalVoice) — the old
                 // 7-mode cluster + hiss read as a test tone (owner note 2026-07-11)
                 v.kind = DrumKind::Cymbal;
-                v.cym = CymbalVoice::ride(vel, sr, seed);
+                v.cym = CymbalVoice::ride(vel, sr, seed, kit);
                 v.life = v.cym.life;
             }
             53 => {
@@ -2486,10 +2600,19 @@ impl DrumVoice {
                     self.freq = self.freq_end + (self.freq - self.freq_end) * self.sweep;
                     self.phase = (self.phase + self.freq * dt).fract();
                     s = (core::f32::consts::TAU * self.phase).sin() * self.env;
-                    // contact click for the first ~4 ms
-                    if self.age < (0.004 * sr) as u64 {
-                        s += 0.3 * self.rng.next() * self.env;
+                    // beater-contact click for the first ~4 ms: velocity-shaped
+                    // gain (click) through a velocity-opened lowpass (hp/hp_c) —
+                    // felt-beater thud at pp, hard slap at ff
+                    if self.age < (0.010 * sr) as u64 {
+                        let n = self.rng.next();
+                        self.hp += self.hp_c * (n - self.hp);
+                        s += self.click * self.hp * self.env;
                     }
+                    // beater slap ring (impulse initial condition, decays on its own)
+                    let y = self.sl_a1 * self.sl_y1 - self.sl_r2 * self.sl_y2;
+                    self.sl_y2 = self.sl_y1;
+                    self.sl_y1 = y;
+                    s += y;
                 }
                 DrumKind::Cymbal => s = 0.0, // handled by early return above
                 DrumKind::Noise => {
@@ -2509,6 +2632,8 @@ impl DrumVoice {
         }
         self.hp = flush_denormal(self.hp);
         self.env = flush_denormal(self.env);
+        self.sl_y1 = flush_denormal(self.sl_y1);
+        self.sl_y2 = flush_denormal(self.sl_y2);
         if self.has_modal {
             self.modal.render(out);
         }
