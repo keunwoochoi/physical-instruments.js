@@ -16,6 +16,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import loop_campaign
+import stage_loop_pilot_refs
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -123,6 +124,17 @@ class BaselineTests(unittest.TestCase):
 
 
 class EndToEndTests(unittest.TestCase):
+    def test_four_family_pilot_staging_is_complete_and_corpus_rate_correct(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "refs"
+            result = stage_loop_pilot_refs.stage(out)
+            self.assertEqual(len(result["entries"]), 16)
+            rates = {entry["sample_rate"] for entry in result["entries"]}
+            self.assertEqual(rates, {16000, 44100, 48000})
+            self.assertTrue((out / "sources.json").is_file())
+            with self.assertRaisesRegex(FileExistsError, "not empty"):
+                stage_loop_pilot_refs.stage(out)
+
     def test_equation_reference_runs_through_shipped_wasm_and_writes_immutable_evidence(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)

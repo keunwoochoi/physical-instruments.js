@@ -29,6 +29,8 @@ node scripts/dev/render-note.mjs <family> <midi> <vel1-127> 3.0 /path/render.wav
 python3 scripts/dev/compare.py /path/render.wav <reference.wav>
 ```
 
+Before a family campaign, validate its committed case matrix with `npm run loop:validate -- evals/cases/<family>.json`. Archive a kept iteration with `npm run loop:run -- evals/cases/<family>.json --reference-root <scratchpad> --out <new-empty-directory> --hypothesis "<physical hypothesis>" --changed-component "<owned component>" --baseline-dir <previous-iteration> --drift-baseline <accepted-auditions>`. The runner requires tuned and held-out cases, verifies the shipped WASM, seals every evidence file, and withholds auditions after untrusted, regressed, incomplete, or drift-failing runs.
+
 1. Compare against ≥3 references spanning register and velocity. HOLD OUT one
    reference (never tune against it; check it at the end for overfit). Report
    tuned AND held-out; a held-out regression is acceptable ONLY with a
@@ -93,3 +95,4 @@ python3 scripts/dev/compare.py /path/render.wav <reference.wav>
 5. Files touched + commit SHAs.
 6. Anything you wanted but couldn't do (shared facilities, engine changes) —
    recommendations only.
+7. Sealed runner directory + successful `python3 scripts/dev/loop_campaign.py verify <iteration-dir>` result.
