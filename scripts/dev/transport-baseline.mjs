@@ -85,7 +85,9 @@ async function renderCell(wasm, item, mode, sampleRate, offset, chunkSize, deliv
   const engine = x.ij_engine_new(sampleRate);
   const left = new Float32Array(item.total_frames);
   const right = new Float32Array(item.total_frames);
-  const source = item.events.map((event, sequence) => ({ ...event, sequence, resolvedFrame: eventFrame(event, offset) }));
+  const source = item.events
+    .map((event, sequence) => ({ ...event, sequence, resolvedFrame: eventFrame(event, offset) }))
+    .sort((a, b) => a.resolvedFrame - b.resolvedFrame || a.sequence - b.sequence);
   const queue = mode === "preloaded" ? source.slice() : [];
   let sourceHead = mode === "preloaded" ? source.length : 0;
   let queueHead = 0;
@@ -162,7 +164,8 @@ function encodeFingerprint(values) {
 function decodeFingerprint(value) {
   const bytes = Buffer.from(value, "base64");
   if (bytes.byteLength % 4 !== 0) throw new Error("invalid baseline fingerprint encoding");
-  return Array.from(new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4));
+  const aligned = new Uint8Array(bytes);
+  return Array.from(new Float32Array(aligned.buffer));
 }
 
 function compactSummary(summary) {

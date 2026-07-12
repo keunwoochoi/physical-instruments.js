@@ -3,7 +3,7 @@
   "cases": [
     {
       "id": "all-instrument-transport-torture",
-      "description": "All pre-control instrument families with soft/medium/hard overlap, same-pitch retriggers, real piano pedal release, repeated drums, open/closed-hat choke, polyphony pressure, and a retained release tail.",
+      "description": "All pre-control instrument families with soft/medium/hard overlap, same-pitch retriggers, real piano pedal release, repeated drums, open/closed-hat choke, polyphony pressure, offset-crossing event order, and a retained release tail.",
       "total_frames": 16384,
       "events": [
         {"frame": 0, "kind": "track", "track": 0, "instrument": 0, "gain": 0.11, "pan": -0.6},
@@ -41,6 +41,7 @@
         {"frame": 512, "kind": "on", "track": 7, "midi": 36, "velocity": 0.35, "offset": true},
         {"frame": 512, "kind": "on", "track": 13, "midi": 36, "velocity": 0.35, "offset": true},
         {"frame": 512, "kind": "on", "track": 14, "midi": 36, "velocity": 0.35, "offset": true},
+        {"frame": 600, "kind": "room", "track": 7, "send": 0.12},
         {"frame": 1024, "kind": "on", "track": 0, "midi": 64, "velocity": 0.64, "offset": true},
         {"frame": 1024, "kind": "on", "track": 1, "midi": 64, "velocity": 0.64, "offset": true},
         {"frame": 1024, "kind": "on", "track": 2, "midi": 88, "velocity": 0.64, "offset": true},
