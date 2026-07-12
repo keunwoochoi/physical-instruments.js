@@ -5136,10 +5136,12 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
             Kernel::Pluck(PluckVoice::start_acoustic(&p, sr, seed))
         }
         Instrument::Bass => {
-            // warm fingered upright/electric hybrid, migrated off the legacy
-            // per-sample-loss constructor (the flat-envelope bug all three pluck
-            // agents flagged) onto the per-period-calibrated acoustic engine.
-            // Wide finger-flesh contact + neck position = round; no glide.
+            // ELECTRIC bass guitar (owner 2026-07-12: DI/amp identity, not
+            // upright): fingered roundwound bass through a velocity-sensing
+            // magnetic pickup chain — reference-matched against the CC0
+            // darkblack fingered DI corpus (44.1k, E1/A1/D2/G2 × p/mf/f;
+            // growly + FreePats YR as held-out cross-instruments). Pooled
+            // K-weighted log-mel 2.48 → 1.02; held-out −75/−76/−77%.
             let key = (((midi as f32) - 28.0) / 32.0).clamp(0.0, 1.0);
             let p = AcPluck {
                 f0,
@@ -5202,8 +5204,11 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
                 pol_mix: 0.25,
                 pol_detune_cents: 1.2,
                 pol_t60_ratio: 0.5,
-                // NSynth bass_electronic refs measure essentially harmonic
-                // (B ≤ 2e-5, h10 ≤ 3 cents) — barely-there stiffness
+                // real roundwound inharmonicity: darkblack B fits 0.75e-4
+                // (G string) … 2.2e-4 (A), growly similar → h10 +4…+18 cents
+                // (the 16 kHz NSynth fit said ≤2e-5; the 44.1k corpus wins).
+                // Side effect: the deeper dispersion cascade also halved the
+                // carrier wrap-seam residual at E1 (13.3× → 5.9× body rms).
                 stiff_b: 1.2e-4,
                 tm_cents: 0.0,
                 // magnetic pickup senses string VELOCITY (Faraday: EMF ∝ dΦ/dt),
