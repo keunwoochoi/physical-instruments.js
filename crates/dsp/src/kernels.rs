@@ -965,6 +965,9 @@ impl StringLoop {
     }
 }
 
+/// Per-voice soundboard-knock mode count (the init-synthesized "mode cloud").
+const PIANO_BOARD_MODES: usize = 12;
+
 #[derive(Clone, Copy)]
 pub struct PianoVoice {
     strings: [StringLoop; 3],
@@ -989,12 +992,13 @@ pub struct PianoVoice {
     // A symmetric half-sine pulse left the attack ~12 dB short around partial 5.
     h_tau: f32,
     h_cp1: f32,
-    // soundboard/case knock: 3 fixed low modes excited by the hammer pulse
-    body_a1: [f32; 3],
-    body_r2: [f32; 3],
-    body_y1: [f32; 3],
-    body_y2: [f32; 3],
-    body_g: [f32; 3],
+    // soundboard knock: a dense modal CLOUD (init-time synthesized board
+    // response), not 3 lonely case modes — see PIANO_BOARD_MODES
+    body_a1: [f32; PIANO_BOARD_MODES],
+    body_r2: [f32; PIANO_BOARD_MODES],
+    body_y1: [f32; PIANO_BOARD_MODES],
+    body_y2: [f32; PIANO_BOARD_MODES],
+    body_g: [f32; PIANO_BOARD_MODES],
     body_pulse_pos: u32,
     body_pulse_len: u32,
     thump_env: f32,
@@ -1013,6 +1017,23 @@ pub struct PianoVoice {
     // (measured: a ~20 Hz component 7 dB ABOVE C5's fundamental in the attack).
     rad_c: f32,
     rad_lp: f32,
+    // phantom partials: tension modulation pumps the string's LONGITUDINAL
+    // direction with force ∝ (∂y/∂x)² — quadratic in the transverse motion —
+    // radiating "phantom" partials at SUM frequencies of transverse partial
+    // pairs (Conklin, JASA 1999; Bank & Sujbert, JASA 2005). They are what makes
+    // an ff bass note snarl (round-1 gap: G1-ff attack centroid 113 vs ref 261,
+    // ref partials p10–p23 strong where the render had nothing). Model: square
+    // the prompt string, highpass it 2nd-order at 6·f0 (the quadratic's DC +
+    // difference terms land back ON the low partials — measured +6 dB at
+    // 250–500 Hz with a 1.8·f0 one-pole; two poles at 6·f0 give −40 dB at 2·f0
+    // vs −5 dB at 10·f0), key-tracked gain that dies above key≈0.55.
+    // Band-limited by construction: bass string content ≤~3 kHz doubles to
+    // ≤6 kHz ≪ Nyquist; the tap is OFF where that argument would weaken.
+    // Amplitude² scaling gives the forte-prominence for free.
+    ph_gain: f32,
+    ph_c: f32,
+    ph_lp1: f32,
+    ph_lp2: f32,
     rng: Lcg,
     sr: f32,
     key: f32,
@@ -1091,7 +1112,7 @@ impl PianoVoice {
         let comp_ref = (v_ref / omega).max(1e-6);
         let h_k = omega * omega * comp_ref.powf(1.0 - h_p);
 
-        // body knock: fixed case/soundboard modes (85/172/318 Hz), short decay
+        // body knock: dense soundboard mode cloud (see below)
         let mut v = Self {
             strings,
             strike_off,
@@ -1111,13 +1132,16 @@ impl PianoVoice {
             h_active: true,
             h_tau: 1.5e-4 * sr,
             h_cp1: 0.0,
-            body_a1: [0.0; 3],
-            body_r2: [0.0; 3],
-            body_y1: [0.0; 3],
-            body_y2: [0.0; 3],
-            body_g: [0.0; 3],
+            body_a1: [0.0; PIANO_BOARD_MODES],
+            body_r2: [0.0; PIANO_BOARD_MODES],
+            body_y1: [0.0; PIANO_BOARD_MODES],
+            body_y2: [0.0; PIANO_BOARD_MODES],
+            body_g: [0.0; PIANO_BOARD_MODES],
             body_pulse_pos: 0,
-            body_pulse_len: ((0.003 * sr) as u32).max(2),
+            // hammer-bridge force pulse: ~3 ms on heavy bass hammers, ~1 ms in
+            // the treble (Askenfelt & Jansson 1990 contact times) — the shorter
+            // pulse is what lets the cloud's upper modes speak at all
+            body_pulse_len: (((0.003 - 0.002 * key) * sr) as u32).max(2),
             thump_env: 1.0,
             thump_decay: t60_gain(0.010, sr),
             thump_amp: 0.02 * vel,
@@ -1125,6 +1149,17 @@ impl PianoVoice {
             bloom_c: 1.0 - (-f0.max(50.0) / (2.5 * sr)).exp(),
             rad_c: 1.0 - (-core::f32::consts::TAU * 0.35 * f0 / sr).exp(),
             rad_lp: 0.0,
+            // gain: register-tapered (off above key≈0.55) and velocity-curved —
+            // the s² source alone gave pp phantoms ~11 dB hotter relative to
+            // their soft references (felt at pp is too soft to pump the
+            // longitudinal direction; Conklin hears phantoms "at forte")
+            ph_gain: {
+                let reg = ((0.55 - key) / 0.55).clamp(0.0, 1.0);
+                8.0 * reg * reg * (0.25 + 0.75 * vel * vel)
+            },
+            ph_c: 1.0 - (-core::f32::consts::TAU * (6.0 * f0).min(0.1 * sr) / sr).exp(),
+            ph_lp1: 0.0,
+            ph_lp2: 0.0,
             rng,
             sr,
             key,
@@ -1134,18 +1169,32 @@ impl PianoVoice {
             age: 0,
         };
         // Knock/thump are a subtle PRECURSOR in real recordings (Askenfelt &
-        // Jansson 1990), ~8 dB below the string plateau; at 2.5×vel the 85 Hz
-        // knock mode sat ~10 dB ABOVE it and owned the first 150 ms of every ff
-        // note (and buried the treble attack centroid: C5 read 99 Hz vs ref 665).
-        // Key taper: the case knock shrinks toward the short treble strings.
-        let body = [(85.0f32, 0.40f32, 0.30f32), (172.0, 0.28, 0.20), (318.0, 0.18, 0.13)];
+        // Jansson 1990), ~8 dB below the string plateau. Round 1 shipped 3 lonely
+        // case modes (85/172/318) — audibly "a sine knock", not wood. Round 2:
+        // a dense mode CLOUD, i.e. an init-time-synthesized soundboard impulse
+        // response. Physics: board modal spacing is ~25–40 Hz low down and the
+        // modal overlap passes 1 above ~1 kHz, where discrete modes blur into a
+        // diffuse cloud (Suzuki JASA 1986; Giordano JASA 1998). Twelve modes on
+        // a geometric ladder 88 Hz → 2.6 kHz with a seeded ±5% scatter (strike
+        // position moves along the bridge, so every note meets a slightly
+        // different board response), T60 0.55 s → 0.13 s (radiation damping
+        // grows with f), amplitude bell centered ~300 Hz (the board's best
+        // radiating band). The key-tracked hammer pulse (3 ms bass → 1 ms
+        // treble) lowpasses the cloud naturally: bass knock stays dark, treble
+        // knock speaks up to ~2 kHz.
         let knock = 0.6 * vel * (1.0 - 0.55 * key);
-        for (i, &(bf, bt, ba)) in body.iter().enumerate() {
+        let mut jrng = Lcg(seed.wrapping_mul(0x9E37) | 1);
+        let mut bf = 88.0f32;
+        for i in 0..PIANO_BOARD_MODES {
+            let f = bf * (1.0 + 0.05 * jrng.next());
+            let bt = 0.55 * (88.0 / f).powf(0.4);
+            let a_rel = if f < 300.0 { (f / 300.0).powf(0.3) } else { (300.0 / f).powf(0.55) };
             let r = t60_gain(bt, sr);
-            let w = core::f32::consts::TAU * bf / sr;
+            let w = core::f32::consts::TAU * f / sr;
             v.body_a1[i] = 2.0 * r * w.cos();
             v.body_r2[i] = r * r;
-            v.body_g[i] = ba * (1.0 - r) * knock;
+            v.body_g[i] = 0.079 * a_rel * (1.0 - r) * knock;
+            bf *= 1.36;
         }
         v
     }
@@ -1181,8 +1230,27 @@ impl PianoVoice {
                 }
             }
             let mut s = 0.0;
+            let mut ph_src = 0.0;
             for (i, st) in self.strings.iter_mut().enumerate().take(self.n_strings) {
-                s += st.tick() * self.out_w[i];
+                let y = st.tick();
+                if i < 2 {
+                    ph_src += y;
+                }
+                s += y * self.out_w[i];
+            }
+            // phantom partials (see field docs): quadratic tension tap off the
+            // prompt + ONE aftersound string. Squaring the full detuned pair
+            // parked a 2·f0 beat chorus in the tail (measured lm_tail
+            // 3.21→3.55); prompt-only phantoms died before the 0.25–0.75 s
+            // window where the references still hold them (ref G1-ff keeps
+            // 492/541 Hz at −13…−17 dB there). One aftersound string gives
+            // sustained sum-terms with a single, slow cross-beat.
+            if self.ph_gain > 0.0 {
+                let s2 = ph_src * ph_src;
+                self.ph_lp1 += self.ph_c * (s2 - self.ph_lp1);
+                let h1 = s2 - self.ph_lp1;
+                self.ph_lp2 += self.ph_c * (h1 - self.ph_lp2);
+                s += self.ph_gain * (h1 - self.ph_lp2);
             }
             // soundboard radiation buildup (see field docs): strings bloom in,
             // the percussive knock/thump below stay immediate
@@ -1198,7 +1266,7 @@ impl PianoVoice {
                 x = 0.5 * (1.0 - (core::f32::consts::TAU * ph).cos());
                 self.body_pulse_pos += 1;
             }
-            for m in 0..3 {
+            for m in 0..PIANO_BOARD_MODES {
                 let y = self.body_a1[m] * self.body_y1[m] - self.body_r2[m] * self.body_y2[m]
                     + self.body_g[m] * x;
                 self.body_y2[m] = self.body_y1[m];
@@ -1214,11 +1282,13 @@ impl PianoVoice {
         for st in self.strings.iter_mut().take(self.n_strings) {
             st.flush();
         }
-        for m in 0..3 {
+        for m in 0..PIANO_BOARD_MODES {
             self.body_y1[m] = flush_denormal(self.body_y1[m]);
             self.body_y2[m] = flush_denormal(self.body_y2[m]);
         }
         self.rad_lp = flush_denormal(self.rad_lp);
+        self.ph_lp1 = flush_denormal(self.ph_lp1);
+        self.ph_lp2 = flush_denormal(self.ph_lp2);
         self.age += out.len() as u64;
         self.age < self.life
     }
