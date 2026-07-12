@@ -460,7 +460,7 @@ impl PluckVoice {
         // per-pass brightness: refs lose ~35 dB/s at 1 kHz in the low register
         // while H2..H5 barely decay — a steep loop corner, key-tracked so the
         // per-second HF decay stays register-flat (Valimaki et al. 1996 loop fit)
-        let lp_c = (0.42 + 0.50 * key + 0.06 * vel).clamp(0.30, 0.985);
+        let lp_c = (0.42 + 0.62 * key + 0.06 * vel).clamp(0.30, 0.985);
         let lp_delay = (1.0 - lp_c) / lp_c;
         let period = sr / f0;
         let total = (period - lp_delay).max(3.0);
