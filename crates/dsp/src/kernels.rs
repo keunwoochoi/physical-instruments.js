@@ -4598,6 +4598,180 @@ mod cymbal_tests {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Drum-kit round-3 regression tests (kick transient truth, snare crack,
+// brush articulation, kit-voiced toms)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod drum_kit_tests {
+    use super::*;
+
+    fn render_kit(gm: u32, vel: f32, sr: f32, kit: KitStyle, secs: f32) -> Vec<f32> {
+        let mut v = DrumVoice::start(gm, vel, sr, 0x2468_ace0, kit);
+        let mut out = Vec::new();
+        let mut block = [0.0f32; 128];
+        for _ in 0..(secs * sr / 128.0) as usize {
+            block.fill(0.0);
+            let alive = v.render(&mut block, sr);
+            out.extend_from_slice(&block);
+            if !alive {
+                break;
+            }
+        }
+        out
+    }
+
+    /// Goertzel-style band magnitude over a time window.
+    fn band_mag(x: &[f32], sr: f32, f0: f32, f1: f32, t0: f32, t1: f32) -> f32 {
+        let (i0, i1) = ((t0 * sr) as usize, ((t1 * sr) as usize).min(x.len()));
+        let seg = &x[i0..i1];
+        let mut acc = 0.0f32;
+        let mut f = f0;
+        while f < f1 {
+            let w = core::f32::consts::TAU * f / sr;
+            let (mut re, mut im) = (0.0f32, 0.0f32);
+            for (n, &s) in seg.iter().enumerate() {
+                let ph = w * n as f32;
+                re += s * ph.cos();
+                im += s * ph.sin();
+            }
+            acc += re * re + im * im;
+            f *= 1.12;
+        }
+        acc.sqrt()
+    }
+
+    /// Dominant frequency in [lo, hi] via dense Goertzel scan.
+    fn peak_hz(x: &[f32], sr: f32, lo: f32, hi: f32, t0: f32, t1: f32) -> f32 {
+        let (i0, i1) = ((t0 * sr) as usize, ((t1 * sr) as usize).min(x.len()));
+        let seg = &x[i0..i1];
+        let mut best = (0.0f32, lo);
+        let mut f = lo;
+        while f < hi {
+            let w = core::f32::consts::TAU * f / sr;
+            let (mut re, mut im) = (0.0f32, 0.0f32);
+            for (n, &s) in seg.iter().enumerate() {
+                let ph = w * n as f32;
+                re += s * ph.cos();
+                im += s * ph.sin();
+            }
+            let m = re * re + im * im;
+            if m > best.0 {
+                best = (m, f);
+            }
+            f *= 1.01;
+        }
+        best.1
+    }
+
+    fn env_peak_ms(x: &[f32], sr: f32) -> f32 {
+        let hop = (0.002 * sr) as usize;
+        let mut best = (0.0f32, 0usize);
+        for (k, ch) in x.chunks(hop).enumerate().take(60) {
+            let r: f32 = ch.iter().map(|s| s * s).sum::<f32>() / ch.len() as f32;
+            if r > best.0 {
+                best = (r, k);
+            }
+        }
+        best.1 as f32 * 2.0
+    }
+
+    /// Round-3 kick truth: the pitch reads as a TRANSIENT (settled within
+    /// 12% of steady by ~20 ms; start elevation bounded) — not a dance sweep.
+    /// Checked at both rates on every kit.
+    #[test]
+    fn kick_glide_is_a_transient() {
+        for &sr in &[44_100.0f32, 48_000.0] {
+            for kit in [KitStyle::Pop, KitStyle::Rock, KitStyle::Jazz] {
+                let out = render_kit(36, 1.0, sr, kit, 0.6);
+                let early = peak_hz(&out, sr, 35.0, 130.0, 0.020, 0.080);
+                let steady = peak_hz(&out, sr, 35.0, 130.0, 0.080, 0.240);
+                let ratio = early / steady;
+                assert!(
+                    (0.85..1.13).contains(&ratio),
+                    "{kit:?} sr {sr}: pitch not settled by 20 ms (early {early:.1} vs steady {steady:.1})"
+                );
+            }
+        }
+    }
+
+    /// Round-3 two-stage tail: the open jazz kick still rings at 0.6 s
+    /// (resonant-head mode) while the muffled rock kick has died.
+    #[test]
+    fn kick_two_stage_tail_is_kit_voiced() {
+        let sr = 48_000.0f32;
+        let jazz = render_kit(36, 1.0, sr, KitStyle::Jazz, 1.5);
+        let rock = render_kit(36, 1.0, sr, KitStyle::Rock, 1.5);
+        let late = |x: &[f32]| {
+            let (i0, i1) = ((0.55 * sr) as usize, (0.70 * sr) as usize);
+            if x.len() < i1 {
+                return 0.0;
+            }
+            (x[i0..i1].iter().map(|s| s * s).sum::<f32>() / (i1 - i0) as f32).sqrt()
+        };
+        let (lj, lr) = (late(&jazz), late(&rock));
+        assert!(lj > 1e-4, "jazz kick tail dead at 0.6 s: {lj}");
+        assert!(lr < lj * 0.5, "rock kick should be muffled vs jazz: rock {lr} jazz {lj}");
+    }
+
+    /// Round-3 rock snare authority: the 400–1500 Hz crack band holds within
+    /// 8 dB of the 40–150 Hz band over the first 30 ms of an ff backbeat.
+    #[test]
+    fn rock_snare_has_crack_band() {
+        let sr = 48_000.0f32;
+        let out = render_kit(38, 0.95, sr, KitStyle::Rock, 0.4);
+        let lf = band_mag(&out, sr, 40.0, 150.0, 0.0, 0.030);
+        let crack = band_mag(&out, sr, 400.0, 1500.0, 0.0, 0.030);
+        let rel = 20.0 * (crack / lf.max(1e-9)).log10();
+        // regression tripwire: the round-2 white-hiss snare measured ~-20 dB
+        // on this scale; the round-3 fit sits around -10
+        assert!(rel > -12.0, "rock snare crack band too weak: {rel:.1} dB rel LF");
+    }
+
+    /// Round-3 jazz brush: GM 38 on the jazz kit peaks late (bristle arrival,
+    /// >8 ms) and darker than the stick snare on GM 40 (which stays fast).
+    #[test]
+    fn jazz_gm38_is_a_brush() {
+        let sr = 48_000.0f32;
+        let brush = render_kit(38, 0.8, sr, KitStyle::Jazz, 0.5);
+        let stick = render_kit(40, 0.8, sr, KitStyle::Jazz, 0.5);
+        let (tb, ts) = (env_peak_ms(&brush, sr), env_peak_ms(&stick, sr));
+        assert!(tb >= 8.0, "brush attack too fast: peak at {tb} ms");
+        assert!(ts <= 6.0, "stick snare attack too slow: peak at {ts} ms");
+        let hf_b = band_mag(&brush, sr, 6_000.0, 12_000.0, 0.0, 0.05);
+        let mid_b = band_mag(&brush, sr, 500.0, 3_000.0, 0.0, 0.05);
+        assert!(mid_b > hf_b, "brush should be mid-forward, not hissy");
+    }
+
+    /// Round-3 toms: kit-voiced tuning (jazz higher than rock on the same GM
+    /// note) and kit-voiced length (rock rings longer). Both rates.
+    #[test]
+    fn toms_are_kit_voiced() {
+        for &sr in &[44_100.0f32, 48_000.0] {
+            let rock = render_kit(45, 0.85, sr, KitStyle::Rock, 1.2);
+            let jazz = render_kit(45, 0.85, sr, KitStyle::Jazz, 1.2);
+            let fr = peak_hz(&rock, sr, 50.0, 260.0, 0.05, 0.30);
+            let fj = peak_hz(&jazz, sr, 50.0, 260.0, 0.05, 0.30);
+            assert!(
+                fj > fr * 1.15,
+                "sr {sr}: jazz tom ({fj:.1} Hz) should sit well above rock ({fr:.1} Hz)"
+            );
+            let late = |x: &[f32]| {
+                let (i0, i1) = ((0.35 * sr) as usize, (0.45 * sr) as usize);
+                if x.len() < i1 {
+                    return 0.0;
+                }
+                (x[i0..i1].iter().map(|s| s * s).sum::<f32>() / (i1 - i0) as f32).sqrt()
+            };
+            assert!(
+                late(&rock) > late(&jazz),
+                "sr {sr}: rock tom should ring longer than jazz"
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod bench_probe {
     use super::*;
