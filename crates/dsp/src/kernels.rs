@@ -109,7 +109,7 @@ pub fn pickup_defaults(inst: Instrument) -> (f32, f32) {
     }
 }
 
-pub const MAX_BODY_MODES: usize = 8;
+pub const MAX_BODY_MODES: usize = 16;
 
 /// Instrument body as a parallel modal resonator bank on the track bus
 /// (Karjalainen/Smith commuted-body lineage: string+body are ~linear, so the body
@@ -123,35 +123,68 @@ pub fn body_defaults(inst: Instrument) -> (f32, &'static [(f32, f32, f32)]) {
         // |H|peak ≈ g/(2·sin(2πf/sr)), so g = P·2·sin(2πf/48k) for a desired
         // peak P relative to the dry path — the previous rows implied P≈55
         // (+35 dB) at ~100 Hz and drowned both guitars in lows.
-        // Nylon (refs 010/014): A0 ~100 Hz, broad T1 region 165–210 Hz (the ref
-        // cluster's strongest formant — E2's h2 rides it), gentle mid ladder,
-        // nothing above ~1.1 kHz (nylon HF dies in the string, not the body).
+        // Nylon (refs 010/014), 16-mode round-2 refit from pooled per-partial
+        // deltas (bodydelta.py, 2026-07-11): renders ran +14…+20 dB hot at the
+        // low fundamentals / T1 region and −5…−8 dB in the 300–380 / 610–770 /
+        // 980–1250 valleys. Dry cut 0.45→0.22, T1 trimmed, denser mid ladder.
         Instrument::Guitar => (
-            0.45,
+            0.22,
             &[
-                (100.0, 0.30, 0.042),  // P=1.6 A0 Helmholtz
-                (170.0, 0.22, 0.116),  // P=2.6 T1 lower skirt
-                (208.0, 0.20, 0.131),  // P=2.4 T1
-                (300.0, 0.14, 0.078),  // P=1.0 T2/back
-                (425.0, 0.12, 0.145),  // P=1.3
-                (560.0, 0.10, 0.139),  // P=0.95
-                (720.0, 0.09, 0.198),  // P=1.05
-                (1100.0, 0.06, 0.187), // P=0.65
+                (100.0, 0.30, 0.0236),  // P=0.9 A0 Helmholtz
+                (190.0, 0.25, 0.0696),  // P=1.4 T1
+                (285.0, 0.16, 0.1194),  // P=1.6 T2/back
+                (340.0, 0.14, 0.1602),  // P=1.8
+                (425.0, 0.12, 0.2113),  // P=1.9
+                (520.0, 0.11, 0.2041),  // P=1.5
+                (640.0, 0.10, 0.3012),  // P=1.8
+                (730.0, 0.09, 0.4198),  // P=2.2
+                (850.0, 0.08, 0.3553),  // P=1.6
+                (1000.0, 0.07, 0.5743), // P=2.2
+                (1120.0, 0.06, 0.7596), // P=2.6
+                (1270.0, 0.055, 0.5626), // P=1.7
+                (1450.0, 0.05, 0.5283), // P=1.4
+                (1700.0, 0.045, 0.4855), // P=1.1
+                (2100.0, 0.04, 0.4343), // P=0.8
+                (2600.0, 0.035, 0.4006), // P=0.6
             ],
         ),
-        // Steel (refs 015/030/021): weak below ~170 Hz, broad 230–1800 plateau
-        // with peaks near 400/900/1500, slow rolloff to 5 kHz (dreadnought-ish).
+        // Steel (refs 015/030/021), 16-mode round-2 refit (same method): refs
+        // concentrate energy near 258 and 705 Hz far more than the old plateau;
+        // 90–235 / 300–390 / 480–610 / ~1850 trimmed relative to those anchors;
+        // 2.4k/3.6k presence kept (round-1 attack match).
         Instrument::GuitarSteel => (
-            0.35,
+            0.28,
             &[
-                (105.0, 0.30, 0.019), // P=0.7 A0
-                (235.0, 0.22, 0.080), // P=1.3 T1
-                (400.0, 0.16, 0.230), // P=2.2
-                (620.0, 0.12, 0.195), // P=1.2
-                (900.0, 0.10, 0.470), // P=2.0
-                (1400.0, 0.08, 0.658), // P=1.8
-                (2200.0, 0.06, 0.686), // P=1.2
-                (3600.0, 0.045, 0.908), // P=1.0
+                (100.0, 0.28, 0.0131),  // P=0.5 A0
+                (190.0, 0.20, 0.0274),  // P=0.55
+                (258.0, 0.22, 0.1216),  // P=1.8 T1' ref peak
+                (295.0, 0.18, 0.1081),  // P=1.4
+                (350.0, 0.15, 0.0641),  // P=0.7
+                (415.0, 0.14, 0.1304),  // P=1.2
+                (505.0, 0.12, 0.1058),  // P=0.8
+                (630.0, 0.12, 0.2639),  // P=1.6
+                (705.0, 0.10, 0.3507),  // P=1.9 ref peak
+                (810.0, 0.09, 0.2121),  // P=1.0
+                (940.0, 0.085, 0.3199), // P=1.3
+                (1180.0, 0.07, 0.2780), // P=0.9
+                (1450.0, 0.065, 0.4151), // P=1.1
+                (1850.0, 0.055, 0.3357), // P=0.7
+                (2400.0, 0.05, 0.6798),  // P=1.1
+                (3600.0, 0.045, 1.2712), // P=1.4
+            ],
+        ),
+        // Bass (NSynth bass_electronic refs): gentle DI tone tilt — low modes
+        // reinforce 40–500 Hz ~+6 dB over the dry path, so the sustained
+        // 700–1500 Hz sits ~−6 dB relative (mel-error profile 2026-07-11:
+        // only mild +2–3 excess patches; a steep cab rolloff over-corrected).
+        Instrument::Bass => (
+            0.5,
+            &[
+                (45.0, 0.090, 0.0059),
+                (100.0, 0.080, 0.0144),
+                (180.0, 0.070, 0.0236),
+                (300.0, 0.060, 0.0298),
+                (480.0, 0.050, 0.0276),
             ],
         ),
         // piano: soundboard low-mode ladder (broad, subtle — per-voice knock
@@ -191,13 +224,13 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
         Instrument::Vibraphone => 4.9,    // was -30.5 LUFS
         Instrument::Glockenspiel => 28.0, // was -39.6 LUFS (tiny raw kernel level)
         Instrument::MusicBox => 14.8,     // was -35.6 LUFS
-        Instrument::Guitar => 0.194,       // re-baked 2026-07-11 (acoustic rework ran -13.3 LUFS at 0.85)
-        Instrument::Bass => 0.66,         // was -25.3 LUFS
+        Instrument::Guitar => 0.126,       // round-2 re-bake (body refit + release; was -22.1 LUFS at 0.194)
+        Instrument::Bass => 0.63,         // round-2 re-bake (DI tilt body)
         Instrument::EPiano => 1.47,       // was -26.6 LUFS
         Instrument::Drums => 0.61,        // was -27.4 LUFS
         Instrument::SynthPad => 0.48,     // was -26.5 LUFS
-        Instrument::Piano => 0.084, // piano agent re-measure 2026-07-11 r2 (decay-geometry rework ran -27.7 LUFS at 0.067)
-        Instrument::GuitarSteel => 0.50,    // acoustic agent re-bake
+        Instrument::Piano => 0.084, // piano r2 re-bake (decay-geometry rework)
+        Instrument::GuitarSteel => 0.46,    // acoustics r2 re-bake (HF floor + 16-mode body)
         Instrument::GuitarElectric => 0.78, // electric r2 re-bake (022 dark voicing)
         Instrument::GuitarDistorted => 0.23, // electric r2 re-bake (drive 45 lead channel)
         Instrument::DrumsRock => 0.43,      // measured 2026-07-11 (pyloudnorm -22.6 pre-bake)
@@ -397,6 +430,8 @@ pub struct PluckVoice {
     /// loop one-pole lowpass state + coefficient (brightness)
     lp: f32,
     lp_c: f32,
+    /// HF bypass fraction of the blend loss filter (0 = pure one-pole)
+    lp_mix: f32,
     /// per-sample loop loss
     loss: f32,
     /// fractional-delay allpass
@@ -419,10 +454,17 @@ pub struct PluckVoice {
     ap2_x1: f32,
     ap2_y1: f32,
     pol_mix: f32,
-    /// stiffness dispersion allpass (steel strings; 0 = off)
-    disp_c: f32,
-    d1_x1: f32,
-    d1_y1: f32,
+    /// stiffness dispersion: M cascaded first-order allpasses, all with
+    /// coefficient `disp_a` = −p (pole at +p ⇒ phase delay falls with
+    /// frequency ⇒ upper partials arrive early ⇒ stretched, f_n ≈ n·f0·√(1+Bn²)).
+    /// (M, p) are solved per note in `design_dispersion`. Both polarizations
+    /// disperse (same physical string), with separate filter states.
+    disp_a: f32,
+    disp_n: u8,
+    dsx: [f32; MAX_DISP],
+    dsy: [f32; MAX_DISP],
+    ds2x: [f32; MAX_DISP],
+    ds2y: [f32; MAX_DISP],
     /// bridge-force output tap: leaky first difference ≈ string slope at the
     /// bridge (force drives the body, displacement does not radiate). 0 = off.
     br_rho: f32,
@@ -435,6 +477,15 @@ pub struct PluckVoice {
     tm_norm: f32,
     frac1: f32,
     frac2: f32,
+    /// direct contact-click transient: decaying HP-shaped noise added to the
+    /// output (attack splash / release pluck-off), not stored in the string
+    tr_env: f32,
+    tr_dec: f32,
+    tr_hp: f32,
+    tr_rng: Lcg,
+    /// release voicing: post-note-off t60 and pluck-off click level
+    rel_t60: f32,
+    rel_click: f32,
     /// f0 > 0 marks the acoustic path (per-period loss calibration, new damp)
     f0: f32,
 }
@@ -447,6 +498,11 @@ pub struct AcPluck {
     pub t60_f0: f32,
     /// loop lowpass coefficient: sets HF decay relative to the fundamental
     pub lp_c: f32,
+    /// HF loss floor: target t60 (s) of the highest partials at this note
+    /// (0 = pure one-pole). Real strings' HF loss saturates on air drag.
+    pub hf_floor_t60: f32,
+    /// one-pole knee (Hz) when the floor is active (ladder→floor transition)
+    pub hf_knee_hz: f32,
     /// pluck point as a fraction of string length (comb is inherent in the shape)
     pub pick_pos: f32,
     /// contact-patch width as a fraction of string length (finger flesh ≫ pick
@@ -456,15 +512,27 @@ pub struct AcPluck {
     pub snap: f32,
     /// pick/finger contact noise mixed into the initial shape
     pub scrape: f32,
+    /// direct (non-looped) contact-click transient level (0 = none): most pick
+    /// noise radiates immediately instead of persisting as string modes — with
+    /// the HF loss floor, keeping it all in-loop ran +30…+47 dB hot mid-note
+    pub click: f32,
     /// second-polarization output level (0 = single string)
     pub pol_mix: f32,
     pub pol_detune_cents: f32,
     /// polarization-2 fundamental t60 = t60_f0 × this ratio
     pub pol_t60_ratio: f32,
-    /// stiffness dispersion allpass coefficient (0 = none)
-    pub disp_c: f32,
+    /// stiff-string inharmonicity coefficient B (f_n = n·f0·√(1+Bn²), Fletcher
+    /// 1964). 0 = perfectly flexible. Measured from the reference corpus with a
+    /// weighted partial-frequency fit (steel source 015 ≈ 3e-4, nylon 014 ≈ 5e-5).
+    pub stiff_b: f32,
     /// initial tension-mod sharpening at vel = 1 (cents; small — refs show ≤3c)
     pub tm_cents: f32,
+    /// post-note-off decay t60 (s): finger/palm damping is not instantaneous —
+    /// steel refs ring ~0.5 s after release, nylon chokes fast
+    pub rel_t60: f32,
+    /// fret/finger release-click level ("pluck-off"), scaled by the string's
+    /// remaining energy at note-off
+    pub rel_click: f32,
     /// bridge differencer leak (0 = raw displacement out)
     pub br_rho: f32,
     pub level: f32,
@@ -485,6 +553,35 @@ fn onepole_delay(c: f32, w: f32) -> f32 {
     ph / w
 }
 
+/// Blend loss filter H = m + (1−m)·H_lp — a one-pole ladder over a flat HF
+/// bypass floor. The bypass `m` sets per-period HF survival, the one-pole knee
+/// shapes the low-harmonic decay ladder: real strings' HF loss SATURATES (air
+/// drag, not the one-pole's collapse — the SDL loss-filter role, Välimäki et
+/// al. 1996; steel ref 015 keeps 2–6 kHz partials ringing t60 ≈ 2 s while a
+/// pure one-pole killed them in tens of ms). m = 0 reduces to the one-pole.
+fn blend_h(c: f32, m: f32, w: f32) -> (f32, f32) {
+    let b = 1.0 - c;
+    let (sw, cw) = w.sin_cos();
+    let d = 1.0 + b * b - 2.0 * b * cw;
+    (
+        m + (1.0 - m) * c * (1.0 - b * cw) / d,
+        -(1.0 - m) * c * b * sw / d,
+    )
+}
+
+#[inline]
+fn blend_mag(c: f32, m: f32, w: f32) -> f32 {
+    let (re, im) = blend_h(c, m, w);
+    (re * re + im * im).sqrt()
+}
+
+/// Blend filter phase delay in samples at ω.
+#[inline]
+fn blend_delay(c: f32, m: f32, w: f32) -> f32 {
+    let (re, im) = blend_h(c, m, w);
+    -im.atan2(re) / w
+}
+
 /// First-order allpass (a + z⁻¹)/(1 + a z⁻¹) phase delay in samples at ω.
 #[inline]
 fn allpass_delay(a: f32, w: f32) -> f32 {
@@ -492,6 +589,221 @@ fn allpass_delay(a: f32, w: f32) -> f32 {
     let th_n = (-sw).atan2(a + cw);
     let th_d = (-a * sw).atan2(1.0 + a * cw);
     -(th_n - th_d) / w
+}
+
+/// Max first-order stages in the stiffness-dispersion cascade. 6 keeps the
+/// 8-voice steel render inside the µs budget; the solver still anchors the
+/// stretch exactly at n*, at the cost of a few cents of shape residual
+/// between anchors (verified by the h5/h10 stretch tests).
+pub const MAX_DISP: usize = 6;
+
+/// Solve a stiffness-dispersion cascade for inharmonicity `b` at `f0`:
+/// returns (stages M, pole p). M identical first-order allpasses with pole at
+/// +p have phase delay falling ~quadratically below the knee ω_c=(1−p)/√p —
+/// the same law as the stiff-string target P(f_n) = N₀/√(1+Bn²) (Van Duyne &
+/// Smith 1994 dispersion-filter approach; single-coefficient cascade à la
+/// Rauhala & Välimäki 2006, coefficient solved here by bisection instead of
+/// their polynomial fit). The knee is pinned at/above the highest matched
+/// partial so the quadratic regime covers the audible stretch; numerically
+/// verified ≤ ~6 cents residual over 18 partials at B=3e-4 (design_check.py,
+/// 2026-07-11 round 2). Runs at note-on only.
+fn design_dispersion(b: f32, f0: f32, sr: f32, lp_c: f32, lp_mix: f32) -> (usize, f32) {
+    if b < 1e-6 {
+        return (0, 0.0);
+    }
+    let n0 = sr / f0;
+    let w1 = core::f32::consts::TAU * f0 / sr;
+    // match partial: highest of the stretch law we anchor exactly (≈5.5 kHz
+    // ceiling — refs are 16 kHz; cap 16 keeps ω_n in the allpass's clean range)
+    let n_star = ((5500.0 / f0) as usize).clamp(3, 16) as f32;
+    let wn = (n_star * w1).min(2.8);
+    // geometric phase-delay deficit between partial 1 and n*, minus what the
+    // loop lowpass already contributes
+    let d_geom = n0 * (1.0 / (1.0 + b).sqrt() - 1.0 / (1.0 + b * n_star * n_star).sqrt());
+    let d_lp = blend_delay(lp_c, lp_mix, w1) - blend_delay(lp_c, lp_mix, wn);
+    let target = d_geom - d_lp;
+    if target <= 0.05 {
+        return (0, 0.0);
+    }
+    // knee constraint (1−p)/√p = ω_n ⇒ p from the quadratic; keeps the cascade
+    // quadratic through n*
+    let q = 2.0 + wn * wn;
+    let p_knee = 0.5 * (q - (q * q - 4.0).sqrt());
+    let contrast = allpass_delay(-p_knee, w1) - allpass_delay(-p_knee, wn);
+    let m = ((target / contrast.max(1e-6)).ceil() as usize).clamp(1, MAX_DISP);
+    // bisect p ∈ (0.01, p_knee]: cascade deficit is monotone in p here
+    let (mut lo, mut hi) = (0.01f32, p_knee);
+    for _ in 0..40 {
+        let mid = 0.5 * (lo + hi);
+        let c = m as f32 * (allpass_delay(-mid, w1) - allpass_delay(-mid, wn));
+        if c < target {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    (m, 0.5 * (lo + hi))
+}
+
+/// Warm-start filter states for one loaded loop mode (see `load_carrier`).
+#[derive(Clone, Copy, Default)]
+struct LoopInit {
+    lp: f64,
+    dsx: [f64; MAX_DISP],
+    dsy: [f64; MAX_DISP],
+    apx: f64,
+    apy: f64,
+}
+
+/// Load the pick-release triangle carrier as a superposition of the loop's TRUE
+/// eigenmodes: for each mode (fixed point of f·P(f) = n·sr over the full
+/// phase-delay budget), add 2·Re[G_n·λ_nⁱ] to the buffer, where λ_n = e^{σ+jω}
+/// includes the per-tick decay σ = ln(loss·|H_lp|)/P — and warm the filter
+/// states with the modes' t=−1 phasors. Loading a flat time-domain shape into
+/// a dispersive loop instead mis-projects it: the modes sit d_disp·n/P cycles
+/// off the buffer's integer bins AND taper e^{σi} across it, and the resulting
+/// leakage skirt of the fundamental (~−36 dB) buried the intended −55…−90 dB
+/// upper harmonics of the dark nylon/bass excitations (measured +19 dB at bass
+/// h7, 2026-07-11 round 2).
+///
+/// G_n = −L²(1−e^{−j2πν·pk/L})/(4π²ν²·pk(L−pk)) — the circular triangle's
+/// Fourier coefficient (its 2nd derivative is two deltas) at continuous
+/// ν = f·L/sr — times the two forward contact moving averages' Dirichlet
+/// response and phase advance. Modes past n_syn sit ≥ ~80 dB down the
+/// MA²·1/ν² rolloff. Runs at note-on only (~n_syn·len flops).
+#[allow(clippy::too_many_arguments)]
+fn load_carrier(
+    buf: &mut [f32],
+    len: usize,
+    frac: f32,
+    lp_c: f32,
+    lp_mix: f32,
+    loss: f32,
+    disp_a: f32,
+    disp_n: usize,
+    ap_c: f32,
+    f0: f32,
+    stiff_b: f32,
+    sr: f32,
+    pick_pos: f32,
+    cw: usize,
+    n_syn: usize,
+) -> LoopInit {
+    let mut st = LoopInit::default();
+    let pk = ((pick_pos * len as f32) as usize).clamp(2, len - 2);
+    let (lf, pkf, cwf) = (len as f64, pk as f64, cw as f64);
+    let srf = sr as f64;
+    for n in 1..=n_syn {
+        let nn = n as f32;
+        // exact mode frequency and total loop phase delay at it. Two fixed-point
+        // iterations with the trig SHARED between the blend/allpass delay math:
+        // wasm transcendentals are software floats, and the original 4×helper
+        // version cost ~2 ms per note-on voice (measured, 8-chord = 15.7 ms).
+        let mut f = nn * f0 * (1.0 + 0.5 * stiff_b * nn * nn);
+        let mut ptot = len as f32 + frac;
+        let mut bl_mag = 1.0f32;
+        for _ in 0..2 {
+            let w = core::f32::consts::TAU * f / sr;
+            let (sw, cw_) = w.sin_cos();
+            let b = 1.0 - lp_c;
+            let dd = 1.0 + b * b - 2.0 * b * cw_;
+            let hre = lp_mix + (1.0 - lp_mix) * lp_c * (1.0 - b * cw_) / dd;
+            let him = -(1.0 - lp_mix) * lp_c * b * sw / dd;
+            bl_mag = (hre * hre + him * him).sqrt();
+            let d_lp = -him.atan2(hre) / w;
+            let d_disp = if disp_n > 0 {
+                let a = disp_a;
+                let th_n = (-sw).atan2(a + cw_);
+                let th_d = (-a * sw).atan2(1.0 + a * cw_);
+                -(th_n - th_d) / w * disp_n as f32
+            } else {
+                0.0
+            };
+            ptot = (len as f32 + frac + d_lp + d_disp).max(3.0);
+            f = 0.5 * (f + nn * sr / ptot);
+        }
+        if f > 0.45 * sr {
+            break;
+        }
+        let w = core::f64::consts::TAU * f as f64 / srf;
+        let nu = f as f64 * lf / srf;
+        // per-tick decay: round-trip gain is loss·|H_blend(w)| (allpasses unity)
+        let (sw, cwn) = w.sin_cos();
+        let sig = (loss as f64 * bl_mag as f64).min(0.99999).ln() / ptot as f64;
+        // G = triangle coefficient × MA² × MA phase advance
+        let c0 = lf * lf
+            / (4.0 * core::f64::consts::PI * core::f64::consts::PI * nu * nu * pkf * (lf - pkf));
+        let th = w * pkf;
+        let (mut gre, mut gim) = (c0 * (th.cos() - 1.0), -c0 * th.sin());
+        if cw > 1 {
+            let x = core::f64::consts::PI * nu / lf;
+            let hh = (x * cwf).sin() / (cwf * x.sin());
+            let h = hh * hh;
+            let (pre, pim) = ((w * (cwf - 1.0)).cos(), (w * (cwf - 1.0)).sin());
+            let (r, i) = (h * (gre * pre - gim * pim), h * (gre * pim + gim * pre));
+            gre = r;
+            gim = i;
+        }
+        // buffer: u_i = 2·Re(G·λⁱ) via the decaying-resonator recurrence
+        let es = sig.exp();
+        let a1 = 2.0 * es * cwn;
+        let a2 = es * es;
+        let mut u2 = 2.0 * gre;
+        let mut u1 = 2.0 * es * (gre * cwn - gim * sw);
+        buf[0] += u2 as f32;
+        if len > 1 {
+            buf[1] += u1 as f32;
+        }
+        for t in buf.iter_mut().take(len).skip(2) {
+            let u = a1 * u1 - a2 * u2;
+            u2 = u1;
+            u1 = u;
+            *t += u as f32;
+        }
+        // filter warm states: the loop input phasor at t is G·λᵗ; each state
+        // holds its node's t = −1 value. λ⁻¹ ≈ e^{−σ}e^{−jω}.
+        let (z1re, z1im) = ((-sig).exp() * cwn, -(-sig).exp() * sw);
+        let cmul = |ar: f64, ai: f64, br: f64, bi: f64| (ar * br - ai * bi, ar * bi + ai * br);
+        // H_lp = c/(1 − b·e^{−jw}); the blend adds the flat bypass on top
+        let b = 1.0 - lp_c as f64;
+        let (dre, dim) = (1.0 - b * cwn, b * sw);
+        let dd = dre * dre + dim * dim;
+        let hlp = (lp_c as f64 * dre / dd, lp_c as f64 * dim / dd);
+        let mixf = lp_mix as f64;
+        let hbl = (mixf + (1.0 - mixf) * hlp.0, (1.0 - mixf) * hlp.1);
+        // H_ap(a) = (a + e^{−jw})/(1 + a·e^{−jw})
+        let hap = |a: f64| {
+            let (nre, nim) = (a + cwn, -sw);
+            let (dre2, dim2) = (1.0 + a * cwn, -a * sw);
+            let dd2 = dre2 * dre2 + dim2 * dim2;
+            (
+                (nre * dre2 + nim * dim2) / dd2,
+                (nim * dre2 - nre * dim2) / dd2,
+            )
+        };
+        let hd = hap(disp_a as f64);
+        let hf = hap(ap_c as f64);
+        let at = |cr: f64, ci: f64| {
+            let (r, _i) = cmul(cr, ci, z1re, z1im);
+            2.0 * r
+        };
+        // the `lp` state variable is the ONE-POLE's output; the signal that
+        // proceeds down the chain is the blend output
+        let (lre, lim) = cmul(gre, gim, hlp.0, hlp.1);
+        st.lp += at(lre, lim);
+        let (mut cr, mut ci) = cmul(gre, gim, hbl.0, hbl.1);
+        for k in 0..disp_n {
+            st.dsx[k] += at(cr, ci);
+            let (r, i) = cmul(cr, ci, hd.0, hd.1);
+            cr = r;
+            ci = i;
+            st.dsy[k] += at(cr, ci);
+        }
+        st.apx += at(cr, ci);
+        let (r, i) = cmul(cr, ci, hf.0, hf.1);
+        st.apy += at(r, i);
+    }
+    st
 }
 
 /// Per-period amplitude ratio hitting `t60` seconds at frequency `f0`:
@@ -514,6 +826,7 @@ impl PluckVoice {
             pos: 0,
             lp: 0.0,
             lp_c: 0.5,
+            lp_mix: 0.0,
             loss: 0.0,
             ap_c: 0.0,
             ap_x1: 0.0,
@@ -531,9 +844,12 @@ impl PluckVoice {
             ap2_x1: 0.0,
             ap2_y1: 0.0,
             pol_mix: 0.0,
-            disp_c: 0.0,
-            d1_x1: 0.0,
-            d1_y1: 0.0,
+            disp_a: 0.0,
+            disp_n: 0,
+            dsx: [0.0; MAX_DISP],
+            dsy: [0.0; MAX_DISP],
+            ds2x: [0.0; MAX_DISP],
+            ds2y: [0.0; MAX_DISP],
             br_rho: 0.0,
             br_x1: 0.0,
             tm_dev: 0.0,
@@ -542,6 +858,12 @@ impl PluckVoice {
             tm_norm: 0.0,
             frac1: 0.0,
             frac2: 0.0,
+            tr_env: 0.0,
+            tr_dec: 0.0,
+            tr_hp: 0.0,
+            tr_rng: Lcg(1),
+            rel_t60: 0.0,
+            rel_click: 0.0,
             f0: 0.0,
         }
     }
@@ -610,16 +932,37 @@ impl PluckVoice {
         // to sustain the fundamental, brighten it minimally — physically, thin
         // sustaining trebles are never felt-dark.
         let g0 = per_period_gain(p.t60_f0, p.f0);
-        let mut lp_c = p.lp_c.clamp(0.05, 0.995);
-        while onepole_mag(lp_c, w0) < g0 && lp_c < 0.99 {
+        // Loss filter: pure one-pole, or (steel) the blend ladder-over-floor —
+        // knee placed via |H_lp(knee)| = ½ (bisected), bypass from the target
+        // HF-floor t60 relative to the fundamental's.
+        let (mut lp_c, lp_mix) = if p.hf_floor_t60 > 0.0 {
+            let wk = core::f32::consts::TAU * p.hf_knee_hz.max(2.0 * p.f0) / sr;
+            let (mut lo, mut hi) = (0.005f32, 0.95f32);
+            for _ in 0..24 {
+                let mid = 0.5 * (lo + hi);
+                if onepole_mag(mid, wk.min(3.0)) < 0.5 {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            let g_floor = per_period_gain(p.hf_floor_t60, p.f0);
+            (0.5 * (lo + hi), (g_floor / g0).clamp(0.0, 0.98))
+        } else {
+            (p.lp_c.clamp(0.05, 0.995), 0.0)
+        };
+        while blend_mag(lp_c, lp_mix, w0) < g0 && lp_c < 0.99 {
             lp_c += 0.01;
         }
-        let loss = (g0 / onepole_mag(lp_c, w0)).min(0.99995);
+        let loss = (g0 / blend_mag(lp_c, lp_mix, w0)).min(0.99995);
 
-        // Tuning: subtract exact loop-filter + dispersion phase delays at f0.
-        let disp_on = p.disp_c > 0.0;
-        let d_lp = onepole_delay(lp_c, w0);
-        let d_disp = if disp_on { allpass_delay(p.disp_c, w0) } else { 0.0 };
+        // Stiffness dispersion cascade (solved per note), then tuning: subtract
+        // the exact loop-filter + cascade phase delays at f0 so partial 1 stays
+        // on pitch while uppers stretch.
+        let (disp_n, disp_p) = design_dispersion(p.stiff_b, p.f0, sr, lp_c, lp_mix);
+        let disp_a = -disp_p;
+        let d_lp = blend_delay(lp_c, lp_mix, w0);
+        let d_disp = disp_n as f32 * allpass_delay(disp_a, w0);
         let total = (period - d_lp - d_disp).max(3.0);
         // Bias the fraction high when tension-mod wants sharpening headroom.
         let bias = if p.tm_cents > 0.0 { 1.45 } else { 0.5 };
@@ -629,11 +972,11 @@ impl PluckVoice {
         // Second polarization: detuned by a couple cents, faster decay
         // (vertical motion pumps the bridge harder — Weinreich 1977 two-stage).
         let f2 = p.f0 * (p.pol_detune_cents / 1200.0).exp2();
-        let total2 = (sr / f2 - d_lp).max(3.0);
+        let total2 = (sr / f2 - d_lp - d_disp).max(3.0);
         let len2 = ((total2 - 0.5).floor() as usize).clamp(2, PLUCK_BUF - 1);
         let frac2 = (total2 - len2 as f32).clamp(0.1, 1.5);
         let g2 = per_period_gain(p.t60_f0 * p.pol_t60_ratio.max(0.05), f2);
-        let loss2 = (g2 / onepole_mag(lp_c, w0)).min(0.99995);
+        let loss2 = (g2 / blend_mag(lp_c, lp_mix, w0)).min(0.99995);
 
         // Tension modulation depth: cents → samples of delay reduction, limited
         // by the allpass fraction headroom (band-limited by a ~6 Hz env² follower).
@@ -658,21 +1001,32 @@ impl PluckVoice {
         let mut v = Self {
             len,
             lp_c,
+            lp_mix,
             loss,
             ap_c: (1.0 - frac1) / (1.0 + frac1),
             level,
-            life: ((p.t60_f0 * 1.6 + 0.5) * sr) as u64,
+            // the aftersound polarization may outlive the plucked one (ratio>1);
+            // cap like the piano does (pool pressure)
+            life: (((p.t60_f0 * p.pol_t60_ratio.max(1.0) * 1.1 + 0.5).min(18.0)) * sr) as u64,
             sr,
             len2,
             loss2,
             ap2_c: (1.0 - frac2) / (1.0 + frac2),
             pol_mix: p.pol_mix,
-            disp_c: if disp_on { p.disp_c } else { 0.0 },
+            disp_a,
+            disp_n: disp_n as u8,
             br_rho: p.br_rho,
             tm_dev,
             tm_c: 1.0 - (-core::f32::consts::TAU * 6.0 / sr).exp(),
             frac1,
             frac2,
+            // contact click: ~35 ms HP-shaped noise burst, velocity-scaled like
+            // the snap; scaled by `level` since it bypasses the loop tap
+            tr_env: p.click * (0.35 + 0.65 * p.vel) * level,
+            tr_dec: t60_gain(0.035, sr),
+            tr_rng: Lcg(seed.rotate_left(13) | 1),
+            rel_t60: p.rel_t60,
+            rel_click: p.rel_click,
             f0: p.f0,
             ..Self::blank()
         };
@@ -682,21 +1036,26 @@ impl PluckVoice {
         // point (harmonic amps ∝ sin(nπβ)/n² — the pick-position comb is inherent),
         // corner rounded by pick/finger compliance, plus a localized release-snap
         // bump (velocity component) and a dash of contact noise.
+        //
+        // The dark carrier (triangle ⊗ contact-MA²) is synthesized ADDITIVELY on
+        // the loop's true (stretched) mode grid below. Preloading a time-domain
+        // shape into the buffer while the dispersion cascade starts empty
+        // mis-projects it onto the stiff-string modes — the modes sit d_disp·n/P
+        // cycles off the buffer's integer bins, and the non-integer-bin leakage
+        // skirt of the fundamental (~−36 dB) buried the intended −55…−90 dB
+        // upper harmonics of the dark nylon/bass excitations (measured +19 dB at
+        // bass h7, 2026-07-11 round 2). Steep spectra therefore go exact-grid;
+        // the spectrally-broad parts (snap bump, scrape noise) stay time-domain,
+        // where leakage only trades energy between near-equal neighbors.
         let mut rng = Lcg(seed | 1);
         let pk = ((p.pick_pos * len as f32) as usize).clamp(2, len - 2);
+        let cw = ((p.contact * (1.2 - 0.2 * p.vel) * len as f32) as usize).clamp(1, len / 4);
         let mut tmp = [0.0f32; PLUCK_BUF];
-        for (i, t) in tmp.iter_mut().enumerate().take(len) {
-            *t = if i <= pk {
-                i as f32 / pk as f32
-            } else {
-                (len - i) as f32 / (len - pk) as f32
-            };
-        }
         // release snap: narrow raised-cosine bump at the pick point (the corner
         // the pick leaves as it lets go); NSynth refs show attack brightness
         // grows with velocity but far less than linearly
         if p.snap > 0.0 {
-            let wdt = ((len as f32 * 0.008) as usize + 2).min(len / 4);
+            let wdt = ((len as f32 * 0.016) as usize + 2).min(len / 4);
             let amp = p.snap * (0.35 + 0.65 * p.vel);
             for j in 0..(2 * wdt) {
                 let i = (pk + len - wdt + j) % len;
@@ -715,9 +1074,7 @@ impl PluckVoice {
         // compliance: the contact patch (fingertip flesh ≫ pick tip) rounds the
         // WHOLE initial condition. Two circular moving-average passes of width
         // contact·len ≈ triangular kernel: first spectral null at n = len/width,
-        // so the excitation bandwidth is a physical fraction of f0 — the fixed
-        // [1,2,1] smoothing this replaces barely filtered long strings.
-        let cw = ((p.contact * (1.2 - 0.2 * p.vel) * len as f32) as usize).clamp(1, len / 4);
+        // so the excitation bandwidth is a physical fraction of f0.
         if cw > 1 {
             let mut acc = [0.0f32; PLUCK_BUF];
             for _ in 0..2 {
@@ -733,8 +1090,8 @@ impl PluckVoice {
                 tmp[..len].copy_from_slice(&acc[..len]);
             }
         }
-        // DC removal, then load both polarizations (pol2 gets the same shape —
-        // it IS the same string; only its loop differs)
+        // DC removal of the time-domain parts, then load both polarizations
+        // (pol2 gets the same snap/scrape — it IS the same string)
         let mut mean = 0.0;
         for t in tmp.iter().take(len) {
             mean += *t;
@@ -761,6 +1118,63 @@ impl PluckVoice {
             let f2 = (frac2 - v.tm_dev).clamp(0.1, 1.5);
             v.ap2_c = (1.0 - f2) / (1.0 + f2);
         }
+        // Mode-exact triangle carrier + warm filter states, per polarization
+        // (after the tension-mod block: modes are solved at the ONSET fractional
+        // delay, which is what the first rendered blocks use).
+        let n_syn = ((2.5 * len as f32 / cw as f32) as usize + 6)
+            .min((0.45 * sr / p.f0) as usize)
+            .min(40)
+            .min(len / 2);
+        let st = load_carrier(
+            &mut v.buf,
+            len,
+            (frac1 - tm_dev).clamp(0.1, 1.5),
+            lp_c,
+            lp_mix,
+            loss,
+            disp_a,
+            disp_n,
+            v.ap_c,
+            p.f0,
+            p.stiff_b,
+            sr,
+            p.pick_pos,
+            cw,
+            n_syn,
+        );
+        v.lp = st.lp as f32;
+        v.ap_x1 = st.apx as f32;
+        v.ap_y1 = st.apy as f32;
+        for k in 0..disp_n {
+            v.dsx[k] = st.dsx[k] as f32;
+            v.dsy[k] = st.dsy[k] as f32;
+        }
+        if p.pol_mix > 0.0 {
+            let st2 = load_carrier(
+                &mut v.buf2,
+                len2,
+                (frac2 - tm_dev).clamp(0.1, 1.5),
+                lp_c,
+                lp_mix,
+                loss2,
+                disp_a,
+                disp_n,
+                v.ap2_c,
+                f2,
+                p.stiff_b,
+                sr,
+                p.pick_pos,
+                cw,
+                n_syn,
+            );
+            v.lp2 = st2.lp as f32;
+            v.ap2_x1 = st2.apx as f32;
+            v.ap2_y1 = st2.apy as f32;
+            for k in 0..disp_n {
+                v.ds2x[k] = st2.dsx[k] as f32;
+                v.ds2y[k] = st2.dsy[k] as f32;
+            }
+        }
         v
     }
 
@@ -776,35 +1190,60 @@ impl PluckVoice {
             let f2 = (self.frac2 - dev).clamp(0.1, 1.5);
             self.ap2_c = (1.0 - f2) / (1.0 + f2);
         }
+        // Hoist small filter states into locals so the optimizer keeps them in
+        // registers across the sample loop (through &mut self they reload per
+        // sample — measured 108 µs/quantum at 8 steel voices, ~2× the budget).
+        let mut dsx = self.dsx;
+        let mut dsy = self.dsy;
+        let mut ds2x = self.ds2x;
+        let mut ds2y = self.ds2y;
+        let disp_n = self.disp_n as usize;
+        let (mut lp, mut ap_x1, mut ap_y1) = (self.lp, self.ap_x1, self.ap_y1);
+        let (mut lp2, mut ap2_x1, mut ap2_y1) = (self.lp2, self.ap2_x1, self.ap2_y1);
         for o in out.iter_mut() {
             let y = self.buf[self.pos];
-            // loop lowpass (string damping / brightness)
-            self.lp += self.lp_c * (y - self.lp);
-            // stiffness dispersion (steel): first-order allpass delays highs
-            let s = if self.disp_c > 0.0 {
-                let d = self.disp_c * (self.lp - self.d1_y1) + self.d1_x1;
-                self.d1_x1 = self.lp;
-                self.d1_y1 = d;
-                d
-            } else {
-                self.lp
-            };
+            // blend loss filter: one-pole ladder over a flat HF bypass floor
+            // (m·y + (1−m)·lp ≡ lp + m(y−lp); m = 0 is the pure one-pole)
+            lp += self.lp_c * (y - lp);
+            // stiffness dispersion: M-stage allpass cascade delays lows vs highs
+            // (pole at +p ⇒ stretched partials, see design_dispersion)
+            let mut s = self.lp_mix.mul_add(y - lp, lp);
+            for k in 0..disp_n {
+                let d = self.disp_a * (s - dsy[k]) + dsx[k];
+                dsx[k] = s;
+                dsy[k] = d;
+                s = d;
+            }
             // fractional-delay allpass keeps the string in tune
-            let ap = self.ap_c * (s - self.ap_y1) + self.ap_x1;
-            self.ap_x1 = s;
-            self.ap_y1 = ap;
+            let ap = self.ap_c * (s - ap_y1) + ap_x1;
+            ap_x1 = s;
+            ap_y1 = ap;
             self.buf[self.pos] = ap * self.loss;
-            self.pos = (self.pos + 1) % self.len;
+            self.pos += 1;
+            if self.pos >= self.len {
+                self.pos = 0;
+            }
             let mut mix = y;
-            // second polarization (own loop; summed at the bridge)
+            // second polarization (own loop; summed at the bridge). Same string,
+            // same stiffness: it disperses through its own cascade states.
             if self.pol_mix > 0.0 {
                 let y2 = self.buf2[self.pos2];
-                self.lp2 += self.lp_c * (y2 - self.lp2);
-                let ap2 = self.ap2_c * (self.lp2 - self.ap2_y1) + self.ap2_x1;
-                self.ap2_x1 = self.lp2;
-                self.ap2_y1 = ap2;
+                lp2 += self.lp_c * (y2 - lp2);
+                let mut s2 = self.lp_mix.mul_add(y2 - lp2, lp2);
+                for k in 0..disp_n {
+                    let d = self.disp_a * (s2 - ds2y[k]) + ds2x[k];
+                    ds2x[k] = s2;
+                    ds2y[k] = d;
+                    s2 = d;
+                }
+                let ap2 = self.ap2_c * (s2 - ap2_y1) + ap2_x1;
+                ap2_x1 = s2;
+                ap2_y1 = ap2;
                 self.buf2[self.pos2] = ap2 * self.loss2;
-                self.pos2 = (self.pos2 + 1) % self.len2;
+                self.pos2 += 1;
+                if self.pos2 >= self.len2 {
+                    self.pos2 = 0;
+                }
                 mix += self.pol_mix * y2;
             }
             if self.tm_dev > 0.0 {
@@ -821,15 +1260,29 @@ impl PluckVoice {
                 mix
             };
             *o += outv * self.level;
+            // direct contact-click transient (bypasses the string loop)
+            if self.tr_env > 1e-7 {
+                let n = self.tr_rng.next();
+                *o += self.tr_env * 0.5 * (n - self.tr_hp);
+                self.tr_hp = n;
+                self.tr_env *= self.tr_dec;
+            }
         }
-        self.lp = flush_denormal(self.lp);
-        self.ap_y1 = flush_denormal(self.ap_y1);
+        self.dsx = dsx;
+        self.dsy = dsy;
+        self.ds2x = ds2x;
+        self.ds2y = ds2y;
+        self.lp = flush_denormal(lp);
+        self.ap_x1 = ap_x1;
+        self.ap_y1 = flush_denormal(ap_y1);
         if self.pol_mix > 0.0 {
-            self.lp2 = flush_denormal(self.lp2);
-            self.ap2_y1 = flush_denormal(self.ap2_y1);
+            self.lp2 = flush_denormal(lp2);
+            self.ap2_x1 = ap2_x1;
+            self.ap2_y1 = flush_denormal(ap2_y1);
         }
-        if self.disp_c > 0.0 {
-            self.d1_y1 = flush_denormal(self.d1_y1);
+        for k in 0..self.disp_n as usize {
+            self.dsy[k] = flush_denormal(self.dsy[k]);
+            self.ds2y[k] = flush_denormal(self.ds2y[k]);
         }
         self.tm_env = flush_denormal(self.tm_env);
         self.br_x1 = flush_denormal(self.br_x1);
@@ -839,11 +1292,27 @@ impl PluckVoice {
 
     pub fn damp(&mut self) {
         if self.f0 > 0.0 {
-            // acoustic path: per-period loss for a ~90 ms release (finger/palm
-            // damping), voice retired shortly after
-            self.loss = per_period_gain(0.09, self.f0);
+            // acoustic path: per-period loss toward the instrument's release
+            // t60 — finger/palm damping is not instantaneous (steel refs ring
+            // ~0.5 s after note-off); voice retired once the tail is spent
+            let rel = self.rel_t60.max(0.05);
+            self.loss = per_period_gain(rel, self.f0);
             self.loss2 = self.loss;
-            self.life = self.age + (0.25 * self.sr) as u64;
+            self.life = self.age + ((3.0 * rel + 0.15) * self.sr) as u64;
+            // pluck-off: the fret/finger release re-excites the top with a
+            // short click scaled by the string's REMAINING energy (a decayed
+            // note releases quietly) — audible at note-off in the refs
+            if self.rel_click > 0.0 {
+                let mut acc = 0.0f32;
+                for &b in self.buf.iter().take(self.len) {
+                    acc += b * b;
+                }
+                let rms = (acc / self.len.max(1) as f32).sqrt();
+                let amp = self.rel_click * rms.min(1.0) * self.level;
+                if amp > self.tr_env {
+                    self.tr_env = amp;
+                }
+            }
         } else {
             self.loss = t60_gain(0.07, self.sr);
             self.life = self.age + (0.1 * self.sr) as u64;
@@ -3064,10 +3533,14 @@ pub fn voice_pan(inst: Instrument, midi: u32, seed: u32) -> f32 {
             47 | 48 | 50 => 0.12, // high toms
             _ => ((seed >> 7) as f32 / 33554432.0 - 0.5) * 0.2,
         },
-        Instrument::Guitar | Instrument::GuitarSteel | Instrument::Bass => {
+        Instrument::Guitar | Instrument::GuitarSteel => {
             // per-note micro-offset: strings sit at slightly different spots
-            ((seed >> 9) as f32 / 8388608.0 - 0.5) * 0.12
+            // across the neck (round 2: widened a touch — the stereo body
+            // banks render the spread naturally now)
+            ((seed >> 9) as f32 / 8388608.0 - 0.5) * 0.16
         }
+        // bass sits at the middle of the mix like a DI track: barely off-center
+        Instrument::Bass => ((seed >> 9) as f32 / 8388608.0 - 0.5) * 0.04,
         _ => 0.0,
     }
 }
@@ -3159,16 +3632,27 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
             let p = AcPluck {
                 f0,
                 vel,
-                t60_f0: 8.0 + 4.0 * key,
+                // refs split by source: 010 ≈ 6–15 s early t60, 014 ≈ 22–27 s;
+                // round-1's 8+4·key sat at the floor of both (render −20 dB vs
+                // 014 at the 3 s mark). Compromise law raised round 2.
+                t60_f0: 11.0 + 6.0 * key,
                 lp_c: 0.97 - 0.10 * key + 0.02 * vel,
+                hf_floor_t60: 0.0,
+                hf_knee_hz: 0.0,
                 pick_pos: 0.20,
                 contact: 0.045,
                 snap: 0.5,
                 scrape: 0.06,
+                click: 0.0,
+                rel_t60: 0.10,
+                rel_click: 0.25,
                 pol_mix: 0.35,
                 pol_detune_cents: 2.2,
                 pol_t60_ratio: 0.55,
-                disp_c: 0.0,
+                // nylon source 014 measures B ≈ 4.6e-5 (E2) → 5.2e-5 (C4), h10
+                // ≈ +5 cents; source 010 is near-flexible. Split the difference
+                // low — nylon stretch is subtle but real (bfit 2026-07-11 r2).
+                stiff_b: 3.5e-5,
                 // no tension glide: nylon refs show none, and the glide beat
                 // against the polarization detune measurably hurt C5
                 tm_cents: 0.0,
@@ -3191,16 +3675,29 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
             let p = AcPluck {
                 f0,
                 vel,
-                t60_f0: 6.5 - 2.5 * key,
+                // refs' measured ladder (025-028-100): h1 dies 10 dB/s, h3 at
+                // 10 dB/s, h6 at 33 dB/s, nothing sustained above ~500 Hz —
+                // while their ENVELOPE reads 10–35 s because h2 rings near 0
+                // dB/s. Compromise fundamental t60 + a genuinely dark loop
+                // (per-period loss barely bites at a 24 ms period: the old
+                // lp 0.58 rang 7.5 s at 1 kHz, +20 dB over the ref mid-note).
+                t60_f0: 14.0 - 4.0 * key,
                 lp_c: 0.50 + 0.10 * vel,
+                hf_floor_t60: 0.0,
+                hf_knee_hz: 0.0,
                 pick_pos: 0.30,
                 contact: 0.10,
                 snap: 0.35,
                 scrape: 0.03,
+                click: 0.0,
+                rel_t60: 0.12,
+                rel_click: 0.15,
                 pol_mix: 0.25,
                 pol_detune_cents: 1.2,
                 pol_t60_ratio: 0.5,
-                disp_c: 0.0,
+                // NSynth bass_electronic refs measure essentially harmonic
+                // (B ≤ 2e-5, h10 ≤ 3 cents) — barely-there stiffness
+                stiff_b: 1.2e-5,
                 tm_cents: 0.0,
                 br_rho: 0.0,
                 level: 0.5 * (0.5 + 0.5 * vel),
@@ -3244,16 +3741,38 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
                 vel,
                 t60_f0: (12.0 - 13.0 * key).clamp(2.0, 12.0),
                 // sustain brightness is velocity-independent in the refs —
-                // velocity lives in the excitation, not the loop
+                // velocity lives in the excitation, not the loop. lp_c is
+                // superseded by the blend loss filter (hf_floor below).
                 lp_c: 0.57 + 0.28 * key,
+                // blend fit to ref 015's measured t60 ladder (12 s at f0 →
+                // 9.8 s at 410 → 4.2 s at 1 kHz → ~2 s floor at 3 kHz+): knee
+                // 2850 Hz, floor 1.5 s at E2, both within ~15% across the
+                // ladder (offline grid fit 2026-07-11 round 2)
+                hf_floor_t60: (1.5 * (82.41 / f0).sqrt()).clamp(0.3, 1.8),
+                hf_knee_hz: 2850.0,
                 pick_pos: 0.14,
                 contact: 0.010,
-                snap: 2.5,
-                scrape: 0.35,
-                pol_mix: 0.3,
+                // split round 2: only a sliver of the pick noise persists as
+                // string modes (in-loop, sized to the refs' −28 dB late-HF
+                // remnant); the rest radiates directly as the click transient
+                // (with the HF loss floor, all-in-loop ran +30…+47 dB hot)
+                snap: 0.12,
+                scrape: 0.008,
+                click: 1.35,
+                rel_t60: 0.90,
+                rel_click: 0.5,
+                // two-stage decay, Weinreich roles corrected round 2: the
+                // strongly-coupled (plucked) polarization decays FAST; the
+                // orthogonal one couples weakly to the bridge and carries the
+                // slow aftersound — refs flatten to it ~2 s in (render sat
+                // −12 dB under ref 015 at the 3 s mark with the old 0.55).
+                pol_mix: 0.22,
                 pol_detune_cents: 1.5,
-                pol_t60_ratio: 0.55,
-                disp_c: 0.0,
+                pol_t60_ratio: 1.6,
+                // steel source 015: B = 2.70e-4 @73 Hz → 3.15e-4 @97 Hz (h10
+                // +31…36 cents), rising with key as B ∝ 1/l² on a fretted
+                // string ⇒ ≈ √(f0/E2) law (bfit fits, 2026-07-11 round 2)
+                stiff_b: 3.0e-4 * (f0 / 82.41).sqrt(),
                 // hard low plucks start a few cents sharp and settle — the steel
                 // "twang" onset (Tolonen/Välimäki/Karjalainen 2000); NSynth refs
                 // show ≤3 cents, so this stays subtle
@@ -3415,8 +3934,10 @@ mod tests {
             for vel in [0.25f32, 1.0f32] {
                 let out = render_pluck(Instrument::GuitarSteel, 52, vel, sr, 1.0);
                 let tail = &out[(0.5 * sr) as usize..];
-                let f = autocorr_pitch(tail, sr, 100.0, 400.0);
+                // exact DFT peak: a raw ACF is biased sharp by the stretched
+                // partials ringing on the HF loss floor (round 2)
                 let want = midi_to_hz(52.0);
+                let f = peak_freq(tail, sr, want * 0.97, want * 1.03);
                 assert!(
                     (f - want).abs() < want * 0.015,
                     "sr={sr} vel={vel}: {f} Hz, want {want}"
@@ -3449,13 +3970,187 @@ mod tests {
     fn acoustic_loop_gain_never_exceeds_unity() {
         for midi in [28u32, 40, 52, 64, 76, 88] {
             for vel in [0.1f32, 1.0] {
-                for inst in [Instrument::Guitar, Instrument::GuitarSteel] {
+                for inst in [Instrument::Guitar, Instrument::GuitarSteel, Instrument::Bass] {
                     if let Kernel::Pluck(p) = start_voice(inst, midi, vel, 48_000.0, 7) {
                         assert!(p.loss <= 1.0, "{inst:?} midi={midi} loss={}", p.loss);
                         assert!(p.loss2 <= 1.0, "{inst:?} midi={midi} loss2={}", p.loss2);
                     }
                 }
             }
+        }
+    }
+
+    /// Hann-windowed DFT magnitude at an arbitrary frequency (f64 phase).
+    fn dft_mag(x: &[f32], sr: f32, f: f32) -> f32 {
+        let n = x.len() as f64;
+        let (mut re, mut im) = (0.0f64, 0.0f64);
+        let wstep = core::f64::consts::TAU * f as f64 / sr as f64;
+        for (i, &s) in x.iter().enumerate() {
+            let w = 0.5 - 0.5 * (core::f64::consts::TAU * i as f64 / n).cos();
+            let ph = wstep * i as f64;
+            re += s as f64 * w * ph.cos();
+            im -= s as f64 * w * ph.sin();
+        }
+        ((re * re + im * im) as f32).sqrt()
+    }
+
+    /// Strongest spectral peak in [lo, hi], via grid + parabolic refinement.
+    fn peak_freq(x: &[f32], sr: f32, lo: f32, hi: f32) -> f32 {
+        let n = 48;
+        let step = (hi - lo) / n as f32;
+        let mut best = (lo, 0.0f32);
+        for i in 0..=n {
+            let f = lo + i as f32 * step;
+            let m = dft_mag(x, sr, f);
+            if m > best.1 {
+                best = (f, m);
+            }
+        }
+        let (a, b, c) = (
+            dft_mag(x, sr, best.0 - step),
+            best.1,
+            dft_mag(x, sr, best.0 + step),
+        );
+        let denom = a - 2.0 * b + c;
+        let d = if denom.abs() > 1e-12 { 0.5 * (a - c) / denom } else { 0.0 };
+        best.0 + d.clamp(-1.0, 1.0) * step
+    }
+
+    /// Dispersion cascade: steel E2 upper partials must stretch like the
+    /// measured inharmonicity (source 015: B ≈ 3e-4 ⇒ h10 ≈ +25 cents), with
+    /// the fundamental still in tune — at BOTH deploy sample rates (the
+    /// cascade's phase delay is compensated in the loop length).
+    #[test]
+    fn steel_partials_stretch_like_the_measured_inharmonicity() {
+        for sr in [44_100.0f32, 48_000.0] {
+            let out = render_pluck(Instrument::GuitarSteel, 40, 1.0, sr, 1.5);
+            let seg = &out[(0.25 * sr) as usize..(1.25 * sr) as usize];
+            let want = midi_to_hz(40.0);
+            let f1 = peak_freq(seg, sr, want * 0.98, want * 1.02);
+            assert!(
+                (f1 - want).abs() < want * 0.006,
+                "sr={sr}: f1={f1}, want {want}"
+            );
+            let cents = |fn_meas: f32, n: f32| 1200.0 * (fn_meas / (n * f1)).log2();
+            let f5 = peak_freq(seg, sr, 5.0 * f1 * 0.999, 5.0 * f1 * 1.012);
+            let c5 = cents(f5, 5.0);
+            let f10 = peak_freq(seg, sr, 10.0 * f1 * 1.004, 10.0 * f1 * 1.032);
+            let c10 = cents(f10, 10.0);
+            assert!((3.0..14.0).contains(&c5), "sr={sr}: h5 stretch {c5} cents");
+            assert!((17.0..40.0).contains(&c10), "sr={sr}: h10 stretch {c10} cents");
+            assert!(c10 > c5 + 5.0, "sr={sr}: stretch not progressive ({c5} → {c10})");
+        }
+    }
+
+    /// Release transient ("pluck-off"): note-off on a ringing steel string must
+    /// re-brighten the output briefly (fret/finger click) and then decay on the
+    /// release t60 — not chop to silence in 90 ms. Nylon still chokes fast.
+    #[test]
+    fn steel_release_clicks_and_rings_nylon_chokes() {
+        let sr = 48_000.0f32;
+        let hf = |seg: &[f32]| {
+            // crude HF energy: first-difference RMS
+            let mut acc = 0.0f32;
+            for i in 1..seg.len() {
+                let d = seg[i] - seg[i - 1];
+                acc += d * d;
+            }
+            (acc / seg.len() as f32).sqrt()
+        };
+        let rms =
+            |seg: &[f32]| (seg.iter().map(|s| s * s).sum::<f32>() / seg.len() as f32).sqrt();
+        let run = |inst: Instrument| -> (f32, f32, f32, f32) {
+            let mut k = start_voice(inst, 45, 0.9, sr, 4242);
+            let mut out = vec![0.0f32; (2.2 * sr) as usize];
+            let off = (1.0 * sr) as usize;
+            let mut i = 0;
+            while i < out.len() {
+                let end = (i + 128).min(out.len());
+                if let Kernel::Pluck(p) = &mut k {
+                    if i <= off && off < end {
+                        p.damp();
+                    }
+                    p.render(&mut out[i..end]);
+                }
+                i = end;
+            }
+            let pre_hf = hf(&out[off - 4800..off]);
+            let post_hf = hf(&out[off..off + 4800]);
+            let at_02 = rms(&out[off + (0.2 * sr) as usize..off + (0.3 * sr) as usize]);
+            let pre = rms(&out[off - 4800..off]);
+            (pre_hf, post_hf, pre, at_02)
+        };
+        let (pre_hf, post_hf, pre, at_02) = run(Instrument::GuitarSteel);
+        assert!(
+            post_hf > pre_hf * 1.3,
+            "steel release click missing: HF {pre_hf} -> {post_hf}"
+        );
+        // release t60 0.35 s ⇒ still ringing at +0.25 s, but clearly decaying
+        assert!(
+            at_02 > pre * 1e-4 && at_02 < pre * 0.6,
+            "steel release tail off: pre {pre}, at+0.25 {at_02}"
+        );
+        let (_, _, pre_n, at_02n) = run(Instrument::Guitar);
+        assert!(
+            at_02n < pre_n * 0.05,
+            "nylon must choke fast: pre {pre_n}, at+0.25 {at_02n}"
+        );
+    }
+
+    /// Steel HF loss saturates on the blend filter's bypass floor: the 2.3–2.7
+    /// kHz band must still ring at t ≈ 1.3 s (ref 015 measures t60 ≈ 2 s there;
+    /// the old pure one-pole left digital silence). Guards the blend wiring.
+    #[test]
+    fn steel_hf_partials_ring_on_the_loss_floor() {
+        let sr = 48_000.0f32;
+        let out = render_pluck(Instrument::GuitarSteel, 40, 1.0, sr, 1.6);
+        let band = |t0: f32, t1: f32| {
+            let seg = &out[(t0 * sr) as usize..(t1 * sr) as usize];
+            let n = seg.len();
+            // Goertzel-ish: RMS after a crude 2.3–2.7 kHz projection
+            let mut acc = 0.0f64;
+            for f in [2350.0f32, 2500.0, 2650.0] {
+                let (mut re, mut im) = (0.0f64, 0.0f64);
+                for (i, &s) in seg.iter().enumerate() {
+                    let ph = (core::f32::consts::TAU * f * i as f32 / sr) as f64;
+                    re += s as f64 * ph.cos();
+                    im += s as f64 * ph.sin();
+                }
+                acc += (re * re + im * im) / (n * n) as f64;
+            }
+            (acc.sqrt() as f32).max(1e-12)
+        };
+        let early = band(0.15, 0.45);
+        let late = band(1.15, 1.45);
+        let drop_db = 20.0 * (early / late).log10();
+        // floor t60 ≈ 2.2 s ⇒ ~27 dB/s: expect a 10–45 dB drop over 1 s, not
+        // the >70 dB collapse of the one-pole
+        assert!(
+            (8.0..48.0).contains(&drop_db),
+            "2.5 kHz band dropped {drop_db} dB over 1 s"
+        );
+    }
+
+    /// Nylon stretch stays subtle (B ≈ 3.5e-5 ⇒ h10 ≈ +3 cents) and bass is
+    /// near-harmonic — the cascade must not overshoot on the soft-B rows.
+    #[test]
+    fn nylon_and_bass_stay_near_harmonic() {
+        let sr = 48_000.0f32;
+        for (inst, midi, cap) in [
+            (Instrument::Guitar, 40u32, 8.0f32),
+            (Instrument::Bass, 28, 6.0),
+        ] {
+            let out = render_pluck(inst, midi, 0.9, sr, 1.5);
+            let seg = &out[(0.25 * sr) as usize..(1.25 * sr) as usize];
+            let want = midi_to_hz(midi as f32);
+            let f1 = peak_freq(seg, sr, want * 0.98, want * 1.02);
+            assert!((f1 - want).abs() < want * 0.006, "{inst:?}: f1={f1}");
+            let f10 = peak_freq(seg, sr, 10.0 * f1 * 0.995, 10.0 * f1 * 1.008);
+            let c10 = 1200.0 * (f10 / (10.0 * f1)).log2();
+            assert!(
+                (-2.0..cap).contains(&c10),
+                "{inst:?}: h10 stretch {c10} cents (cap {cap})"
+            );
         }
     }
 }
@@ -3612,5 +4307,63 @@ mod cymbal_tests {
         // closed hat, by contrast, must be short
         let hat = render_drum(42, 0.8, 48000.0);
         assert!((hat.len() as f32) < 1.0 * 48000.0, "closed hat rings too long");
+    }
+}
+
+#[cfg(test)]
+mod bench_probe {
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    fn probe_render_cost() {
+        for (name, inst, base) in [
+            ("nylon", Instrument::Guitar, 40u32),
+            ("steel", Instrument::GuitarSteel, 40),
+            ("bass", Instrument::Bass, 28),
+        ] {
+            let mut voices: Vec<Kernel> = (0..8)
+                .map(|i| start_voice(inst, base + i * 3, 0.9, 48_000.0, 99 + i))
+                .collect();
+            let mut block = [0.0f32; 128];
+            // warmup
+            for _ in 0..100 {
+                for v in voices.iter_mut() {
+                    if let Kernel::Pluck(p) = v {
+                        p.render(&mut block);
+                    }
+                }
+            }
+            let t0 = Instant::now();
+            let n = 2000;
+            for _ in 0..n {
+                block.fill(0.0);
+                for v in voices.iter_mut() {
+                    if let Kernel::Pluck(p) = v {
+                        p.render(&mut block);
+                    }
+                }
+                core::hint::black_box(&block);
+            }
+            println!("{name}: {:.1} us/quantum @8 voices (native)", t0.elapsed().as_micros() as f64 / n as f64);
+        }
+    }
+
+    #[test]
+    fn probe_note_on_cost() {
+        for (name, inst, base) in [
+            ("nylon", Instrument::Guitar, 40u32),
+            ("steel", Instrument::GuitarSteel, 40),
+            ("bass", Instrument::Bass, 28),
+        ] {
+            for midi in [base, base + 12, base + 24] {
+                let t0 = Instant::now();
+                for i in 0..50 {
+                    let k = start_voice(inst, midi, 0.9, 48_000.0, 1234 + i);
+                    core::hint::black_box(&k);
+                }
+                println!("{name} midi {midi}: {:.1} us/note-on", t0.elapsed().as_micros() as f64 / 50.0);
+            }
+        }
     }
 }
