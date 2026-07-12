@@ -850,7 +850,260 @@ impl SynthVoice {
 }
 
 // ---------------------------------------------------------------------------
-// Drum kit (GM pitches) — sine-sweep kick, mode+noise snare, filtered-noise cymbals
+// Cymbals — banded-noise resonator bank with post-attack bloom
+// ---------------------------------------------------------------------------
+// A cymbal is a thin nonlinear plate: hundreds of inharmonic modes whose density
+// increases with frequency, coupled nonlinearly so strike energy migrates upward
+// for ~50–200 ms after contact (the audible "bloom"), then decays over seconds
+// with strong beating — dense-modal (NOT white-noise) even above 3 kHz.
+// Real-time approximation from the banded-noise lineage (Essl & Cook, banded
+// waveguides for cymbals/gongs, ICMC 1999/2000; Serra & Smith stochastic
+// modeling; Risset inharmonic partial stacks): N narrow two-pole resonators fed
+// by shared white noise. Per band: an immediate strike-burst gain, a sustained
+// "wash" gain gated by a DELAYED one-pole bloom envelope (stands in for the
+// nonlinear upward energy transfer), and an independent decay t60.
+// Reference targets measured from CC0 recordings (see 2026-07-11 cymbal report):
+// ride centroid FALLS 8k→3k over 300 ms while the 1–2 kHz band peaks late
+// (~60 ms); crash centroid RISES 1.8k→7.7k into ~50 ms; in-band spectral
+// flatness stays 0.2–0.5 everywhere (never pure noise, never a lone sine).
+
+pub const CYM_BANDS: usize = 22;
+
+#[derive(Clone, Copy)]
+pub struct CymbalVoice {
+    n_bands: usize,
+    // two-pole resonator bank: y = a1·y1 − r2·y2 + x
+    a1: [f32; CYM_BANDS],
+    r2: [f32; CYM_BANDS],
+    y1: [f32; CYM_BANDS],
+    y2: [f32; CYM_BANDS],
+    /// strike-burst input gain (immediate, stick contact + ping)
+    g_burst: [f32; CYM_BANDS],
+    /// sustained wash input gain (reached after bloom)
+    g_wash: [f32; CYM_BANDS],
+    /// per-band wash decay envelope (t60 of the band's tail)
+    wash_env: [f32; CYM_BANDS],
+    wash_dec: [f32; CYM_BANDS],
+    /// bloom state: starts at the delayed fraction β, decays to 0;
+    /// the band's wash input is scaled by (1 − bloom)
+    bloom: [f32; CYM_BANDS],
+    bloom_c: [f32; CYM_BANDS],
+    burst_env: f32,
+    burst_dec: f32,
+    amp: f32,
+    rng: Lcg,
+    life: u64,
+    age: u64,
+}
+
+/// Per-band design parameters handed to [`CymbalVoice::push_band`].
+struct CymBand {
+    freq: f32,
+    /// resonator ring t60 (bandwidth: ~2.2/ring_t60 Hz) — texture, not decay
+    ring_t60: f32,
+    burst: f32,
+    /// contact-scrape noise gain (attack HF bed, decays in ~30 ms)
+    chick: f32,
+    wash: f32,
+    /// wash decay t60 seconds
+    decay_t60: f32,
+    /// delayed fraction of the wash (0 = immediate, 1 = fully bloomed-in)
+    bloom_frac: f32,
+    /// bloom time constant seconds
+    bloom_tau: f32,
+}
+
+impl CymbalVoice {
+    fn new(seed: u32) -> Self {
+        Self {
+            n_bands: 0,
+            a1: [0.0; CYM_BANDS],
+            r2: [0.0; CYM_BANDS],
+            y1: [0.0; CYM_BANDS],
+            y2: [0.0; CYM_BANDS],
+            g_burst: [0.0; CYM_BANDS],
+            g_wash: [0.0; CYM_BANDS],
+            wash_env: [1.0; CYM_BANDS],
+            wash_dec: [0.0; CYM_BANDS],
+            bloom: [0.0; CYM_BANDS],
+            bloom_c: [0.0; CYM_BANDS],
+            burst_env: 1.0,
+            burst_dec: 0.0,
+            amp: 0.0,
+            rng: Lcg(seed | 1),
+            life: 0,
+            age: 0,
+        }
+    }
+
+    fn push_band(&mut self, b: CymBand, sr: f32) {
+        if self.n_bands == CYM_BANDS || b.freq >= 0.45 * sr {
+            return; // Nyquist guard — never synthesize above 0.45·sr
+        }
+        let i = self.n_bands;
+        let r = t60_gain(b.ring_t60, sr);
+        let w = core::f32::consts::TAU * b.freq / sr;
+        self.a1[i] = 2.0 * r * w.cos();
+        self.r2[i] = r * r;
+        // (1−r)·sin(ω) normalizes resonance peak gain across bandwidth AND
+        // center frequency (two-pole peak gain ≈ g / ((1−r)·sin ω); without the
+        // sin ω term low bands come out ~28 dB hot — iteration-1 measurement)
+        let norm = (1.0 - r) * w.sin();
+        // Strike = impulse initial condition: the stick imparts velocity to
+        // every mode at t=0 (a ms-scale noise burst cannot charge a band whose
+        // rise time is 1/BW — iteration-5 measurement). Ring peak ≈ b.burst,
+        // boosted for fast-ringing bands so perceived (frame-energy) strike
+        // level is even across the spectrum (iteration-6 calibration).
+        // Ring phase is randomized per band: phase-aligned rings beat
+        // constructively ~40 ms in and delay the envelope peak (iteration 16).
+        let c = b.burst * (0.045 / b.ring_t60).sqrt().clamp(1.0, 4.5);
+        let phi = core::f32::consts::PI * self.rng.next();
+        self.y1[i] = c * (phi - w).sin();
+        self.y2[i] = c * (phi - 2.0 * w).sin();
+        // sustained-noise "chick": bright contact scrape that carries the
+        // attack's HF for the first ~30 ms, then hands over to the wash
+        // (reference onset energy concentrates at 6–18 kHz — iteration 20)
+        self.g_burst[i] = b.chick * norm;
+        self.g_wash[i] = b.wash * norm;
+        self.wash_dec[i] = t60_gain(b.decay_t60, sr);
+        self.bloom[i] = b.bloom_frac.clamp(0.0, 1.0);
+        self.bloom_c[i] = if b.bloom_tau > 0.0 { (-1.0 / (b.bloom_tau * sr)).exp() } else { 0.0 };
+        self.n_bands += 1;
+    }
+
+    /// Render one block, ADD into `out` (pre-scaled by `self.amp`).
+    /// Returns false when spent.
+    fn render(&mut self, out: &mut [f32]) -> bool {
+        for o in out.iter_mut() {
+            let n = self.rng.next();
+            let nb = n * self.burst_env;
+            self.burst_env *= self.burst_dec;
+            let mut s = 0.0;
+            for i in 0..self.n_bands {
+                let x = self.g_burst[i] * nb
+                    + self.g_wash[i] * (1.0 - self.bloom[i]) * self.wash_env[i] * n;
+                let y = self.a1[i] * self.y1[i] - self.r2[i] * self.y2[i] + x;
+                self.y2[i] = self.y1[i];
+                self.y1[i] = y;
+                s += y;
+                self.wash_env[i] *= self.wash_dec[i];
+                self.bloom[i] *= self.bloom_c[i];
+            }
+            *o += s * self.amp;
+            self.age += 1;
+        }
+        self.burst_env = flush_denormal(self.burst_env);
+        for i in 0..self.n_bands {
+            self.y1[i] = flush_denormal(self.y1[i]);
+            self.y2[i] = flush_denormal(self.y2[i]);
+            self.wash_env[i] = flush_denormal(self.wash_env[i]);
+            self.bloom[i] = flush_denormal(self.bloom[i]);
+        }
+        self.age < self.life
+    }
+
+    /// Ride cymbal (GM 51/59): clear inharmonic stick ping over a mid-blooming
+    /// wash with a very long, frequency-sloped decay.
+    fn ride(vel: f32, sr: f32, seed: u32) -> Self {
+        let mut v = Self::new(seed);
+        v.burst_dec = t60_gain(0.030, sr);
+        v.amp = 0.9 * (0.25 + 0.75 * vel);
+        v.life = (5.0 * sr) as u64;
+        let mut jit = Lcg(seed ^ 0x51de | 1);
+        // strike-impulse scale: rings must sit just above the noise-fed wash
+        // bed (whose RMS is only ~gain·√(BW/nyq)) yet top the bloomed wash so
+        // the envelope peaks AT the strike, not 60 ms in (iterations 7/9)
+        let imp = 0.19;
+
+        // Long-ringing ping bands: the ride's tonal skeleton, measured from the
+        // CC0 reference sustain (0.15–0.65 s FFT): a beating cluster at
+        // ~444/462/467 Hz (4.5 Hz beat), one strong mode ~1221 Hz, light
+        // support ~2244 Hz. The spectrum DIPS at 200–350 and 500–1000 Hz.
+        for (f, ring, burst) in [
+            (402.0, 2.0, 0.07f32),
+            (444.0, 2.5, 0.11),
+            (462.0, 3.5, 0.19),
+            (466.5, 3.0, 0.15),
+            (1221.0, 2.2, 0.24),
+            (2244.0, 1.4, 0.22),
+        ] {
+            v.push_band(
+                CymBand {
+                    freq: f,
+                    ring_t60: ring,
+                    burst: burst * imp * vel.powf(0.8),
+                    chick: 0.0,
+                    wash: 0.0,
+                    decay_t60: ring,
+                    bloom_frac: 0.0,
+                    bloom_tau: 0.0,
+                },
+                sr,
+            );
+        }
+        // Wash bands: geometric 300 Hz → 16 kHz with seeded jitter (the strike
+        // sizzle lives at 6–18 kHz in the reference).
+        let n_wash = CYM_BANDS - v.n_bands;
+        for k in 0..n_wash {
+            let t = k as f32 / (n_wash - 1) as f32;
+            let f = 300.0 * (16000.0f32 / 300.0).powf(t) * (1.0 + 0.05 * jit.next());
+            // texture: bandwidth ≈ f/20 — measured sweet spot between a sine
+            // comb (f/213: flatness 0.05, reads as a chord) and hiss (f/8:
+            // flatness 0.9); real ride in-band flatness is 0.2–0.5 (dense
+            // modal, never white). Bands charge from noise in ~1/BW ≈ 20/f s.
+            let ring = 44.0 / f;
+            // decay: LF rings ~5.6 s, 12 kHz ~1.8 s (measured slope of CC0 ride)
+            let decay = (5.2 * (1500.0 / f).sqrt()).clamp(1.7, 5.6);
+            // bloom: mids arrive latest/deepest (1–2 kHz band peaks ~60 ms late)
+            let (bloom_frac, bloom_tau) = if f < 700.0 {
+                (0.15, 0.020)
+            } else if f < 3000.0 {
+                (0.75 * (0.5 + 0.5 * vel), 0.055)
+            } else {
+                (0.45 * (0.5 + 0.5 * vel), 0.030)
+            };
+            // burst: stick contact is broadband and instant (reference: every
+            // band peaks in the first frame except the blooming mids), with a
+            // bright bump peaked ~2.5 kHz
+            // measured ride spectrum dips ~500–1000 Hz between the low "gong"
+            // hump and the stick band — a plate-response property, so it
+            // shapes BOTH the strike and the wash (iteration-11 measurement)
+            let lnd = (f / 750.0).ln();
+            let dip = 1.0 - 0.35 * (-lnd * lnd / 0.5).exp();
+            // stick contact is treble-tilted: small broadband floor, strong
+            // bump around 7 kHz (reference onset energy peaks at 9–13 kHz)
+            let lnr = (f / 7000.0).ln();
+            let burst = (0.15 + 1.6 * (-lnr * lnr / 0.9).exp()) * vel.powf(0.7) * imp * dip;
+            // below ~500 Hz the real wash rolls off steeply (−26 dB/bin at
+            // 200–350 Hz; the LF body is the tonal cluster, not noise); the
+            // stick band ~3 kHz sits ~3 dB proud; gentle shelf above 5 kHz
+            let lnw = (f / 3000.0).ln();
+            let shape = (1.0 + 0.45 * (-lnw * lnw / 0.8).exp())
+                * if f < 500.0 { (f / 500.0).powf(1.5) } else { 1.0 }
+                * if f > 5000.0 { 0.75 } else { 1.0 };
+            let wash = 0.5 * dip * shape;
+            // chick: treble-tilted contact noise, ~2× the wash gain up top
+            let chick = 1.4 * (f / 6000.0).powf(0.8).min(2.2) * vel.powf(1.2);
+            v.push_band(
+                CymBand {
+                    freq: f,
+                    ring_t60: ring,
+                    burst,
+                    chick,
+                    wash,
+                    decay_t60: decay,
+                    bloom_frac,
+                    bloom_tau,
+                },
+                sr,
+            );
+        }
+        v
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Drum kit (GM pitches) — sine-sweep kick, mode+noise snare, banded cymbals
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy)]
@@ -869,6 +1122,7 @@ pub struct DrumVoice {
     tone_amt: f32,
     modal: ModalVoice,
     has_modal: bool,
+    cym: CymbalVoice,
     rng: Lcg,
     life: u64,
     age: u64,
@@ -877,7 +1131,8 @@ pub struct DrumVoice {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DrumKind {
     Kick,
-    Noise, // snare wires, hats, cymbals
+    Noise, // snare wires, hats
+    Cymbal,
 }
 
 impl DrumVoice {
@@ -897,6 +1152,7 @@ impl DrumVoice {
             tone_amt: 0.0,
             modal: ModalVoice::start(200.0, 0.0, sr, &[], 1.0, 0.0, 0.0, seed),
             has_modal: false,
+            cym: CymbalVoice::new(seed),
             rng: Lcg(seed | 1),
             life: (0.6 * sr) as u64,
             age: 0,
@@ -955,33 +1211,11 @@ impl DrumVoice {
                 v.life = (2.2 * sr) as u64;
             }
             51 | 59 => {
-                // ride: inharmonic metallic ping cluster (cymbal modes are dense and
-                // irrationally spaced) over a restrained wash — a sine over noise
-                // reads as a test tone, not a cymbal (listening note 2026-07-11)
-                v.decay = t60_gain(1.25, sr);
-                v.hp_c = 0.62;
-                v.amp = vel * 0.16;
-                v.noise_amt = 0.6;
-                v.has_modal = true;
-                v.modal = ModalVoice::start(
-                    905.0,
-                    (vel * 0.9).min(1.0),
-                    sr,
-                    &[
-                        ModeDef { ratio: 1.0, amp: 0.85, t60: 1.7 },
-                        ModeDef { ratio: 1.594, amp: 0.60, t60: 1.15 },
-                        ModeDef { ratio: 2.137, amp: 0.48, t60: 0.85 },
-                        ModeDef { ratio: 2.781, amp: 0.34, t60: 0.62 },
-                        ModeDef { ratio: 3.417, amp: 0.25, t60: 0.45 },
-                        ModeDef { ratio: 4.312, amp: 0.16, t60: 0.32 },
-                        ModeDef { ratio: 5.483, amp: 0.10, t60: 0.22 },
-                    ],
-                    0.35,
-                    0.06,
-                    0.0,
-                    seed ^ 0x51de,
-                );
-                v.life = (2.0 * sr) as u64;
+                // ride: banded-noise resonator bank (see CymbalVoice) — the old
+                // 7-mode cluster + hiss read as a test tone (owner note 2026-07-11)
+                v.kind = DrumKind::Cymbal;
+                v.cym = CymbalVoice::ride(vel, sr, seed);
+                v.life = v.cym.life;
             }
             _ => {
                 // tom-ish fallback: pitched mode by GM note
@@ -1009,6 +1243,9 @@ impl DrumVoice {
     }
 
     pub fn render(&mut self, out: &mut [f32], sr: f32) -> bool {
+        if self.kind == DrumKind::Cymbal {
+            return self.cym.render(out);
+        }
         let dt = 1.0 / sr;
         for o in out.iter_mut() {
             let mut s;
@@ -1022,6 +1259,7 @@ impl DrumVoice {
                         s += 0.3 * self.rng.next() * self.env;
                     }
                 }
+                DrumKind::Cymbal => s = 0.0, // handled by early return above
                 DrumKind::Noise => {
                     let n = self.rng.next();
                     self.hp += self.hp_c * (n - self.hp); // lowpass...
