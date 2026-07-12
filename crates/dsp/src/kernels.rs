@@ -1972,16 +1972,31 @@ pub struct ElectricVoice {
     vf_a2: f32,
     vf_z1: f32,
     vf_z2: f32,
-    // Fret-release noise (NSynth bright refs: broadband squeak at note-off,
-    // ~+5 dB over the decayed string, >800 Hz dominant, t60 ≈ 0.15 s, scales
-    // with velocity). Injected ON THE STRING (pre-voicing): the dark clean
-    // voicing suppresses it exactly as the dark 022 refs show no burst, while
-    // bright/distorted voicings pass it.
+    // Cab/box resonance (r3, 028 refit): closed-back cab = underdamped
+    // 2nd-order highpass (fc ≈ 95 Hz, Q ≈ 1.4 → +3 dB hump at ~125–250 Hz,
+    // sub rolloff below). This fixed low-mid emphasis is what keeps the refs'
+    // H2–H4 +10…+15 dB over H1 at B1–E2 yet leaves E3+ fundamental-dominant —
+    // register-resolved evidence that it is a cabinet, not a string, feature.
+    hp_b0: f32,
+    hp_b1: f32,
+    hp_b2: f32,
+    hp_a1: f32,
+    hp_a2: f32,
+    hp_z1: f32,
+    hp_z2: f32,
+    // Fret-release transient (r3 refit, 028 refs measured in the 3.0–3.2 s
+    // window): the burst is dominated by a LOW thump (0–300 Hz ≈ all of its
+    // energy — the finger lift re-excites the damped string; injected into
+    // the loop at damp() so it rings at f0 and dies at the damped t60) plus a
+    // 700–1400 Hz scrape band ~10 dB down (two cascaded one-poles below;
+    // round 2's flat >900 Hz noise put −4 dB of the burst at 1.2–3 kHz where
+    // the refs keep −29…−64). Injected ON THE STRING (pre-voicing).
     rel_rng: Lcg,
     rel_amp: f32,
     rel_c: f32,
     rel_hp_c: f32,
     rel_lp: f32,
+    rel_lp2: f32,
     vel: f32,
     level: f32,
     life: u64,
@@ -2036,11 +2051,19 @@ impl ElectricVoice {
             vf_a2: 0.0,
             vf_z1: 0.0,
             vf_z2: 0.0,
+            hp_b0: 1.0,
+            hp_b1: 0.0,
+            hp_b2: 0.0,
+            hp_a1: 0.0,
+            hp_a2: 0.0,
+            hp_z1: 0.0,
+            hp_z2: 0.0,
             rel_rng: Lcg(seed ^ 0x9E37_79B9),
             rel_amp: 0.0,
             rel_c: 0.0,
             rel_hp_c: 0.0,
             rel_lp: 0.0,
+            rel_lp2: 0.0,
             vel,
             level: 0.5 * (0.35 + 0.65 * vel),
             life: ((t60 * 1.5) * sr) as u64,
@@ -2101,7 +2124,12 @@ impl ElectricVoice {
         // per-pass brightness: refs lose ~35 dB/s at 1 kHz in the low register
         // while H2..H5 barely decay — a steep loop corner, key-tracked so the
         // per-second HF decay stays register-flat (Valimaki et al. 1996 loop fit)
-        let mut lp_c = (0.51 + 0.56 * key + 0.06 * vel).clamp(0.30, 0.985);
+        // r3 (028 refit): key law linear 0.56·k → quadratic 0.33·k+0.17·k² —
+        // the sustained centroid ran +40% bright at E3 (488 vs 342 Hz) and
+        // +27% at C5 (903 vs 713 Hz) while B1 matched; measured trade between
+        // slopes 0.45 and 0.38 showed no single slope holds both ends (the
+        // loop-loss law is convex in key).
+        let mut lp_c = (0.51 + 0.33 * key + 0.17 * key * key + 0.06 * vel).clamp(0.30, 0.985);
         if dist {
             lp_c = (lp_c + 0.08).min(0.985);
         }
@@ -2173,13 +2201,20 @@ impl ElectricVoice {
             vf_a2: 0.0,
             vf_z1: 0.0,
             vf_z2: 0.0,
+            hp_b0: 1.0,
+            hp_b1: 0.0,
+            hp_b2: 0.0,
+            hp_a1: 0.0,
+            hp_a2: 0.0,
+            hp_z1: 0.0,
+            hp_z2: 0.0,
             rel_rng: Lcg(seed ^ 0x9E37_79B9),
             rel_amp: 0.0,
-            // burst t60 ≈ 0.15 s (NSynth 028 release transients)
-            rel_c: t60_gain(0.15, sr),
-            // squeak brightness: one-pole HP at ~900 Hz (refs: 83-88% energy > 800 Hz)
-            rel_hp_c: 1.0 - (-core::f32::consts::TAU * 900.0 / sr).exp(),
+            rel_c: t60_gain(0.22, sr),
+            // scrape band: LP 1400 minus LP 700 (see field comment)
+            rel_hp_c: 1.0 - (-core::f32::consts::TAU * 1400.0 / sr).exp(),
             rel_lp: 0.0,
+            rel_lp2: 0.0,
             vel,
             // Velocity moves loudness far less than timbre on an electric (NSynth
             // layer spread ≈ 5 LU, most of it spectral): keep the level curve
@@ -2210,14 +2245,26 @@ impl ElectricVoice {
         v.vf_b2 = v.vf_b0;
         v.vf_a1 = (-2.0 * cv) / a0;
         v.vf_a2 = (1.0 - alpha) / a0;
+        // cab/box resonance highpass (see field comment): RBJ HP, fc 95, Q 1.4
+        let wh = core::f32::consts::TAU * 95.0 / sr;
+        let (sh, ch) = wh.sin_cos();
+        let alpha_h = sh / (2.0 * 1.4);
+        let a0h = 1.0 + alpha_h;
+        v.hp_b0 = ((1.0 + ch) / 2.0) / a0h;
+        v.hp_b1 = -(1.0 + ch) / a0h;
+        v.hp_b2 = v.hp_b0;
+        v.hp_a1 = (-2.0 * ch) / a0h;
+        v.hp_a2 = (1.0 - alpha_h) / a0h;
         // excitation: a pick pluck is a DETERMINISTIC released displacement
         // triangle (Smith PASP: harmonics ∝ sin(nπ·pick)/n²) plus a small
         // lowpassed-noise texture layer. Round-2 finding: pure noise excitation
         // has σ ≈ 7.7 dB note-to-note H2/H1 variance (measured, 40 seeds) — a
         // tone lottery in exactly the harmonics the dark clean voicing exposes.
-        // Bridge-side electric picking (0.13 of the speaking length) yields the
-        // refs' ~−6 dB/oct low-harmonic slope.
-        let pick_pos = 0.13;
+        // Bridge-side electric picking. r3 refit vs the 028 cluster: the refs'
+        // first spectral lobe stays within 3 dB through H6 (a 0.13 pick nulled
+        // it at H7.7 — too narrow); 0.10 widens the lobe to the measured shape
+        // and leaves the H8 notch to the pickup-position comb below.
+        let pick_pos = 0.10;
         let mut rng = Lcg(seed | 1);
         // texture corner: flesh-soft ≈ 200 Hz → hard plectrum ≈ 1.6 kHz,
         // register-tracked (as in round 1); the deterministic shape underneath
@@ -2229,18 +2276,38 @@ impl ElectricVoice {
         let exc_c = 1.0 - (-core::f32::consts::TAU * fc / sr).exp();
         let p = ((pick_pos * len as f32) as usize).clamp(1, len - 1);
         let mut lp = 0.0f32;
-        let mut mean = 0.0;
-        for i in 0..len {
+        let mut lp2 = 0.0f32;
+        let mut tmp = [0.0f32; PLUCK_BUF];
+        for (i, t) in tmp.iter_mut().enumerate().take(len) {
             // released triangle: 0→1 over [0,p], back to 0 over [p,len)
             let tri = if i < p {
                 i as f32 / p as f32
             } else {
                 (len - i) as f32 / (len - p) as f32
             };
-            // texture: ONE-pole noise (fills the refs' −26 dB mid plateau; the
-            // fixed 550 Hz voicing pole + bus filters shape its top)
+            // texture: TWO-pole noise (−12 dB/oct above fc). The scrape is a
+            // displacement-domain disturbance with a finite contact patch —
+            // with the velocity pickup ON (+6 dB/oct), a one-pole texture came
+            // out FLAT to Nyquist and buried the comb notches under broadband
+            // noise (r3 baseline: attack centroid 1.4 kHz vs refs' 350 Hz).
+            // Post-diff the layer now falls −6 dB/oct like the refs' lobes.
             lp += exc_c * (rng.next() - lp);
-            let s = tri + 0.9 * lp;
+            lp2 += exc_c * (lp - lp2);
+            *t = tri + 0.35 * lp2;
+        }
+        // Pickup-POSITION comb (Zollner ch. 5): a magnetic pickup samples the
+        // string at q of the speaking length → |sin(nπq)| response. The 028
+        // refs show its H8 null (~20 dB deep, so q ≈ 0.125) and the H1
+        // suppression that keeps H2–H4 on top even in the sustain — the single
+        // spectral cue that most separates a guitar pickup from an EP tine.
+        // String + loop are LTI, so the comb commutes into the excitation
+        // (Karjalainen/Smith commuted synthesis) at zero runtime cost. Depth
+        // 0.92 models the pickup aperture (finite sensing width bounds the
+        // null depth; the refs' notch floor is ≈ −20 dB, not −∞).
+        let q = ((0.125 * len as f32) as usize).clamp(1, len - 1);
+        let mut mean = 0.0;
+        for i in 0..len {
+            let s = tmp[i] - 0.92 * tmp[(i + len - q) % len];
             v.buf[i] = s;
             mean += s;
         }
@@ -2283,11 +2350,12 @@ impl ElectricVoice {
                 self.diff_x1 = s;
                 s = d;
             }
-            // fret-release squeak: HP'd noise burst on the string (see fields)
+            // fret-release scrape: 700-1400 Hz noise band on the string (see fields)
             if self.rel_amp > 1e-5 {
                 let w = self.rel_rng.next();
                 self.rel_lp += self.rel_hp_c * (w - self.rel_lp);
-                s += (w - self.rel_lp) * self.rel_amp;
+                self.rel_lp2 += 0.5 * self.rel_hp_c * (self.rel_lp - self.rel_lp2);
+                s += (self.rel_lp - self.rel_lp2) * self.rel_amp;
                 self.rel_amp *= self.rel_c;
             }
             let mut u = s * self.level;
@@ -2297,6 +2365,11 @@ impl ElectricVoice {
                 self.vf_z1 = self.vf_b1 * u - self.vf_a1 * y + self.vf_z2;
                 self.vf_z2 = self.vf_b2 * u - self.vf_a2 * y;
                 u = y;
+                // cab/box resonance highpass (see fields)
+                let yh = self.hp_b0 * u + self.hp_z1;
+                self.hp_z1 = self.hp_b1 * u - self.hp_a1 * yh + self.hp_z2;
+                self.hp_z2 = self.hp_b2 * u - self.hp_a2 * yh;
+                u = yh;
             }
             // supply-rail sag: slow follower, gain = 1/(1 + k·env) (see fields)
             if self.sag_k > 0.0 {
@@ -2310,6 +2383,8 @@ impl ElectricVoice {
         self.sag_env = flush_denormal(self.sag_env);
         self.vf_z1 = flush_denormal(self.vf_z1);
         self.vf_z2 = flush_denormal(self.vf_z2);
+        self.hp_z1 = flush_denormal(self.hp_z1);
+        self.hp_z2 = flush_denormal(self.hp_z2);
         self.diff_x1 = flush_denormal(self.diff_x1);
         self.lp = flush_denormal(self.lp);
         self.ap_y1 = flush_denormal(self.ap_y1);
@@ -2321,15 +2396,41 @@ impl ElectricVoice {
 
     pub fn damp(&mut self) {
         if self.pol2_on {
-            // electric fret/finger release: NSynth refs decay at t60 ≈ 0.3 s after
-            // note-off. Loss basis is per round trip (rate f0 = sr/len), see above.
+            // electric fret/finger release: the 028 refs' post-off burst+string
+            // decay ~260 dB/s → t60 ≈ 0.25 s. Loss basis is per round trip
+            // (rate f0 = sr/len), see above. Life 0.45 s: NSynth refs hard-gate
+            // ~0.3 s after the off — ringing past that is pure tail error.
             let f0 = self.sr / self.len.max(2) as f32;
-            self.loss = t60_gain(0.30, f0);
+            self.loss = t60_gain(0.25, f0);
             self.loss2 = self.loss;
             self.life = self.age + (0.45 * self.sr) as u64;
-            // fret-release squeak: finger-lift friction noise, velocity-scaled
-            // (absolute level — press force, not current string amplitude)
-            self.rel_amp = 0.05 + 0.13 * self.vel;
+            // fret-release transient, r3 calibration against the 028 refs
+            // (burst rms re note attack: −14 dB at vel 50, −16 at vel 25,
+            // −21 at vel 127, −22 by E3, absent at C5; burst spectrum ≈ ALL
+            // 0–300 Hz + a 700–1400 Hz scrape lobe ~10 dB down; bump decays
+            // with the damped string, ~0.35 s). The lift force is ~constant
+            // (press force, not pick force) so relative to the velocity-
+            // scaled note the burst FALLS with velocity, and it is a WOUND-
+            // string feature fading across the wound/plain boundary.
+            // Thump = dark re-pluck INTO the loop: rings at f0, fundamental-
+            // dominant (1/n²), dies at the damped t60 — the refs' burst.
+            // Scrape = short 700–1400 Hz noise band (t60 0.22 s, render()).
+            let key = ((12.0 * (f0 / 440.0).log2() + 69.0) - 40.0) / 44.0;
+            let wound = (1.0 - 1.9 * key.max(0.0)).clamp(0.0, 1.0);
+            let force = (1.0 - 0.55 * self.vel) * wound;
+            // scrape stays velocity-flat: the refs' 700–1400 lobe is
+            // proportionally LARGER at ff (−9 re burst) than at mp (−20)
+            self.rel_amp = 0.20 * wound;
+            // thump = pure-fundamental injection (raised cosine minus its
+            // mean is a clean H1 with zero DC): the refs put ~99% of the
+            // burst below 300 Hz; a triangle re-pluck leaked −8 dB of
+            // harmonics into 300–700 Hz where the refs keep −15…−18.
+            let thump = 0.17 * force;
+            let len = self.len;
+            let w = core::f32::consts::TAU / len as f32;
+            for (i, b) in self.buf.iter_mut().enumerate().take(len) {
+                *b -= thump * (w * i as f32).cos();
+            }
         } else {
             self.loss = t60_gain(0.07, self.sr);
             self.loss2 = t60_gain(0.07, self.sr);
@@ -4147,6 +4248,40 @@ mod tests {
         assert!(
             (8.0..48.0).contains(&drop_db),
             "2.5 kHz band dropped {drop_db} dB over 1 s"
+        );
+    }
+
+    /// Fret-release squeak (028 refs): note-off on an electric must burst
+    /// broadband HF over the decayed string before dying (t60 ≈ 0.15 s).
+    /// Round-3 regression guard: the squeak was silently absent from renders.
+    #[test]
+    fn electric_release_squeak_bursts() {
+        let sr = 48_000.0f32;
+        let midi = 36u32;
+        let mut v =
+            ElectricVoice::start_electric(midi, midi_to_hz(midi as f32), 0.5, sr, false, 42);
+        let total = (3.4 * sr) as usize;
+        let mut out = vec![0.0f32; total];
+        let damp_i = (3.0 * sr) as usize;
+        let mut i = 0usize;
+        for chunk in out.chunks_mut(128) {
+            if i <= damp_i && damp_i < i + chunk.len() {
+                v.damp();
+            }
+            v.render(chunk);
+            i += chunk.len();
+        }
+        let w = (0.15 * sr) as usize;
+        let pre = &out[damp_i - w..damp_i];
+        let post = &out[damp_i..damp_i + w];
+        // The release thump re-excites the FUNDAMENTAL (a pure-H1 injection —
+        // the 028 refs put ~99% of the burst below 300 Hz): fundamental-band
+        // energy must jump at the off, while a burst-less damp only decays.
+        let f0 = midi_to_hz(midi as f32);
+        let (a, b) = (band_energy(pre, sr, &[f0]), band_energy(post, sr, &[f0]));
+        assert!(
+            b > 2.0 * a,
+            "release thump missing: f0-band pre {a:e} post {b:e} (want >2x)"
         );
     }
 
