@@ -5029,12 +5029,16 @@ pub struct DrumVoice {
     /// LF-zoom view improved)
     lfn2: f32,
     lfn_c: f32,
+    /// First-pole blend for a diffuse air-loaded membrane response.
+    lfn_mix: f32,
+    /// Faster loss for that brighter membrane component.
+    lfn_mix_dec: f32,
     lfn_env: f32,
     lfn_dec: f32,
-    /// body-sine gain (kick kind, 1.0 elsewhere): a feathered jazz stroke
-    /// drives the head into a modal MIX, not one clean fundamental — the DRS
-    /// soft ref holds the undertone at -1.7 dB rel fund and its dominant
-    /// partial drifts window-to-window
+    /// Head/mic compression drive for kick voices; 0.0 bypasses.
+    kick_drive: f32,
+    /// Body-sine gain (kick kind, 1.0 elsewhere). Jazz keeps this low so the
+    /// diffuse membrane dominates instead of exposing a stable pitch.
     sine_g: f32,
     modal: ModalVoice,
     has_modal: bool,
@@ -5088,8 +5092,11 @@ impl DrumVoice {
             lfn: 0.0,
             lfn2: 0.0,
             lfn_c: 0.0,
+            lfn_mix: 0.0,
+            lfn_mix_dec: 1.0,
             lfn_env: 0.0,
             lfn_dec: 0.0,
+            kick_drive: 0.0,
             sine_g: 1.0,
             modal: ModalVoice::start(200.0, 0.0, sr, &[], 1.0, 0.0, 0.0, seed),
             has_modal: false,
@@ -5103,10 +5110,11 @@ impl DrumVoice {
                 // Kick — three genuinely different INSTRUMENTS per kit (owner
                 // verdict 2026-07-12: the r3 kicks were one recorded drum
                 // re-voiced three ways). Each arm is fit to its own
-                // license-clean reference drum (ledger:
-                // scratchpad references/kick/SOURCES.txt):
-                //   Jazz — 18"-class open bop kick, felt beater: DrumGizmo
-                //     DRSKit close kick mic (CC-BY-4.0).
+                // license-clean reference drum (ledger owner:
+                // agentic-docs/licensing.md):
+                //   Jazz — open contemporary jazz kick, felt beater:
+                //     Virtuosity Drums close/mid microphones (CC0), with the
+                //     owner's anti-tonality and attack-band verdict as gate.
                 //   Rock — 22" pillow-damped, hard-beater: DrumGizmo
                 //     MuldjordKit (Tama Superstar) close mic (CC-BY-4.0),
                 //     Naked Drums 22" DI as sub anchor (CC-BY-4.0).
@@ -5118,41 +5126,34 @@ impl DrumVoice {
                 v.kind = DrumKind::Kick;
                 match kit {
                     KitStyle::Jazz => {
-                        // MEMBRANE-MODAL topology: the voice is a ringing
-                        // coupled-head pair, not a thump machine. Measured on
-                        // DRSKit close mic: partial ladder 70-86 Hz fund with
-                        // {1.36, 1.79, 2.07, 2.48, 2.98} overtones (air-loaded
-                        // two-head membrane — compressed vs ideal-membrane
-                        // ratios, Rossing ch.3), a WEAK ~0.66x undertone
-                        // (both-heads-in-phase air mode) that is prominent on
-                        // soft hits, fundamental t60 0.5-0.8 s (no pillow),
-                        // centroid(30 ms) 70-85 Hz (felt = almost no click),
-                        // crest 4.5-8 (round, never spiky).
+                        // DIFFUSE MEMBRANE topology: an open jazz kick, but
+                        // explicitly not the former DRS-derived modal ladder
+                        // that the owner heard as a vibraphone. The long body
+                        // is stochastic and frequency-damped; pitch support
+                        // and felt/head contact remain separate components.
                         let f1 = 76.0;
                         v.freq = f1 * (1.08 + 0.12 * vel);
                         v.freq_end = f1;
                         v.sweep = (-1.0 / (0.005 * sr)).exp();
                         // amplitude-dependent damping: soft strokes ring
-                        // relatively longer (DRS LF at 0.3 s: -9 dB soft,
-                        // -17 mid, -21.5 hard rel the first 30 ms)
+                        // relatively longer; the diffuse tail below carries
+                        // the open-shell aftersound independently.
                         v.decay = t60_gain(0.78 - 0.25 * vel, sr);
                         // felt beater: long compliant contact, 10 ms base
                         let contact_ms = 10.0 * (1.35 - 0.5 * vel).max(0.5);
                         v.atk_ph = 0.0;
                         v.atk_dp = 1000.0 / (contact_ms * sr);
-                        // feathering law: jazz players live at pp — measured
-                        // DRS layers span only ~10.6 LU (soft->hard), i.e.
-                        // amp is ~linear in vel, NOT the rock/pop supralinear
-                        // (r4: x(1.30-0.30v) refunds the sine_g duck's ~1.6 LU cost at
-                        // pp so the measured feathering span stays ~16 LU)
-                        v.amp = 0.85 * vel.powf(1.05) * (1.30 - 0.30 * vel);
+                        // Wide feather-to-stomp span with a compressive knee
+                        // at the top: the quiet layers stay genuinely quiet,
+                        // while the head/preamp compression below restrains
+                        // fortissimo pressure peaks.
+                        v.amp = 4.0 * vel.powf(2.2) / (1.0 + 0.6 * vel * vel);
                         // felt click: tiny and dark (2-6 kHz sits ~-33 dB
                         // under LF in the refs' first 30 ms)
                         v.click = 0.06 + 0.30 * vel * vel;
                         v.hp_c = 0.05 + 0.20 * vel;
-                        // felt-on-head knock, mild (400-1500 Hz band reads
-                        // -19..-24 dB rel LF on the refs; it2 was +17 dB hot
-                        // at a=0.86/t60 0.3 — felt barely knocks)
+                        // Felt-on-head knock: a short 700 Hz skin component,
+                        // separate from the long stochastic membrane body.
                         let sf = 700.0;
                         let r = t60_gain(0.15, sr);
                         let w = core::f32::consts::TAU * sf / sr;
@@ -5162,69 +5163,26 @@ impl DrumVoice {
                         let phi = core::f32::consts::PI * Lcg(seed ^ 0x51a9 | 1).next();
                         v.sl_y1 = a * (phi - w).sin();
                         v.sl_y2 = a * (phi - 2.0 * w).sin();
-                        // LF noise bed (r4 "very subtle" verdict): the DRS
-                        // close-mic floor is even stronger than pop's ref
-                        // (tone/noise +1.6…+2.2 dB, LF flatness 0.03-0.08) —
-                        // darker (140 Hz) and longer (0.5 s: open shell)
-                        v.lfn_c = 1.0 - (-core::f32::consts::TAU * 140.0 / sr).exp();
-                        v.lfn_env = 3.4 * (0.85 + 0.15 * vel);
-                        // bed decays WITH the drum (amplitude-dependent
-                        // damping law above): a fixed 0.5 s bed died under
-                        // the pp fundamental (t60 0.72) and left the feathered
-                        // tail a naked sine again (it3 measurement)
-                        v.lfn_dec = t60_gain(0.74 - 0.24 * vel, sr);
-                        // feathered strokes read as a modal mix, not one
-                        // clean fundamental: duck the body sine at pp (the
-                        // undertone/partner cluster below rises to meet it)
-                        v.sine_g = 0.62 + 0.38 * vel;
-                        v.has_modal = true;
-                        v.modal = ModalVoice::start(
-                            f1,
-                            vel,
-                            sr,
-                            &[
-                                // undertone: soft-forward (soft ref holds it
-                                // at -1.7 dB rel fund; hard at -13) — r4 trim:
-                                // at pp it matched the fundamental and the two
-                                // sines locked a "crazy clear" pitch (owner);
-                                // salience mean 0.87 vs the DRS ref's 0.70
-                                // …and it is the LONG survivor: the DRS
-                                // tail wanders BELOW the fundamental (pitch
-                                // track 52->44->40 Hz over 0.1-0.4 s), so the
-                                // 0.6 s two-stage ring is this inharmonic air
-                                // mode, not a clean near-fundamental sine
-                                ModeDef {
-                                    ratio: 0.66,
-                                    amp: 0.55 * (1.15 - 0.6 * vel),
-                                    t60: 0.95,
-                                },
-                                // resonant-head partner: the open two-stage
-                                // tail (rings past 0.6 s at every velocity).
-                                // r4: detuned off the fundamental (1.04->1.035
-                                // = a slow unlocked beat) and reined in from
-                                // t60 1.45-0.40v — a feathered stroke rang a
-                                // clean 79 Hz sine for 1.3 s
-                                ModeDef {
-                                    ratio: 1.035,
-                                    amp: 0.55 * (1.25 - 0.5 * vel),
-                                    t60: 0.95 - 0.28 * vel,
-                                },
-                                // overtone ladder measured on the ff DRS hit
-                                // (101/125/145/174/209 Hz over 76): the open
-                                // heads hold these within -8..-25 dB of the
-                                // fundamental for the whole first half-second
-                                ModeDef { ratio: 1.33, amp: 0.70, t60: 0.90 },
-                                ModeDef { ratio: 1.65, amp: 0.55, t60: 0.75 },
-                                ModeDef { ratio: 1.91, amp: 0.42, t60: 0.65 },
-                                ModeDef { ratio: 2.28, amp: 0.40, t60: 0.55 },
-                                ModeDef { ratio: 2.75, amp: 0.25, t60: 0.45 },
-                            ],
-                            0.6,
-                            0.0,
-                            0.0,
-                            seed ^ 0x6b1c,
-                        );
-                        v.life = (1.40 * sr) as u64;
+                        // DIFFUSE MEMBRANE topology. The owner rejected the
+                        // old DRS-derived seven-sine ladder as a vibraphone.
+                        // Head, shell and enclosed air split and smear the
+                        // modes of a lightly damped jazz bass drum, so model
+                        // that unresolved density with filtered noise rather
+                        // than a bank of stable sinusoids. A quiet fundamental
+                        // remains only as low-frequency pitch support.
+                        v.lfn_c = 1.0 - (-core::f32::consts::TAU * 220.0 / sr).exp();
+                        v.lfn_mix = 0.16;
+                        v.lfn_mix_dec = t60_gain(0.12, sr);
+                        v.lfn_env = 4.5 * (0.85 + 0.15 * vel);
+                        v.lfn_dec = t60_gain(1.18 - 0.20 * vel, sr);
+                        v.sine_g = 0.26 + 0.10 * vel;
+                        // A compliant head and close-mic/preamp both compress
+                        // short pressure peaks. This is a unity-small-signal
+                        // saturator, not a velocity remap: feathered dynamics
+                        // remain, while stochastic spikes stop reading as hiss.
+                        v.kick_drive = 1.6;
+                        v.has_modal = false;
+                        v.life = (2.05 * sr) as u64;
                     }
                     KitStyle::Rock => {
                         // BEATER-TRANSIENT topology: hard slap + shell knock
@@ -5766,8 +5724,13 @@ impl DrumVoice {
                         let n = self.rng.next();
                         self.lfn += self.lfn_c * (n - self.lfn);
                         self.lfn2 += self.lfn_c * (self.lfn - self.lfn2);
-                        s += self.lfn2 * self.lfn_env;
+                        let diffuse = self.lfn2 + self.lfn_mix * (self.lfn - self.lfn2);
+                        s += diffuse * self.lfn_env;
+                        self.lfn_mix *= self.lfn_mix_dec;
                         self.lfn_env *= self.lfn_dec;
+                    }
+                    if self.kick_drive > 0.0 {
+                        s = (self.kick_drive * s).tanh() / self.kick_drive;
                     }
                 }
                 DrumKind::Cymbal => s = 0.0, // handled by early return above
@@ -7359,13 +7322,13 @@ mod drum_kit_tests {
         best.1 as f32 * 2.0
     }
 
-    /// Round-3 kick truth: the pitch reads as a TRANSIENT (settled within
-    /// 12% of steady by ~20 ms; start elevation bounded) — not a dance sweep.
-    /// Checked at both rates on every kit.
+    /// The pitched pop/rock bodies settle within 12% by ~20 ms rather than
+    /// reading as a dance-kick sweep. Jazz is deliberately excluded: its
+    /// diffuse membrane body has no stable pitch to track (guard below).
     #[test]
     fn kick_glide_is_a_transient() {
         for &sr in &[44_100.0f32, 48_000.0] {
-            for kit in [KitStyle::Pop, KitStyle::Rock, KitStyle::Jazz] {
+            for kit in [KitStyle::Pop, KitStyle::Rock] {
                 let out = render_kit(36, 1.0, sr, kit, 0.6);
                 let early = peak_hz(&out, sr, 35.0, 130.0, 0.020, 0.080);
                 let steady = peak_hz(&out, sr, 35.0, 130.0, 0.080, 0.240);
@@ -7378,8 +7341,32 @@ mod drum_kit_tests {
         }
     }
 
-    /// Round-3 two-stage tail: the open jazz kick still rings at 0.6 s
-    /// (resonant-head mode) while the muffled rock kick has died.
+    /// Owner gate (2026-07-12): the jazz kick must not read as a vibraphone.
+    /// A normalized 45-120 Hz autocorrelation peak below 0.40 in the body
+    /// window guards the new diffuse radiator against another stable bar tone.
+    #[test]
+    fn jazz_kick_body_is_diffuse_not_bar_toned() {
+        for &sr in &[44_100.0f32, 48_000.0] {
+            let jazz = render_kit(36, 0.95, sr, KitStyle::Jazz, 0.6);
+            let i0 = (0.10 * sr) as usize;
+            let i1 = (0.40 * sr) as usize;
+            let x = &jazz[i0..i1];
+            let min_lag = (sr / 120.0) as usize;
+            let max_lag = (sr / 45.0) as usize;
+            let mut salience = 0.0f32;
+            for lag in min_lag..=max_lag {
+                let a = &x[..x.len() - lag];
+                let c: f32 = a.iter().zip(&x[lag..]).map(|(&u, &v)| u * v).sum();
+                let ea: f32 = a.iter().map(|u| u * u).sum();
+                let eb: f32 = x[lag..].iter().map(|u| u * u).sum();
+                salience = salience.max(c / (ea * eb).sqrt().max(1e-12));
+            }
+            assert!(salience < 0.40, "jazz kick bar-tone salience {salience:.3} at {sr} Hz");
+        }
+    }
+
+    /// The open jazz kick's diffuse membrane still rings at 0.6 s while the
+    /// muffled rock kick has died.
     #[test]
     fn kick_two_stage_tail_is_kit_voiced() {
         let sr = 48_000.0f32;
@@ -7398,9 +7385,9 @@ mod drum_kit_tests {
     }
 
     /// Kick-specialist round (2026-07-12): the three kits' kicks are
-    /// DIFFERENT INSTRUMENTS, each fit to its own reference drum —
-    /// jazz 18"-class bop kick ~76 Hz (DRSKit), rock 22" ~48 Hz
-    /// (MuldjordKit), pop tight 54 Hz (virtuosity). Checked at both rates.
+    /// DIFFERENT INSTRUMENTS, each fit to its own reference drum — jazz has a
+    /// quiet ~76 Hz support under the diffuse body, rock is ~48 Hz, and pop
+    /// is a tight ~54 Hz. Checked at both rates.
     #[test]
     fn kick_kits_are_different_instruments() {
         for &sr in &[44_100.0f32, 48_000.0] {
@@ -7420,25 +7407,23 @@ mod drum_kit_tests {
         }
     }
 
-    /// Felt vs hard beater: the rock kick's 2–6 kHz beater band (first 30 ms,
-    /// ff) stands at least 10 dB closer to its LF body than the jazz kick's
-    /// on the coarse Goertzel scale (this fit measures ~12.5 dB; FFT band
-    /// energies read rock −19.7 dB rel LF vs jazz −43). And the rock hit
-    /// is the spikier waveform (refs: muld ff crest 15.2, DRS ff crest 8.3).
+    /// Owner gate (2026-07-12): unlike the former dark/tonal DRS voicing, the
+    /// jazz kick keeps an audible felt/head attack in both mid and high bands,
+    /// while remaining rounder than the hard-beater rock kick.
     #[test]
     fn kick_beater_contrast_is_kit_voiced() {
         let sr = 48_000.0f32;
         let jazz = render_kit(36, 0.95, sr, KitStyle::Jazz, 0.3);
         let rock = render_kit(36, 0.95, sr, KitStyle::Rock, 0.3);
-        let rel = |x: &[f32]| {
+        let rel = |x: &[f32], lo: f32, hi: f32| {
             let lf = band_mag(x, sr, 30.0, 150.0, 0.0, 0.030);
-            let hf = band_mag(x, sr, 2_000.0, 6_000.0, 0.0, 0.030);
-            20.0 * (hf / lf.max(1e-9)).log10()
+            let band = band_mag(x, sr, lo, hi, 0.0, 0.030);
+            20.0 * (band / lf.max(1e-9)).log10()
         };
-        let (rj, rr) = (rel(&jazz), rel(&rock));
+        let (jazz_mid, jazz_high) = (rel(&jazz, 300.0, 2_000.0), rel(&jazz, 2_000.0, 6_000.0));
         assert!(
-            rr > rj + 10.0,
-            "hard-beater rock ({rr:.1} dB rel LF) vs felt jazz ({rj:.1}) contrast too small"
+            jazz_mid > -18.0 && jazz_high > -38.0,
+            "jazz felt attack too dark: mid {jazz_mid:.1}, high {jazz_high:.1} dB rel LF"
         );
         let crest = |x: &[f32]| {
             let n = ((0.5 * sr) as usize).min(x.len());
