@@ -28,7 +28,7 @@ function validateContract(contract, cases) {
   const exact = (actual, expected, label) => {
     if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`${label} must remain ${JSON.stringify(expected)}`);
   };
-  exact(matrix.ingress_modes, ["live", "offline"], "ingress_modes");
+  exact(matrix.delivery_simulations, ["quantum-delivery", "preloaded"], "delivery_simulations");
   exact(matrix.sample_rates, [44100, 48000], "sample_rates");
   exact(matrix.event_offsets, [0, 1, 63, 127], "event_offsets");
   exact(matrix.process_chunk_sizes, [1, 17, 64, 127, 128], "process_chunk_sizes");
@@ -86,14 +86,14 @@ async function renderCell(wasm, item, mode, sampleRate, offset, chunkSize, deliv
   const left = new Float32Array(item.total_frames);
   const right = new Float32Array(item.total_frames);
   const source = item.events.map((event, sequence) => ({ ...event, sequence, resolvedFrame: eventFrame(event, offset) }));
-  const queue = mode === "offline" ? source.slice() : [];
-  let sourceHead = mode === "offline" ? source.length : 0;
+  const queue = mode === "preloaded" ? source.slice() : [];
+  let sourceHead = mode === "preloaded" ? source.length : 0;
   let queueHead = 0;
   let frame = 0;
   let nextDelivery = 0;
   try {
     while (frame < item.total_frames) {
-      if (mode === "live" && frame === nextDelivery) {
+      if (mode === "quantum-delivery" && frame === nextDelivery) {
         const deliveryEnd = nextDelivery + deliveryQuantum;
         while (sourceHead < source.length && source[sourceHead].resolvedFrame < deliveryEnd) queue.push(source[sourceHead++]);
         nextDelivery = deliveryEnd;
@@ -101,7 +101,7 @@ async function renderCell(wasm, item, mode, sampleRate, offset, chunkSize, deliv
       while (queueHead < queue.length && queue[queueHead].resolvedFrame <= frame) applyEvent(x, engine, queue[queueHead++]);
       let boundary = Math.min(item.total_frames, frame + chunkSize);
       if (queueHead < queue.length) boundary = Math.min(boundary, queue[queueHead].resolvedFrame);
-      if (mode === "live") boundary = Math.min(boundary, nextDelivery);
+      if (mode === "quantum-delivery") boundary = Math.min(boundary, nextDelivery);
       if (boundary <= frame) throw new Error(`renderer made no progress at frame ${frame}`);
       const count = boundary - frame;
       appendSamples(left, right, frame, x, engine, count);
@@ -191,7 +191,7 @@ function cellId(caseId, mode, sampleRate, offset, chunkSize) {
 async function renderMatrix(wasm, contract, cases) {
   const cells = {};
   for (const item of cases.cases) {
-    for (const mode of contract.matrix.ingress_modes) {
+    for (const mode of contract.matrix.delivery_simulations) {
       for (const sampleRate of contract.matrix.sample_rates) {
         for (const offset of contract.matrix.event_offsets) {
           for (const chunkSize of contract.matrix.process_chunk_sizes) {
@@ -216,7 +216,7 @@ function compactBaselineCells(cells, contract, cases) {
   const references = {};
   const matrix = {};
   for (const item of cases.cases) {
-    for (const mode of contract.matrix.ingress_modes) for (const sampleRate of contract.matrix.sample_rates) {
+    for (const mode of contract.matrix.delivery_simulations) for (const sampleRate of contract.matrix.sample_rates) {
       for (const offset of contract.matrix.event_offsets) for (const chunkSize of contract.matrix.process_chunk_sizes) {
         const id = cellId(item.id, mode, sampleRate, offset, chunkSize);
         const cell = cells[id];
@@ -233,6 +233,7 @@ function compareRuns(first, second, contract) {
   for (const [id, reference] of Object.entries(first)) {
     const candidate = second[id];
     if (!candidate) { failures.push(`${id}: missing second-run cell`); continue; }
+    if (candidate.pcm_sha256 !== reference.pcm_sha256) failures.push(`${id}: repeated run changed its exact PCM digest`);
     const distance = drift(candidate.fingerprint, reference.fingerprint);
     if (distance > contract.metric.threshold) failures.push(`${id}: repeat drift ${distance} > ${contract.metric.threshold}`);
   }
@@ -259,7 +260,7 @@ function compareCandidate(cells, baseline, contract) {
 
 async function proveMutationGate(wasm, baseline, contract, cases) {
   const item = cases.cases[0];
-  const mode = contract.matrix.ingress_modes[0];
+  const mode = contract.matrix.delivery_simulations[0];
   const sampleRate = contract.matrix.sample_rates[0];
   const offset = contract.matrix.event_offsets[0];
   const chunkSize = contract.matrix.process_chunk_sizes[0];

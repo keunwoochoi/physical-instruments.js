@@ -20,7 +20,7 @@
     "stereo": true
   },
   "matrix": {
-    "ingress_modes": ["live", "offline"],
+    "delivery_simulations": ["quantum-delivery", "preloaded"],
     "sample_rates": [44100, 48000],
     "event_offsets": [0, 1, 63, 127],
     "process_chunk_sizes": [1, 17, 64, 127, 128],
@@ -34,6 +34,7 @@
     "scripts/dev/transport-baseline.mjs"
   ],
   "candidate_policy": "Every candidate cell must retain the exact interleaved Float32 PCM digest; the frozen numerical drift threshold additionally diagnoses repeatability and rejects committed gain/timing mutations.",
+  "phase_a_real_path_gate": "The Phase A candidate must adapt this frozen event corpus through both actual paths: AudioContext.currentTime plus postMessage plus AudioWorklet plus ij_queue_event, and OfflineAudioContext processorOptions plus AudioWorklet plus ij_queue_event. Browser callback coverage is 128 frames; the direct ring harness owns the declared 1/17/64/127/128 chunk matrix. The Phase A implementation may add candidate adapters and browser assertions but may not edit any frozen path.",
   "regeneration_command": "node scripts/dev/transport-baseline.mjs generate --allow-rebaseline",
   "verification_command": "node scripts/dev/transport-baseline.mjs verify"
 }
