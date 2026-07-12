@@ -299,7 +299,7 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
         Instrument::MusicBox => 14.8,     // was -35.6 LUFS
         Instrument::Guitar => 0.184,       // reverb pre-delay re-bake 2026-07-13 (x1.16)
         Instrument::Bass => 1.97,         // reverb pre-delay re-bake 2026-07-13 (x1.09)
-        Instrument::EPiano => 1.11,       // EP r2 tine/pickup rebuild (agent baked +2.5 LU hot ×0.75; verify by sweep — pre-predelay)
+        Instrument::EPiano => 1.17,       // EP r2 tine/pickup rebuild, reverb-flat re-bake 2026-07-13 (×1.05)
         Instrument::Drums => 0.58,        // drums r4 0.61 x room 0.95 (verify by sweep)
         Instrument::SynthPad => 0.51,     // reverb pre-delay re-bake 2026-07-13 (x1.08)
         Instrument::Piano => 0.066, // P1 per-key calibration re-bake (per-key LUFS trims raised the mid; was -14.9 LUFS at 0.130, x0.51 per measure-loudness)
