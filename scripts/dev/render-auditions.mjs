@@ -4,14 +4,15 @@
  * velocities, phrases, and FILENAMES every round, so the owner can A/B rounds
  * by ear (pair two output dirs with scripts/dev/ab-page.mjs).
  *
- *   node scripts/dev/render-auditions.mjs <family|all> <outdir>
+ *   node scripts/dev/render-auditions.mjs <family|all> <outdir> [sampleRate]
  *
  * Float32 stereo 48 kHz. One engine per family; drums map GM notes.
  */
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-const SR = 48000, Q = 128;
+const SR = Number(process.argv[4] ?? 48000), Q = 128;
+if (!Number.isFinite(SR) || SR < 8000 || SR > 192000) { console.error("sampleRate must be 8000..192000"); process.exit(2); }
 const WASM = fileURLToPath(new URL("../../packages/core/wasm/instruments_dsp.wasm", import.meta.url));
 
 const GROUP = {
@@ -70,6 +71,10 @@ for (const kit of ["drums", "drums-rock", "drums-jazz", "drums-808"]) {
     { m: 36, v: 84, t: 1.5 }, { m: 42, v: 48, t: 1.5 }, { m: 38, v: 100, t: 1.8 }, { m: 46, v: 72, t: 2.1 },
   ].map((n) => ({ ...n, d: 0.2 })) });
 }
+for (const [name, midi] of [["snare", 38], ["clap", 39], ["hat-closed", 42]]) {
+  for (const v of [30, 75, 120]) SETS["drums-808"].push({ name: `${name}-v${v}`, notes: single(midi, v, 0.2), drum: true, tail: 2 });
+}
+SETS["drums-808"].push({ name: "repeated-hats", drum: true, tail: 1, notes: Array.from({ length: 16 }, (_, i) => ({ m: 42, v: [52, 76, 60, 92][i % 4], t: i * 0.12, d: 0.08 })) });
 // electrics share the guitar set shape but hold longer (amp sustain is under review)
 SETS["guitar-steel"] = SETS.guitar;
 SETS["guitar-electric"] = SETS.guitar.map((c) => ({ ...c, notes: c.notes.map((n) => ({ ...n, d: n.d + 1 })) }));
@@ -89,7 +94,7 @@ function wav(L, R) {
 }
 
 const [fam, outdir] = process.argv.slice(2);
-if (!fam || !outdir) { console.error("usage: render-auditions.mjs <family|all> <outdir>"); process.exit(1); }
+if (!fam || !outdir) { console.error("usage: render-auditions.mjs <family|all> <outdir> [sampleRate]"); process.exit(1); }
 await mkdir(outdir, { recursive: true });
 const bytes = await readFile(WASM);
 const families = fam === "all" ? Object.keys(SETS) : [fam];

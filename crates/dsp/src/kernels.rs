@@ -328,7 +328,7 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
         Instrument::GuitarDistorted => 0.135, // reverb pre-delay re-bake 2026-07-13 (x1.06)
         Instrument::DrumsRock => 0.38,      // drums r4 0.41 x room 0.93 (verify by sweep)
         Instrument::DrumsJazz => 0.56,      // reverb pre-delay re-bake 2026-07-13 (x1.17)
-        Instrument::Drums808 => 0.43,       // 2026-07-12 BS.1770 re-bake against the marimba reference
+        Instrument::Drums808 => 0.63,       // 2026-07-12 stereo BS.1770 re-bake against the marimba reference
     }
 }
 
@@ -5018,6 +5018,7 @@ struct AnalogDrumVoice {
     hp: f32,
     hp_c: f32,
     lp: f32,
+    lp2: f32,
     lp_c: f32,
     tone_gain: f32,
     noise_gain: f32,
@@ -5044,6 +5045,7 @@ impl AnalogDrumVoice {
             hp: 0.0,
             hp_c: 0.0,
             lp: 0.0,
+            lp2: 0.0,
             lp_c: 1.0,
             tone_gain: 0.0,
             noise_gain: 0.0,
@@ -5073,6 +5075,7 @@ impl AnalogDrumVoice {
                 self.hp += self.hp_c * (n - self.hp);
                 let high = n - self.hp;
                 self.lp += self.lp_c * (high - self.lp);
+                self.lp2 += self.lp_c * (self.lp - self.lp2);
             }
 
             let mut tone = 0.0f32;
@@ -5085,8 +5088,9 @@ impl AnalogDrumVoice {
             }
             match self.kind {
                 AnalogDrumKind::Snare => {
-                    tone = (core::f32::consts::TAU * self.phase[0]).sin()
-                        + 0.72 * (core::f32::consts::TAU * self.phase[1]).sin();
+                    tone = ((core::f32::consts::TAU * self.phase[0]).sin()
+                        + 0.72 * (core::f32::consts::TAU * self.phase[1]).sin())
+                        * self.tone_env;
                 }
                 AnalogDrumKind::Clap => {
                     // Three close impulses followed by a fourth wider arrival,
@@ -5095,11 +5099,12 @@ impl AnalogDrumVoice {
                     let p = self.age % self.clap_gap.max(1);
                     let burst_n = self.age / self.clap_gap.max(1);
                     let burst = if burst_n < 3 && p < self.clap_width {
-                        1.0 - p as f32 / self.clap_width.max(1) as f32
+                        let u = p as f32 / self.clap_width.max(1) as f32;
+                        (core::f32::consts::PI * u).sin().powi(2)
                     } else {
                         0.0
                     };
-                    tone = self.lp * (burst * 1.25 + self.noise_env);
+                    tone = self.lp2 * (burst * 1.25 + self.noise_env);
                 }
                 AnalogDrumKind::Metal => {
                     for i in 0..6 {
@@ -5109,7 +5114,8 @@ impl AnalogDrumVoice {
                     self.hp += self.hp_c * (raw - self.hp);
                     let high = raw - self.hp;
                     self.lp += self.lp_c * (high - self.lp);
-                    tone = self.lp * self.tone_env;
+                    self.lp2 += self.lp_c * (self.lp - self.lp2);
+                    tone = self.lp2 * self.tone_env;
                 }
                 AnalogDrumKind::Cowbell => {
                     tone = (0.58 * Self::square(self.phase[0], self.dphase[0])
@@ -5129,7 +5135,7 @@ impl AnalogDrumVoice {
             } else if matches!(self.kind, AnalogDrumKind::Metal) {
                 n * self.noise_env
             } else {
-                self.lp * self.noise_env
+                self.lp2 * self.noise_env
             };
             *o += self.amp * (self.tone_gain * tone + self.noise_gain * noise);
             self.tone_env *= self.tone_dec;
@@ -5140,6 +5146,7 @@ impl AnalogDrumVoice {
         self.noise_env = flush_denormal(self.noise_env);
         self.hp = flush_denormal(self.hp);
         self.lp = flush_denormal(self.lp);
+        self.lp2 = flush_denormal(self.lp2);
         self.age < self.life
     }
 }
@@ -5986,9 +5993,14 @@ impl DrumVoice {
                 a.noise_dec = t60_gain(if cymbal { 0.65 } else { 0.07 }, sr);
                 a.hp_c = 1.0
                     - (-core::f32::consts::TAU * if cymbal { 3_200.0 } else { 5_600.0 } / sr).exp();
-                a.lp_c = 1.0 - (-core::f32::consts::TAU * (10_000.0 + 3_000.0 * vel) / sr).exp();
+                let metal_lp = if cymbal {
+                    10_500.0 + 1_500.0 * vel
+                } else {
+                    9_000.0 + 2_000.0 * vel
+                };
+                a.lp_c = 1.0 - (-core::f32::consts::TAU * metal_lp / sr).exp();
                 a.tone_gain = if cymbal { 0.74 } else { 0.82 };
-                a.noise_gain = 0.08 + 0.18 * vel;
+                a.noise_gain = 0.0;
                 a.amp *= if cymbal { 1.8 } else { 2.0 };
                 a.life = ((t60 * 1.35).max(0.18) * sr) as u64;
             }
@@ -7914,16 +7926,28 @@ mod drum_808_tests {
 
     #[test]
     fn velocity_changes_level_and_snare_brightness() {
-        let sr = 48_000.0;
-        for gm in [36u32, 38, 39, 42, 56, 47] {
-            let soft = render(gm, 0.25, sr, 1.0);
-            let hard = render(gm, 1.0, sr, 1.0);
-            assert!(rms(&hard) > rms(&soft) * 1.3, "GM {gm}: velocity level collapsed");
+        for sr in [44_100.0f32, 48_000.0] {
+            for gm in [36u32, 38, 39, 42, 56, 47] {
+                let soft = render(gm, 0.25, sr, 1.0);
+                let hard = render(gm, 1.0, sr, 1.0);
+                assert!(rms(&hard) > rms(&soft) * 1.3, "GM {gm} at {sr}: velocity level collapsed");
+            }
+            let soft = render(38, 0.25, sr, 0.4);
+            let hard = render(38, 1.0, sr, 0.4);
+            let bright = |x: &[f32]| magnitude(x, sr, 6_000.0, 0.0, 0.08) / magnitude(x, sr, 180.0, 0.0, 0.08).max(1e-9);
+            assert!(bright(&hard) > bright(&soft) * 1.2, "{sr}: hard snare should open its snappy/noise band");
         }
-        let soft = render(38, 0.25, sr, 0.4);
-        let hard = render(38, 1.0, sr, 0.4);
-        let bright = |x: &[f32]| magnitude(x, sr, 6_000.0, 0.0, 0.08) / magnitude(x, sr, 180.0, 0.0, 0.08).max(1e-9);
-        assert!(bright(&hard) > bright(&soft) * 1.2, "hard snare should open its snappy/noise band");
+    }
+
+    #[test]
+    fn snare_decays_smoothly_instead_of_gating() {
+        for sr in [44_100.0f32, 48_000.0] {
+            let snare = render(38, 0.9, sr, 0.7);
+            let early = rms(&snare[(0.05 * sr) as usize..(0.10 * sr) as usize]);
+            let late = rms(&snare[(0.35 * sr) as usize..(0.45 * sr) as usize]);
+            assert!(early > late * 8.0, "{sr}: snare tone does not decay: early {early}, late {late}");
+            assert!(late > 1e-7, "{sr}: snare tail hard-gated before its declared lifetime");
+        }
     }
 
     #[test]
@@ -7940,13 +7964,28 @@ mod drum_808_tests {
 
     #[test]
     fn cowbell_keeps_both_oscillator_tones() {
-        let sr = 48_000.0;
-        let cowbell = render(56, 0.9, sr, 0.5);
-        let a = magnitude(&cowbell, sr, 540.0, 0.02, 0.22);
-        let b = magnitude(&cowbell, sr, 800.0, 0.02, 0.22);
-        assert!(a > 0.1 && b > 0.1, "cowbell dyad missing: 540={a}, 800={b}");
-        let ratio = a / b;
-        assert!((0.2..5.0).contains(&ratio), "cowbell dyad unbalanced: {ratio}");
+        for sr in [44_100.0f32, 48_000.0] {
+            let cowbell = render(56, 0.9, sr, 0.5);
+            let a = magnitude(&cowbell, sr, 540.0, 0.02, 0.22);
+            let b = magnitude(&cowbell, sr, 800.0, 0.02, 0.22);
+            assert!(a > 0.1 && b > 0.1, "{sr}: cowbell dyad missing: 540={a}, 800={b}");
+            let ratio = a / b;
+            assert!((0.2..5.0).contains(&ratio), "{sr}: cowbell dyad unbalanced: {ratio}");
+        }
+    }
+
+    #[test]
+    fn metallic_balance_is_stable_across_sample_rates() {
+        let mut ratios = [0.0f32; 2];
+        for (i, sr) in [44_100.0f32, 48_000.0].iter().copied().enumerate() {
+            let hat = render(42, 0.9, sr, 0.25);
+            let body = magnitude(&hat, sr, 6_000.0, 0.005, 0.08);
+            let air = magnitude(&hat, sr, 10_000.0, 0.005, 0.08);
+            ratios[i] = air / body.max(1e-9);
+            assert!((0.08..8.0).contains(&ratios[i]), "{sr}: metallic hat band balance collapsed: {}", ratios[i]);
+        }
+        let cross_rate = ratios[0] / ratios[1].max(1e-9);
+        assert!((0.65..1.55).contains(&cross_rate), "hat timbre shifts across rates: 44.1/48 ratio {cross_rate}");
     }
 }
 

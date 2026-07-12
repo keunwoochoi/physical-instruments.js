@@ -147,7 +147,8 @@ async function render() {
 }
 
 if (process.argv.includes("--bench") || process.argv.includes("--bench-808")) {
-  // sustained worst-case-ish: 4 tracks, re-trigger to hold ~48 voices
+  // Sustained four-track retrigger with acoustic/modal voices plus overlapping
+  // one-shot drums; active-voice count is reported rather than assumed.
   const { x, p } = await makeEngine();
   const drumInstrument = process.argv.includes("--bench-808") ? GROUP["drums-808"] : GROUP.drums;
   x.ij_set_track(p, 0, 0, 0.7, -0.3); x.ij_set_track(p, 1, 5, 0.8, 0);
