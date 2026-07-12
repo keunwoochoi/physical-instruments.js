@@ -6785,6 +6785,185 @@ mod tests {
             );
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Electric piano (EP round 2026-07-12: kill the "too much like marimba"
+    // tells — tine/tonebar + asymmetric pickup, NOT a struck bar). These lock
+    // the mechanisms that separate an EP from the modal mallets it used to
+    // resemble; if a later round legitimately shifts an axis, move the number
+    // WITH a justification in the round report (loop-protocol hard rule).
+    // -----------------------------------------------------------------------
+
+    fn render_epiano(midi: u32, vel: f32, sr: f32, secs: f32, off_at: Option<f32>) -> Vec<f32> {
+        let f0 = midi_to_hz(midi as f32);
+        let mut m = ModalVoice::start_epiano(midi, f0, vel, sr, 12345);
+        let total = (secs * sr) as usize;
+        let off = off_at.map(|t| (t * sr) as usize);
+        let mut out = vec![0.0f32; total];
+        let mut done = 0usize;
+        for chunk in out.chunks_mut(128) {
+            if let Some(o) = off {
+                if done < o && done + chunk.len() >= o {
+                    m.damp(sr);
+                }
+            }
+            m.render(chunk);
+            done += chunk.len();
+        }
+        out
+    }
+
+    /// h_k / h1 in dB over an early body window (Goertzel at exact k·f0).
+    fn ep_h_rel_db(x: &[f32], sr: f32, f0: f32, k: u32, t0: f32, t1: f32) -> f32 {
+        let seg = &x[(t0 * sr) as usize..((t1 * sr) as usize).min(x.len())];
+        let h1 = band_energy(seg, sr, &[f0]);
+        let hk = band_energy(seg, sr, &[k as f32 * f0]);
+        10.0 * (hk / (h1 + 1e-30)).log10()
+    }
+
+    /// The velocity→timbre axis IS the pickup nonlinearity: the second
+    /// harmonic (even ⇒ only an ASYMMETRIC transfer can make it — a tanh
+    /// cannot) must GROW monotonically pp→mf→ff by a wide margin. The old
+    /// modal preset drove a symmetric tanh: h2 was a fixed painted mode, near
+    /// velocity-flat and tiny. Measured at C3 both deploy rates.
+    #[test]
+    fn epiano_pickup_bark_grows_with_velocity() {
+        for sr in [48_000.0f32, 44_100.0] {
+            let f0 = midi_to_hz(48.0);
+            let h2: Vec<f32> = [0.15f32, 0.6, 0.95]
+                .iter()
+                .map(|&v| {
+                    let out = render_epiano(48, v, sr, 1.0, None);
+                    ep_h_rel_db(&out, sr, f0, 2, 0.05, 0.45)
+                })
+                .collect();
+            assert!(
+                h2[1] > h2[0] + 4.0 && h2[2] > h2[1] + 4.0,
+                "sr {sr}: h2/h1 must grow with velocity (pickup bark), got {h2:?} dB"
+            );
+            // ff is genuinely bark-y: h2 within ~12 dB of the fundamental
+            assert!(h2[2] > -12.0, "sr {sr}: ff h2/h1 too clean at {} dB", h2[2]);
+        }
+    }
+
+    /// NOT a tuned bar. The old modal preset was a SPARSE inharmonic ladder
+    /// (f0, 3.97·f0, 6.24·f0 — no h2, no h3, no h5: exactly a marimba/vibe
+    /// mode set, the tell the owner heard). The EP is a FILLED harmonic comb
+    /// through the pickup: assert two things a struck bar cannot do —
+    ///   (a) the even comb is present — h2 is NOT dwarfed by the ~4·f0 band
+    ///       (on a bar the 3.98 mode dominates and h2 is ~40 dB down);
+    ///   (b) the true inter-harmonic gaps (3.5·f0, 4.5·f0) are dead, i.e. the
+    ///       partials sit ON the harmonic comb, not at inharmonic bar ratios.
+    #[test]
+    fn epiano_is_a_comb_not_a_struck_bar() {
+        let sr = 48_000.0f32;
+        let f0 = midi_to_hz(48.0);
+        let out = render_epiano(48, 0.95, sr, 1.0, None);
+        let seg = &out[(0.05 * sr) as usize..(0.45 * sr) as usize];
+        let h1 = band_energy(seg, sr, &[f0]);
+        let h2 = band_energy(seg, sr, &[2.0 * f0]);
+        let bar_band = band_energy(seg, sr, &[3.9 * f0, 4.0 * f0]);
+        // (a) even comb present: h2 at least as strong as the 4·f0 region
+        let comb = 10.0 * (h2 / (bar_band + 1e-30)).log10();
+        assert!(comb > -3.0, "even comb missing (bar-like): h2 vs 4f0 {comb} dB");
+        // (b) inter-harmonic gaps dead ⇒ no inharmonic bar mode
+        let gap = band_energy(seg, sr, &[3.5 * f0, 4.5 * f0]);
+        let gap_rel = 10.0 * (gap / (h1 + 1e-30)).log10();
+        assert!(gap_rel < -25.0, "inharmonic energy in the gaps: {gap_rel} dB rel f0");
+    }
+
+    /// Long singing sustain with a two-stage decay: the tine drains while the
+    /// mistuned tonebar sings on (aftersound). A struck bar is a single fast
+    /// exponential with no sustain stage. Assert the note is still clearly
+    /// alive well after a marimba would be silent, at both rates.
+    #[test]
+    fn epiano_sings_with_two_stage_sustain() {
+        for sr in [48_000.0f32, 44_100.0] {
+            let out = render_epiano(36, 0.8, sr, 3.0, None);
+            let rms = |a: f32, b: f32| -> f32 {
+                let s = &out[(a * sr) as usize..(b * sr) as usize];
+                (s.iter().map(|v| v * v).sum::<f32>() / s.len() as f32).sqrt()
+            };
+            let early = rms(0.1, 0.3);
+            let late = rms(2.0, 2.5);
+            // still singing at 2 s (a marimba bass note is long dead)
+            assert!(late > early * 0.02, "sr {sr}: EP sustain died: late {late} early {early}");
+            assert!(out.iter().all(|s| s.is_finite()), "sr {sr}: non-finite");
+        }
+    }
+
+    /// The tine+tonebar pair beats slowly (mistuned resonators), and the note
+    /// damps on release (felt). Assert a slow amplitude modulation exists in
+    /// the sustain and that note-off actually shortens the tail.
+    #[test]
+    fn epiano_beats_and_damps_on_release() {
+        let sr = 48_000.0f32;
+        // held: measure fundamental-band modulation depth in the sustain
+        let held = render_epiano(48, 0.7, sr, 3.0, None);
+        let f0 = midi_to_hz(48.0);
+        let w = core::f32::consts::TAU * f0 / sr;
+        // heterodyne envelope (0.5..2.5 s), boxcar-smoothed
+        let (a, b) = ((0.5 * sr) as usize, (2.5 * sr) as usize);
+        let mut env = Vec::new();
+        let win = (0.04 * sr) as usize;
+        let mut i = a;
+        while i + win < b {
+            let mut re = 0.0f32;
+            let mut im = 0.0f32;
+            for j in 0..win {
+                let ph = w * (i + j) as f32;
+                re += held[i + j] * ph.cos();
+                im += held[i + j] * ph.sin();
+            }
+            env.push((re * re + im * im).sqrt());
+            i += win;
+        }
+        let emax = env.iter().cloned().fold(0.0f32, f32::max);
+        let emin = env.iter().cloned().fold(f32::INFINITY, f32::min);
+        let depth = 20.0 * (emax / (emin + 1e-12)).log10();
+        assert!(depth > 1.0, "no tine/tonebar beat in sustain: {depth} dB");
+        // released tail must be quieter than the held tail at the same time
+        let released = render_epiano(48, 0.7, sr, 3.0, Some(1.0));
+        let tail = |x: &[f32]| -> f32 {
+            let s = &x[(2.0 * sr) as usize..(2.5 * sr) as usize];
+            (s.iter().map(|v| v * v).sum::<f32>() / s.len() as f32).sqrt()
+        };
+        assert!(
+            tail(&released) < tail(&held) * 0.6,
+            "release did not damp the tine: released {} held {}",
+            tail(&released),
+            tail(&held)
+        );
+    }
+
+    /// Budget guard (loop-protocol: ≤40 µs/quantum for 8 EP voices). The EP
+    /// path is a 3-mode resonator + one exp() + one exp() in the pickup +
+    /// a one-pole per sample — comfortably under. Printed, not asserted on
+    /// wall-clock (CI jitter), but flags a regression by eye.
+    #[test]
+    fn probe_epiano_render_cost() {
+        use std::time::Instant;
+        let mut voices: Vec<ModalVoice> = (0..8)
+            .map(|i| ModalVoice::start_epiano(36 + i * 6, midi_to_hz((36 + i * 6) as f32), 0.9, 48_000.0, 99 + i))
+            .collect();
+        let mut block = [0.0f32; 128];
+        for _ in 0..100 {
+            for v in voices.iter_mut() {
+                v.render(&mut block);
+            }
+        }
+        let n = 2000;
+        let t0 = Instant::now();
+        for _ in 0..n {
+            block.fill(0.0);
+            for v in voices.iter_mut() {
+                v.render(&mut block);
+            }
+            core::hint::black_box(&block);
+        }
+        let us = t0.elapsed().as_micros() as f64 / n as f64;
+        println!("epiano: {us:.1} us/quantum @8 voices (native)");
+    }
 }
 
 // ---------------------------------------------------------------------------
