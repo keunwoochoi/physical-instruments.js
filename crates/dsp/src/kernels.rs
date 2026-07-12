@@ -3566,6 +3566,14 @@ pub struct CymbalVoice {
     amp: f32,
     /// Σ|initial ring amplitude| — worst-case (phase-aligned) strike sum
     strike_sum: f32,
+    /// slosh AM (r4): two hi-hat plates rattle against each other, gating the
+    /// wash with a slow chaotic wobble (detrended envelope std: open-hat ref
+    /// 0.76 dB vs ride 0.65 — and the r3 renders were INVERTED, 0.57 vs 0.79).
+    /// slosh = LP'd noise state, slosh_c its coefficient (~5 Hz), slosh_d the
+    /// modulation depth (0 = off: rides/crashes are single stable plates).
+    slosh: f32,
+    slosh_c: f32,
+    slosh_d: f32,
     rng: Lcg,
     life: u64,
     age: u64,
@@ -3606,6 +3614,9 @@ impl CymbalVoice {
             burst_dec: 0.0,
             amp: 0.0,
             strike_sum: 0.0,
+            slosh: 0.0,
+            slosh_c: 0.0,
+            slosh_d: 0.0,
             rng: Lcg(seed | 1),
             life: 0,
             age: 0,
@@ -3685,9 +3696,15 @@ impl CymbalVoice {
     /// Returns false when spent.
     fn render(&mut self, out: &mut [f32]) -> bool {
         for o in out.iter_mut() {
-            let n = self.rng.next();
+            let mut n = self.rng.next();
             let nb = n * self.burst_env;
             self.burst_env *= self.burst_dec;
+            // slosh AM: slow chaotic gate on the sustained wash feed (plate
+            // rattle) — the strike burst above stays un-modulated
+            if self.slosh_d > 0.0 {
+                self.slosh += self.slosh_c * (n - self.slosh);
+                n *= 1.0 + self.slosh_d * self.slosh;
+            }
             let mut s = 0.0;
             for i in 0..self.n_bands {
                 // squared bloom gate = sigmoid onset: nonlinear upward energy
@@ -3707,6 +3724,7 @@ impl CymbalVoice {
             self.age += 1;
         }
         self.burst_env = flush_denormal(self.burst_env);
+        self.slosh = flush_denormal(self.slosh);
         for i in 0..self.n_bands {
             self.y1[i] = flush_denormal(self.y1[i]);
             self.y2[i] = flush_denormal(self.y2[i]);
@@ -3714,6 +3732,15 @@ impl CymbalVoice {
             self.bloom[i] = flush_denormal(self.bloom[i]);
         }
         self.age < self.life
+    }
+
+    /// Configure slosh AM: `depth` ≈ effective modulation index (the LP'd
+    /// noise is normalized to unit RMS via the one-pole's noise gain).
+    fn set_slosh(&mut self, depth: f32, rate_hz: f32, sr: f32) {
+        let c = 1.0 - (-core::f32::consts::TAU * rate_hz / sr).exp();
+        self.slosh_c = c;
+        // uniform ±1 white RMS 0.577; one-pole passes ~sqrt(c/2) of it
+        self.slosh_d = depth / (0.577 * (0.5 * c).sqrt().max(1e-6));
     }
 
     /// Ride cymbal (GM 51/59): clear inharmonic stick ping over a mid-blooming
@@ -3811,6 +3838,11 @@ impl CymbalVoice {
                 * if f > 5000.0 { m_hf } else { 1.0 };
             let wash = 0.5 * m_wash * dip * shape;
             // chick: treble-tilted contact noise, ~2× the wash gain up top
+            // chick: treble-tilted contact noise, ~2x the wash gain up top
+            // (r4 note: brightening this to chase the ref's -4.9 dB onset
+            // sizzle WORSENED the K-weighted fit 0.96->1.08 — the attack
+            // window is owned by the ping rings, so hat/ride contrast is
+            // won on the hat side instead; tried and reverted)
             let chick = 1.4 * m_chick * (f / 6000.0).powf(0.8).min(2.2) * vel.powf(1.2);
             v.push_band(
                 CymBand {
@@ -4110,14 +4142,22 @@ impl CymbalVoice {
     /// Velocity depth (round-1 producer finding: kit velocity was level-only):
     /// harder closed hits are brighter AND sizzle longer — plates are never
     /// fully clamped, hard sticks push them apart (CC0 closed-hat refs: onset
-    /// centroid 6.9 kHz at vl3 vs 3.2 kHz at vl1). Jazz hats sit softer and
-    /// slightly sloshier; rock hats brighter (production convention, Owsinski).
+    /// centroid 6.9 kHz at vl3 vs 3.2 kHz at vl1). Rock hats brighter
+    /// (production convention, Owsinski).
+    ///
+    /// Jazz (r4, owner: "hat is too hard"): measured on the DRSKit close-mic
+    /// hats, the "hard" read was a LOW-MID CLANG, not brightness — the ref's
+    /// 500–2 kHz body sits 6–15 dB below ours while its 4–10 kHz air leads
+    /// (centroid 8.4 kHz vs our 5.7), it rings shorter (broad t60 0.28 vs
+    /// 0.62 s) and the pedal clamp kills mids FASTER than the HF sizzle. So
+    /// jazz = thin-plate voicing: mid-wash shelf cut, flipped closed-decay
+    /// slope, softer stick (less burst, steeper treble-tilted chick).
     fn hat(open: bool, vel: f32, sr: f32, seed: u32, kit: KitStyle) -> Self {
-        // (amp, chick, closed-decay)
-        let (m_amp, m_chick, m_cdec) = match kit {
-            KitStyle::Pop => (1.0f32, 1.0f32, 1.0f32),
-            KitStyle::Rock => (1.05, 1.2, 1.0),
-            KitStyle::Jazz => (0.82, 0.85, 1.15),
+        // (amp, chick, closed-decay, mid-wash shelf <2.5k, chick tilt exp)
+        let (m_amp, m_chick, m_cdec, m_mid, tilt) = match kit {
+            KitStyle::Pop => (1.0f32, 1.0f32, 1.0f32, 1.0f32, 0.7f32),
+            KitStyle::Rock => (1.05, 1.2, 1.0, 1.0, 0.7),
+            KitStyle::Jazz => (0.82, 0.60, 1.0, 0.45, 1.1),
         };
         let mut v = Self::new(seed);
         v.burst_dec = t60_gain(0.012, sr);
@@ -4125,20 +4165,30 @@ impl CymbalVoice {
         v.life = if open { (3.2 * sr) as u64 } else { (0.9 * sr) as u64 };
         let mut jit = Lcg(seed ^ 0x4a75 | 1);
         if open {
+            // plate-collision slosh: the open pair rattles chaotically
+            // (r4 hat-vs-ride axis; a ride is one stable plate — no slosh)
+            v.set_slosh(if matches!(kit, KitStyle::Jazz) { 0.20 } else { 0.15 }, 5.0, sr);
             // tonal skeleton measured from the CC0 open-hat sustain:
-            // 614/634 Hz beating pair, 1003, 1114, 1771 Hz
+            // 614/634 Hz beating pair, 1003, 1114, 1771 Hz. r4: bursts ×~2.3 —
+            // the ref's ATTACK leads in the 500–1 kHz band (−4.1 dB rel, its
+            // strongest) because the strike claps the plates together, a
+            // low-mid CLANG the r3 render barely had (−8.5); this attack
+            // clang vs the ride's HF sizzle+ping is the loudest of the
+            // owner's "differentiate open hat vs ride" axes.
+            let mb = if matches!(kit, KitStyle::Jazz) { 0.6 } else { 1.0 };
             for (f, ring, burst) in [
-                (614.0, 2.8, 0.016f32),
-                (634.0, 3.2, 0.021),
-                (1003.0, 3.0, 0.019),
-                (1114.0, 2.8, 0.018),
-                (1771.0, 2.4, 0.014),
+                (614.0, 2.1, 0.036f32),
+                (634.0, 2.4, 0.047),
+                (862.0, 2.0, 0.034),
+                (1003.0, 2.2, 0.030),
+                (1114.0, 2.1, 0.027),
+                (1771.0, 1.8, 0.020),
             ] {
                 v.push_band(
                     CymBand {
                         freq: f,
                         ring_t60: ring,
-                        burst: burst * vel.powf(0.8),
+                        burst: burst * mb * vel.powf(0.8),
                         chick: 0.0,
                         wash: 0.0,
                         decay_t60: ring,
@@ -4156,9 +4206,17 @@ impl CymbalVoice {
             let ring = (44.0 / f).min(0.03);
             let decay = if open {
                 // measured hump: ~5 s at 1.6 kHz, ~1.5 s at 12 kHz; softer
-                // strokes ring the open plates a little shorter
+                // strokes ring the open plates a little shorter. r4: hump
+                // capped 4.8->3.0 s — the open hat must DIE noticeably faster
+                // than the ride's wash (its plates keep grinding), another
+                // hat-vs-ride axis
                 let lnh = (f / 1600.0).ln();
-                (0.8 + 4.0 * (-lnh * lnh / 2.4).exp()).clamp(0.8, 4.8) * (0.75 + 0.35 * vel)
+                (0.8 + 2.7 * (-lnh * lnh / 2.4).exp()).clamp(0.8, 3.0) * (0.75 + 0.35 * vel)
+            } else if matches!(kit, KitStyle::Jazz) {
+                // flipped slope (DRS close mic: 1 kHz t60 0.21 s, 3k/8k
+                // 0.34 s): the pedal clamp chokes the mids first, the HF
+                // sizzle outlives them
+                (0.30 * (f / 3000.0).powf(0.12)).clamp(0.16, 0.34) * (0.80 + 0.35 * vel)
             } else {
                 // velocity-openness: hard closed hits sizzle longer
                 (0.45 * (3000.0 / f).powf(0.25)).clamp(0.22, 0.55)
@@ -4171,17 +4229,30 @@ impl CymbalVoice {
                 (0.0, 0.0)
             };
             let lnr = (f / 7000.0).ln();
-            let burst = (0.10 + 1.1 * (-lnr * lnr / 1.0).exp()) * vel.powf(0.7) * 0.13;
+            // jazz: lighter stick, softer impulse into the plates
+            let m_burst = if matches!(kit, KitStyle::Jazz) { 0.6 } else { 1.0 };
+            let burst = (0.10 + 1.1 * (-lnr * lnr / 1.0).exp())
+                * vel.powf(0.7)
+                * 0.13
+                * m_burst
+                * if open { 1.5 } else { 1.0 };
             let wash = 0.5
                 * if f < 1200.0 { (f / 1200.0).powf(1.4) } else { 1.0 }
-                * if open && f > 6000.0 { 0.75 } else { 1.0 }
+                // thin-plate mid cut (jazz: m_mid < 1 — the clang lived here)
+                * if f < 2500.0 { m_mid } else { 1.0 }
+                // r4 hat-vs-ride: the open hat BODY is mid-forward with a
+                // rolled top (ref body: 500–2 k at −5.6…−5.8 dB, 10–16 k at
+                // −15.3) while the ride's body peaks at 2–4 k (ping) — push
+                // the sustained wash down-spectrum, keep attack HF via chick
+                * if open && f < 2000.0 { 1.3 } else { 1.0 }
+                * if open && f > 6000.0 { 0.7 } else { 1.0 }
                 // velocity-brightness: the closed hat's top end scales with
                 // velocity beyond the level curve (onset centroid doubles
                 // vl1→vl3 in the refs)
                 * if !open && f > 5000.0 { 0.55 + 0.55 * vel } else { 1.0 };
-            let chick = if open { 0.8 } else { 1.5 }
+            let chick = if open { 1.35 } else { 1.5 }
                 * m_chick
-                * (f / 6000.0).powf(0.7).min(2.0)
+                * (f / 6000.0).powf(tilt).min(2.0)
                 * vel.powf(1.1);
             v.push_band(
                 CymBand {
