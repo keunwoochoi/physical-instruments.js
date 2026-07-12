@@ -20,6 +20,8 @@ class InstrumentsProcessor extends AudioWorkletProcessor {
     this.queue = [];
     this.qHead = 0;
     this.framesBehind = 0;
+    this.lastFrame = -1;
+    this.droppedQuanta = 0;
     this.port.onmessage = (ev) => this.onMessage(ev.data);
     // Offline rendering path: an OfflineAudioContext may not service port messages
     // before its render loop finishes, so init bytes + the full event schedule can be
@@ -103,6 +105,14 @@ class InstrumentsProcessor extends AudioWorkletProcessor {
     const out = outputs[0];
     if (!this.engine || !out || out.length === 0) return true;
 
+    // xrun detection: a gap in currentFrame between calls means the render thread
+    // missed its deadline and the browser dropped quanta — never hide that
+    if (this.lastFrame >= 0) {
+      const gap = currentFrame - this.lastFrame - out[0].length;
+      if (gap > 0) this.droppedQuanta += Math.round(gap / out[0].length);
+    }
+    this.lastFrame = currentFrame;
+
     const mem = this.exports.memory.buffer;
     if (!this.viewL || this.viewL.buffer !== mem) {
       this.viewL = new Float32Array(mem, this.exports.ij_out_l(this.engine), 128);
@@ -146,7 +156,8 @@ class InstrumentsProcessor extends AudioWorkletProcessor {
       this.port.postMessage({
         type: "stats",
         activeVoices: this.exports.ij_active_voices(this.engine),
-        pendingEvents: q.length,
+        pendingEvents: q.length - this.qHead,
+        droppedQuanta: this.droppedQuanta,
       });
     }
     return true;

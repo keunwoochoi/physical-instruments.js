@@ -115,6 +115,9 @@ export interface Track {
 export interface EngineStats {
   activeVoices: number;
   pendingEvents: number;
+  /** Render quanta the browser dropped because the processor missed its deadline
+   *  (cumulative). Nonzero = audible glitches happened; never hidden. */
+  droppedQuanta: number;
 }
 
 export interface Engine {

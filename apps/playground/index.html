@@ -140,7 +140,10 @@
       try {
         engine = await createEngine();
         await engine.ready;
-        engine.onStats((s) => status(`engine live — voices: ${s.activeVoices}`));
+        engine.onStats((s) =>
+          s.droppedQuanta > 0
+            ? status(`engine live — voices: ${s.activeVoices} — ⚠ ${s.droppedQuanta} dropped quanta (processor fell behind)`, true)
+            : status(`engine live — voices: ${s.activeVoices}`));
         status("engine live — play something");
       } catch (err) {
         status(`engine failed: ${err.message}`, true); // loud on failure
