@@ -29,6 +29,7 @@ const CASES = [
   ["guitar-distorted", 12, [[40, 0], [47, 0], [52, 0.5]]],
   ["drums-rock", 13, [[36, 0], [38, 0.3], [42, 0.45], [36, 0.6], [38, 0.9]]],
   ["drums-jazz", 14, [[36, 0], [38, 0.3], [42, 0.45], [36, 0.6], [38, 0.9]]],
+  ["drums-808", 15, [[36, 0], [38, 0.3], [42, 0.45], [36, 0.6], [39, 0.9]]],
 ];
 
 // --wav-dir <dir>: also write per-family mono WAVs for the pyloudnorm (BS.1770
@@ -49,28 +50,32 @@ for (const [name, inst, notes] of CASES) {
     for (const [m, t] of notes) events.push({ f: Math.round((t + rep * 1.2) * SR), m });
   events.sort((a, b) => a.f - b.f);
   const total = Math.round(3.6 * SR);
-  const mono = new Float32Array(total);
-  const lPtr = x.ij_out_l(p);
+  const left = new Float32Array(total), right = new Float32Array(total);
+  const lPtr = x.ij_out_l(p), rPtr = x.ij_out_r(p);
   let ei = 0, sumSq = 0, peak = 0;
   for (let f = 0; f < total; f += Q) {
     while (ei < events.length && events[ei].f <= f) x.ij_note_on(p, 0, events[ei++].m, 0.8);
     const n = Math.min(Q, total - f);
     x.ij_process(p, n);
-    const v = new Float32Array(x.memory.buffer, lPtr, n);
-    mono.set(v, f);
+    const l = new Float32Array(x.memory.buffer, lPtr, n);
+    const r = new Float32Array(x.memory.buffer, rPtr, n);
+    left.set(l, f); right.set(r, f);
     for (let i = 0; i < n; i++) {
-      sumSq += v[i] * v[i];
-      peak = Math.max(peak, Math.abs(v[i]));
+      sumSq += (l[i] * l[i] + r[i] * r[i]) * 0.5;
+      peak = Math.max(peak, Math.abs(l[i]), Math.abs(r[i]));
     }
   }
   x.ij_engine_free(p);
   if (wavDir) {
-    const b = Buffer.alloc(44 + total * 2);
-    b.write("RIFF", 0); b.writeUInt32LE(36 + total * 2, 4); b.write("WAVE", 8);
-    b.write("fmt ", 12); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22);
-    b.writeUInt32LE(SR, 24); b.writeUInt32LE(SR * 2, 28); b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34);
-    b.write("data", 36); b.writeUInt32LE(total * 2, 40);
-    for (let i = 0; i < total; i++) b.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(mono[i] * 32767))), 44 + i * 2);
+    const b = Buffer.alloc(44 + total * 4);
+    b.write("RIFF", 0); b.writeUInt32LE(36 + total * 4, 4); b.write("WAVE", 8);
+    b.write("fmt ", 12); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(2, 22);
+    b.writeUInt32LE(SR, 24); b.writeUInt32LE(SR * 4, 28); b.writeUInt16LE(4, 32); b.writeUInt16LE(16, 34);
+    b.write("data", 36); b.writeUInt32LE(total * 4, 40);
+    for (let i = 0; i < total; i++) {
+      b.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(left[i] * 32767))), 44 + i * 4);
+      b.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(right[i] * 32767))), 46 + i * 4);
+    }
     await wf(`${wavDir}/family-${name}.wav`, b);
   }
   results.push({ name, inst, rms: Math.sqrt(sumSq / total), peak });

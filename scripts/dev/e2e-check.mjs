@@ -45,7 +45,7 @@ const offline = await page.evaluate(async () => {
   const notes = [
     { instrumentGroup: "marimba", midiPitch: 69, startSeconds: 0.0, endSeconds: 0.4, velocity: 110 },
     { instrumentGroup: "bass", midiPitch: 33, startSeconds: 0.0, endSeconds: 0.8, velocity: 100 },
-    { instrumentGroup: "percussion", midiPitch: 36, startSeconds: 0.0, endSeconds: 0.2, velocity: 110, isDrum: true },
+    { instrumentGroup: "drums-808", midiPitch: 36, startSeconds: 0.0, endSeconds: 0.2, velocity: 110, isDrum: true },
     { instrumentGroup: "strings", midiPitch: 57, startSeconds: 0.0, endSeconds: 1.0, velocity: 80 },
   ];
   const wav = await engine.renderOffline(notes);
@@ -70,8 +70,12 @@ const live = await page.evaluate(async () => {
   const analyser = ctx.createAnalyser();
   analyser.fftSize = 2048;
   engine.output.connect(analyser);
-  const t = engine.createTrack("marimba");
-  t.noteOn(69, 110);
+  // Exercise the public timeline scheduler too: `isDrum` must preserve an
+  // explicitly selected kit instead of silently forcing the pop kit.
+  void engine.play([
+    { instrumentGroup: "drums-808", midiPitch: 36, startSeconds: 0, endSeconds: 0.1, velocity: 110, isDrum: true },
+    { instrumentGroup: "drums-808", midiPitch: 42, startSeconds: 0, endSeconds: 0.1, velocity: 82, isDrum: true },
+  ]);
   const t0 = ctx.currentTime;
   await new Promise((r) => setTimeout(r, 400));
   const buf = new Float32Array(analyser.fftSize);

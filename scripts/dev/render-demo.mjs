@@ -4,6 +4,7 @@
  * verification path (and the seed of evals issue #9). Usage:
  *   node scripts/dev/render-demo.mjs [outfile.wav]
  *   node scripts/dev/render-demo.mjs --bench
+ *   node scripts/dev/render-demo.mjs --bench-808
  */
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -22,6 +23,7 @@ const GROUP = {
   synthpad: 8, strings: 8, brass: 8, voice: 8, synth: 8,
   piano: 9,
   "guitar-steel": 10, "guitar-electric": 11, "guitar-distorted": 12,
+  "drums-rock": 13, "drums-jazz": 14, "drums-808": 15,
 };
 
 async function makeEngine() {
@@ -144,25 +146,28 @@ async function render() {
   return { L, R, stats };
 }
 
-if (process.argv.includes("--bench")) {
-  // sustained worst-case-ish: 4 tracks, re-trigger to hold ~48 voices
+if (process.argv.includes("--bench") || process.argv.includes("--bench-808")) {
+  // Sustained four-track retrigger with acoustic/modal voices plus overlapping
+  // one-shot drums; active-voice count is reported rather than assumed.
   const { x, p } = await makeEngine();
+  const drumInstrument = process.argv.includes("--bench-808") ? GROUP["drums-808"] : GROUP.drums;
   x.ij_set_track(p, 0, 0, 0.7, -0.3); x.ij_set_track(p, 1, 5, 0.8, 0);
-  x.ij_set_track(p, 2, 7, 0.8, 0.1); x.ij_set_track(p, 3, 6, 0.6, 0.3);
+  x.ij_set_track(p, 2, drumInstrument, 0.8, 0.1); x.ij_set_track(p, 3, 6, 0.6, 0.3);
   const t0 = process.hrtime.bigint();
   const quanta = 4000; // ~10.7 s
   for (let i = 0; i < quanta; i++) {
     if (i % 8 === 0) { // dense retriggering across tracks
+      const hit = Math.floor(i / 8);
       x.ij_note_on(p, 0, 48 + (i % 36), 0.9);
       x.ij_note_on(p, 1, 28 + (i % 24), 0.9);
-      x.ij_note_on(p, 2, [36, 38, 42, 46][i % 4], 1.0);
+      x.ij_note_on(p, 2, [36, 38, 42, 46][hit % 4], 1.0);
       x.ij_note_on(p, 3, 52 + (i % 24), 0.8);
     }
     x.ij_process(p, Q);
   }
   const us = Number(process.hrtime.bigint() - t0) / 1e3 / quanta;
   console.log(JSON.stringify({
-    bench: "sustained multi-track retrigger", quanta,
+    bench: process.argv.includes("--bench-808") ? "sustained multi-track retrigger with 808 kit" : "sustained multi-track retrigger", quanta,
     activeVoicesAtEnd: x.ij_active_voices(p),
     usPerQuantum: +us.toFixed(1), budgetUs: 2666.7, budgetPct: +((us / 2666.7) * 100).toFixed(2),
   }, null, 2));

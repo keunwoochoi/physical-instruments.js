@@ -102,6 +102,14 @@ class ManifestTests(unittest.TestCase):
 
 
 class BaselineTests(unittest.TestCase):
+    def test_drum_note_numbers_are_not_misread_as_fundamentals(self):
+        drum = case("maraca", "tune")
+        drum["render"]["family"] = "drums-808"
+        drum["render"]["midi"] = 70
+        self.assertIsNone(loop_campaign.expected_f0(drum))
+        pitched = case("a4", "tune")
+        self.assertAlmostEqual(loop_campaign.expected_f0(pitched), 440.0)
+
     def test_pareto_classification_distinguishes_improvement_and_regression(self):
         base = {"metric_version": "v", "mr_stft": {"mean": 1.0}, "logmel_dist": {"overall": 1.0, "attack": 1.0, "tail": 1.0}, "lufs": {"valid": True, "delta": 1.0}}
         better = copy.deepcopy(base)

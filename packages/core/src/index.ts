@@ -46,6 +46,7 @@ export type InstrumentGroup =
   | "drums"
   | "drums-rock"
   | "drums-jazz"
+  | "drums-808"
   | "synthpad"
   | "guitar-steel"
   | "guitar-electric"
@@ -70,6 +71,7 @@ const INST = {
   drums: 7,
   drumsRock: 13,
   drumsJazz: 14,
+  drums808: 15,
   synthpad: 8,
   piano: 9,
   guitarSteel: 10,
@@ -96,6 +98,7 @@ const GROUP_TO_INSTRUMENT: Record<InstrumentGroup, number> = {
   piano: INST.piano, // multi-string waveguide acoustic piano
   "drums-rock": INST.drumsRock,
   "drums-jazz": INST.drumsJazz,
+  "drums-808": INST.drums808,
   "guitar-steel": INST.guitarSteel,
   "guitar-electric": INST.guitarElectric,
   "guitar-distorted": INST.guitarDistorted,
@@ -344,11 +347,19 @@ export async function createEngine(options: EngineOptions = {}): Promise<Engine>
     t0: number,
     resolve: (group: InstrumentGroup, events: WorkletEvent[]) => number,
   ): { events: WorkletEvent[]; end: number } {
+    const scheduledGroup = (isDrum: boolean | undefined, requested: InstrumentGroup | string | undefined): InstrumentGroup => {
+      if (!isDrum) return (requested ?? "unknown") as InstrumentGroup;
+      // `isDrum` owns one-shot/note-off semantics; it must not erase an
+      // explicitly selected kit. Unknown MIDI-producer labels retain the
+      // backward-compatible pop-kit fallback instead of becoming marimba.
+      if (requested === "drums-rock" || requested === "drums-jazz" || requested === "drums-808") return requested;
+      return "drums";
+    };
     const pedals = options.pedals;
     const events: WorkletEvent[] = [];
     let end = t0;
     for (const n of notes) {
-      const group = (n.isDrum ? "drums" : (n.instrumentGroup ?? "unknown")) as InstrumentGroup;
+      const group = scheduledGroup(n.isDrum, n.instrumentGroup);
       const idx = resolve(group, events);
       const vel = Math.min(127, Math.max(1, n.velocity)) / 127;
       events.push({ type: "event", when: t0 + n.startSeconds, kind: "on", track: idx, midi: Math.round(n.midiPitch), vel });
@@ -358,7 +369,7 @@ export async function createEngine(options: EngineOptions = {}): Promise<Engine>
       end = Math.max(end, t0 + n.endSeconds);
     }
     for (const p of pedals ?? []) {
-      const group = (p.isDrum ? "drums" : (p.instrumentGroup ?? "unknown")) as InstrumentGroup;
+      const group = scheduledGroup(p.isDrum, p.instrumentGroup);
       const idx = resolve(group, events);
       events.push({ type: "event", when: t0 + p.timeSeconds, kind: "pedal", track: idx, on: p.on ? 1 : 0 });
       end = Math.max(end, t0 + p.timeSeconds);

@@ -4,12 +4,7 @@
 `npm install` → piano, guitar, marimba in tens of kilobytes. No samples. Works offline. One `noteOn()` call. Full multi-track arrangements, one engine.
 
 > **Status: pre-alpha, but playable.** Nothing on npm yet — but the engine is real:
-> **13 instruments** — acoustic piano (hammer-collision waveguide), nylon/steel/electric-clean/
-> electric-distorted guitars (with body resonance and an ADAA amp stage), bass, e-piano,
-> marimba, vibraphone, glockenspiel, music box, synth pad, GM drum kit — in a **24 KB gzipped**
-> WASM core (~31 KB gz all-in), loudness-matched to ±0.1 LUFS across families, playing
-> multi-track arrangements inside one AudioWorklet. Zero-config under Vite (dev + build,
-> headlessly verified); drop a .mid on the playground or plug in a MIDI keyboard.
+> **16 instruments** — acoustic piano; nylon, steel, electric-clean, and electric-distorted guitars; bass; e-piano; marimba; vibraphone; glockenspiel; music box; synth pad; and pop, rock, jazz, and 808-style GM drum kits — in a **67 KB gzipped** WASM core (~75 KB gz all-in), loudness-matched across families and playing multi-track arrangements inside one AudioWorklet. Zero-config under Vite (dev + build, headlessly verified); drop a .mid on the playground or plug in a MIDI keyboard.
 >
 > ```sh
 > scripts/dev/serve.sh        # → http://localhost:8173/apps/playground/

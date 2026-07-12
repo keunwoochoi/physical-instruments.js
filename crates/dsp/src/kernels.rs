@@ -40,6 +40,9 @@ pub enum Instrument {
     DrumsRock = 13,
     /// Jazz kit: dark ride-forward, small dry kick, high-tuned shell-toned snare.
     DrumsJazz = 14,
+    /// 808-style analog kit: synthesized bass drum, snare, clap, metallic hats,
+    /// cymbal, cowbell, and tuned tom/conga voices.
+    Drums808 = 15,
 }
 
 impl Instrument {
@@ -59,6 +62,7 @@ impl Instrument {
             12 => Self::GuitarDistorted,
             13 => Self::DrumsRock,
             14 => Self::DrumsJazz,
+            15 => Self::Drums808,
             _ => Self::Marimba,
         }
     }
@@ -66,7 +70,7 @@ impl Instrument {
     /// All GM drum-kit families (pop/rock/jazz share note semantics: one-shot
     /// percussion, hat-choke note interaction, kit stereo layout).
     pub fn is_drum_kit(self) -> bool {
-        matches!(self, Self::Drums | Self::DrumsRock | Self::DrumsJazz)
+        matches!(self, Self::Drums | Self::DrumsRock | Self::DrumsJazz | Self::Drums808)
     }
 }
 
@@ -324,6 +328,7 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
         Instrument::GuitarDistorted => 0.135, // reverb pre-delay re-bake 2026-07-13 (x1.06)
         Instrument::DrumsRock => 0.38,      // drums r4 0.41 x room 0.93 (verify by sweep)
         Instrument::DrumsJazz => 0.56,      // reverb pre-delay re-bake 2026-07-13 (x1.17)
+        Instrument::Drums808 => 0.63,       // 2026-07-12 stereo BS.1770 re-bake against the marimba reference
     }
 }
 
@@ -335,6 +340,7 @@ pub fn room_send(inst: Instrument) -> f32 {
     match inst {
         Instrument::Drums | Instrument::DrumsRock => 0.16,
         Instrument::DrumsJazz => 0.18, // brushes/jazz kits are recorded roomier
+        Instrument::Drums808 => 0.035, // direct electronic outputs; only a trace of shared-room glue
         Instrument::Piano => 0.09,
         Instrument::Guitar | Instrument::GuitarSteel => 0.11,
         Instrument::GuitarElectric => 0.05,
@@ -4980,6 +4986,204 @@ impl CymbalVoice {
 // Drum kit (GM pitches) — sine-sweep kick, mode+noise snare, banded cymbals
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// 808-style analog percussion — fixed oscillator bank + filtered noise
+// ---------------------------------------------------------------------------
+// This is an original behavioral model informed by the TR-808 operation/service
+// manuals: resonant sine drums, a two-oscillator snare/cowbell, four-pulse clap,
+// and the six-oscillator metallic source shared by hats/cymbal. Oscillators are
+// polyBLEP band-limited so the web build does not inherit the foldover of a
+// literal digital square wave. All state is inline and allocation-free.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AnalogDrumKind {
+    Off,
+    Snare,
+    Clap,
+    Metal,
+    Cowbell,
+    Tone,
+    Maraca,
+}
+
+#[derive(Clone, Copy)]
+struct AnalogDrumVoice {
+    kind: AnalogDrumKind,
+    phase: [f32; 6],
+    dphase: [f32; 6],
+    dphase_end: [f32; 6],
+    glide: f32,
+    tone_env: f32,
+    tone_dec: f32,
+    noise_env: f32,
+    noise_dec: f32,
+    hp: f32,
+    hp2: f32,
+    hp_c: f32,
+    lp: f32,
+    lp2: f32,
+    lp3: f32,
+    lp4: f32,
+    lp_c: f32,
+    tone_gain: f32,
+    noise_gain: f32,
+    amp: f32,
+    clap_gap: u64,
+    clap_width: u64,
+    rng: Lcg,
+    age: u64,
+    life: u64,
+}
+
+impl AnalogDrumVoice {
+    fn off(seed: u32) -> Self {
+        Self {
+            kind: AnalogDrumKind::Off,
+            phase: [0.0; 6],
+            dphase: [0.0; 6],
+            dphase_end: [0.0; 6],
+            glide: 0.0,
+            tone_env: 0.0,
+            tone_dec: 0.0,
+            noise_env: 0.0,
+            noise_dec: 0.0,
+            hp: 0.0,
+            hp2: 0.0,
+            hp_c: 0.0,
+            lp: 0.0,
+            lp2: 0.0,
+            lp3: 0.0,
+            lp4: 0.0,
+            lp_c: 1.0,
+            tone_gain: 0.0,
+            noise_gain: 0.0,
+            amp: 0.0,
+            clap_gap: 0,
+            clap_width: 0,
+            rng: Lcg(seed | 1),
+            age: 0,
+            life: 0,
+        }
+    }
+
+    #[inline]
+    fn square(phase: f32, dphase: f32) -> f32 {
+        // Difference of two corrected saws produces a band-limited square.
+        let half = (phase + 0.5).fract();
+        ((2.0 * phase - 1.0)
+            - poly_blep(phase, dphase)
+            - ((2.0 * half - 1.0) - poly_blep(half, dphase)))
+            * 0.5
+    }
+
+    fn render(&mut self, out: &mut [f32]) -> bool {
+        for o in out.iter_mut() {
+            let n = self.rng.next();
+            if self.kind != AnalogDrumKind::Metal {
+                self.hp += self.hp_c * (n - self.hp);
+                let mut high = n - self.hp;
+                if self.kind == AnalogDrumKind::Maraca {
+                    self.hp2 += self.hp_c * (high - self.hp2);
+                    high -= self.hp2;
+                }
+                self.lp += self.lp_c * (high - self.lp);
+                self.lp2 += self.lp_c * (self.lp - self.lp2);
+                if self.kind == AnalogDrumKind::Maraca {
+                    self.lp3 += self.lp_c * (self.lp2 - self.lp3);
+                    self.lp4 += self.lp_c * (self.lp3 - self.lp4);
+                }
+            }
+
+            let mut tone = 0.0f32;
+            for i in 0..6 {
+                if self.dphase[i] > 0.0 {
+                    self.dphase[i] =
+                        self.dphase_end[i] + (self.dphase[i] - self.dphase_end[i]) * self.glide;
+                    self.phase[i] = (self.phase[i] + self.dphase[i]).fract();
+                }
+            }
+            match self.kind {
+                AnalogDrumKind::Snare => {
+                    tone = ((core::f32::consts::TAU * self.phase[0]).sin()
+                        + 0.72 * (core::f32::consts::TAU * self.phase[1]).sin())
+                        * self.tone_env;
+                }
+                AnalogDrumKind::Clap => {
+                    // Three close impulses followed by a fourth wider arrival,
+                    // then the familiar diffuse tail. This uses counters rather
+                    // than event allocation or branching outside the voice.
+                    let p = self.age % self.clap_gap.max(1);
+                    let burst_n = self.age / self.clap_gap.max(1);
+                    let burst = if burst_n < 3 && p < self.clap_width {
+                        let u = p as f32 / self.clap_width.max(1) as f32;
+                        (core::f32::consts::PI * u).sin().powi(2)
+                    } else {
+                        0.0
+                    };
+                    tone = self.lp2 * (burst * 1.25 + self.noise_env);
+                }
+                AnalogDrumKind::Metal => {
+                    for i in 0..6 {
+                        tone += Self::square(self.phase[i], self.dphase[i]);
+                    }
+                    let raw = tone / 6.0;
+                    self.hp += self.hp_c * (raw - self.hp);
+                    let high1 = raw - self.hp;
+                    self.hp2 += self.hp_c * (high1 - self.hp2);
+                    let high2 = high1 - self.hp2;
+                    self.lp3 += self.hp_c * (high2 - self.lp3);
+                    let high3 = high2 - self.lp3;
+                    self.lp += self.lp_c * (high3 - self.lp);
+                    self.lp2 += self.lp_c * (self.lp - self.lp2);
+                    tone = self.lp2 * self.tone_env;
+                }
+                AnalogDrumKind::Cowbell => {
+                    tone = (0.58 * Self::square(self.phase[0], self.dphase[0])
+                        + 0.42 * Self::square(self.phase[1], self.dphase[1]))
+                        * self.tone_env;
+                }
+                AnalogDrumKind::Tone => {
+                    tone = ((core::f32::consts::TAU * self.phase[0]).sin()
+                        + 0.22 * (core::f32::consts::TAU * self.phase[1]).sin())
+                        * self.tone_env;
+                }
+                AnalogDrumKind::Maraca => {}
+                AnalogDrumKind::Off => {}
+            }
+
+            let noise = if self.kind == AnalogDrumKind::Clap {
+                0.0
+            } else if self.kind == AnalogDrumKind::Metal {
+                n * self.noise_env
+            } else if self.kind == AnalogDrumKind::Maraca {
+                let attack = if self.age < self.clap_width {
+                    let u = self.age as f32 / self.clap_width.max(1) as f32;
+                    0.5 - 0.5 * (core::f32::consts::PI * u).cos()
+                } else {
+                    self.noise_env
+                };
+                self.lp4 * attack
+            } else {
+                self.lp2 * self.noise_env
+            };
+            *o += self.amp * (self.tone_gain * tone + self.noise_gain * noise);
+            self.tone_env *= self.tone_dec;
+            if self.kind != AnalogDrumKind::Maraca || self.age >= self.clap_width {
+                self.noise_env *= self.noise_dec;
+            }
+            self.age += 1;
+        }
+        self.tone_env = flush_denormal(self.tone_env);
+        self.noise_env = flush_denormal(self.noise_env);
+        self.hp = flush_denormal(self.hp);
+        self.hp2 = flush_denormal(self.hp2);
+        self.lp = flush_denormal(self.lp);
+        self.lp2 = flush_denormal(self.lp2);
+        self.lp3 = flush_denormal(self.lp3);
+        self.lp4 = flush_denormal(self.lp4);
+        self.age < self.life
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct DrumVoice {
     kind: DrumKind,
@@ -5039,6 +5243,7 @@ pub struct DrumVoice {
     modal: ModalVoice,
     has_modal: bool,
     cym: CymbalVoice,
+    analog: AnalogDrumVoice,
     rng: Lcg,
     life: u64,
     age: u64,
@@ -5049,6 +5254,7 @@ enum DrumKind {
     Kick,
     Noise, // snare wires, hats
     Cymbal,
+    Analog,
 }
 
 impl DrumVoice {
@@ -5057,6 +5263,11 @@ impl DrumVoice {
     pub fn choke(&mut self, sr: f32) {
         if self.kind == DrumKind::Cymbal {
             self.cym.choke(sr);
+        }
+        if self.kind == DrumKind::Analog {
+            self.analog.tone_dec = self.analog.tone_dec.min(t60_gain(0.025, sr));
+            self.analog.noise_dec = self.analog.noise_dec.min(t60_gain(0.025, sr));
+            self.analog.life = self.analog.life.min(self.analog.age + (0.10 * sr) as u64);
         }
         self.decay = t60_gain(0.03, sr);
         self.life = self.life.min(self.age + (0.12 * sr) as u64);
@@ -5094,6 +5305,7 @@ impl DrumVoice {
             modal: ModalVoice::start(200.0, 0.0, sr, &[], 1.0, 0.0, 0.0, seed),
             has_modal: false,
             cym: CymbalVoice::new(seed),
+            analog: AnalogDrumVoice::off(seed),
             rng: Lcg(seed | 1),
             life: (0.6 * sr) as u64,
             age: 0,
@@ -5710,9 +5922,215 @@ impl DrumVoice {
         v
     }
 
+    /// Original 808-style behavioral model. The note layout follows GM so an
+    /// existing drum pattern can switch kits without remapping: 35/36 kick,
+    /// 38/40 snare, 39 clap, 42/44/46 hats, 49/51 cymbal, 56 cowbell,
+    /// 41–50 toms, and 62–64 congas.
+    pub fn start_808(gm_note: u32, vel: f32, sr: f32, seed: u32) -> Self {
+        let vel = vel.clamp(0.0, 1.0);
+        if matches!(gm_note, 35 | 36) {
+            // A self-oscillating bridged-T-like resonant body: fast control
+            // pulse bends it down into a long, nearly sinusoidal sub tail.
+            let mut v = Self::start(36, vel, sr, seed, KitStyle::Pop);
+            v.freq_end = 51.0;
+            v.freq = 92.0 + 62.0 * vel;
+            v.sweep = (-1.0 / (0.018 * sr)).exp();
+            v.decay = t60_gain(0.82 + 0.50 * vel, sr);
+            v.amp = 0.72 * (0.16 + 0.84 * vel).powf(1.25);
+            v.atk_ph = 0.0;
+            v.atk_dp = 1.0 / (0.0015 * sr);
+            v.click = 0.035 + 0.11 * vel * vel;
+            v.hp_c = 0.14 + 0.20 * vel;
+            v.sl_y1 = 0.0;
+            v.sl_y2 = 0.0;
+            v.lfn_env = 0.0;
+            v.has_modal = false;
+            v.life = (1.55 * sr) as u64;
+            return v;
+        }
+
+        let mut v = Self::start(60, vel, sr, seed, KitStyle::Pop);
+        v.kind = DrumKind::Analog;
+        v.has_modal = false;
+        let mut a = AnalogDrumVoice::off(seed ^ 0x8080_8080);
+        a.amp = 0.35 + 0.65 * vel;
+        a.glide = 1.0;
+
+        match gm_note {
+            37 => {
+                // Rimshot/side-stick: a very short high resonant click.
+                a.kind = AnalogDrumKind::Tone;
+                a.dphase[0] = 980.0 / sr;
+                a.dphase[1] = 1_760.0 / sr;
+                a.dphase_end = a.dphase;
+                a.tone_env = 1.0;
+                a.tone_dec = t60_gain(0.045, sr);
+                a.tone_gain = 0.72;
+                a.life = (0.12 * sr) as u64;
+            }
+            38 | 40 => {
+                // Two detuned resonant sections plus a noise/snappy section.
+                // Harder strikes brighten disproportionately, so velocity is
+                // a timbre axis rather than a post-synthesis gain control.
+                a.kind = AnalogDrumKind::Snare;
+                a.dphase[0] = (174.0 + 12.0 * vel) / sr;
+                a.dphase[1] = (312.0 + 28.0 * vel) / sr;
+                a.dphase_end = a.dphase;
+                a.tone_env = 1.0;
+                a.tone_dec = t60_gain(0.25, sr);
+                a.noise_env = 1.0;
+                a.noise_dec = t60_gain(0.18 + 0.05 * vel, sr);
+                a.hp_c = 1.0 - (-core::f32::consts::TAU * 650.0 / sr).exp();
+                a.lp_c = 1.0 - (-core::f32::consts::TAU * (4_200.0 + 3_000.0 * vel) / sr).exp();
+                a.tone_gain = 0.44 * (1.15 - 0.35 * vel);
+                a.noise_gain = 0.48 + 0.48 * vel;
+                a.amp *= 0.72;
+                a.life = (0.55 * sr) as u64;
+            }
+            39 => {
+                // Four-pulse filtered-noise handclap; three close attacks are
+                // explicit and the diffuse tail supplies the fourth arrival.
+                a.kind = AnalogDrumKind::Clap;
+                a.noise_env = 0.38 + 0.30 * vel;
+                a.noise_dec = t60_gain(0.28, sr);
+                a.hp_c = 1.0 - (-core::f32::consts::TAU * 720.0 / sr).exp();
+                a.lp_c = 1.0 - (-core::f32::consts::TAU * (5_200.0 + 2_400.0 * vel) / sr).exp();
+                a.tone_gain = 0.95;
+                a.clap_gap = (0.011 * sr) as u64;
+                a.clap_width = (0.0045 * sr) as u64;
+                a.amp *= 0.68;
+                a.life = (0.48 * sr) as u64;
+            }
+            42 | 44 | 46 | 49 | 51 | 57 => {
+                // Six incommensurate band-limited square oscillators feed a
+                // steeply filtered metallic source. Closed/open distinction is
+                // decay, not a sample switch; note choke still works.
+                let open = gm_note == 46;
+                let cymbal = matches!(gm_note, 49 | 51 | 57);
+                let freqs = [205.3, 304.4, 369.6, 522.7, 540.0, 800.0];
+                a.kind = AnalogDrumKind::Metal;
+                let mut phase_rng = Lcg(seed ^ 0x6d65_746c | 1);
+                for (i, f) in freqs.iter().enumerate() {
+                    // The hardware oscillators free-run; a new trigger does
+                    // not reset six phases to one identical edge. Seeded
+                    // starting phases preserve deterministic renders while
+                    // preventing machine-gun-identical repeated hats.
+                    a.phase[i] = 0.5 * (phase_rng.next() + 1.0);
+                    a.dphase[i] = *f / sr;
+                }
+                a.dphase_end = a.dphase;
+                a.tone_env = 1.0;
+                let t60 = if cymbal {
+                    2.25
+                } else if open {
+                    1.25
+                } else {
+                    0.095
+                };
+                a.tone_dec = t60_gain(t60, sr);
+                a.noise_env = 1.0;
+                a.noise_dec = t60_gain(if cymbal { 0.65 } else { 0.07 }, sr);
+                a.hp_c = 1.0
+                    - (-core::f32::consts::TAU * if cymbal { 3_200.0 } else { 5_000.0 } / sr).exp();
+                let metal_lp = if cymbal {
+                    13_000.0 + 1_500.0 * vel
+                } else {
+                    14_000.0 + 2_000.0 * vel
+                };
+                a.lp_c = 1.0 - (-core::f32::consts::TAU * metal_lp / sr).exp();
+                a.tone_gain = if cymbal { 0.74 } else { 0.82 };
+                a.noise_gain = 0.0;
+                a.amp *= if cymbal { 1.8 } else { 2.0 };
+                a.life = ((t60 * 1.35).max(0.18) * sr) as u64;
+            }
+            56 => {
+                // Two rectangular oscillators produce the instantly legible
+                // major-ish inharmonic cowbell dyad.
+                a.kind = AnalogDrumKind::Cowbell;
+                a.dphase[0] = 540.0 / sr;
+                a.dphase[1] = 800.0 / sr;
+                a.dphase_end = a.dphase;
+                a.tone_env = 1.0;
+                a.tone_dec = t60_gain(0.34 + 0.12 * vel, sr);
+                a.tone_gain = 0.72;
+                a.amp *= 1.2;
+                a.life = (0.72 * sr) as u64;
+            }
+            70 => {
+                // Maraca: the hardware noise source is sharply high-passed
+                // and opened by a very short envelope. Do not let the GM
+                // selector fall through to a pitched blip: an original-unit
+                // hit is an air-band burst with no stable partials.
+                a.kind = AnalogDrumKind::Maraca;
+                a.tone_env = 0.0;
+                a.tone_gain = 0.0;
+                a.noise_env = 1.0;
+                a.noise_dec = t60_gain(0.030, sr);
+                a.hp_c = 1.0 - (-core::f32::consts::TAU * 8_500.0 / sr).exp();
+                a.lp_c = 1.0 - (-core::f32::consts::TAU * 7_500.0 / sr).exp();
+                a.noise_gain = 1.0;
+                a.clap_width = (0.015 * sr) as u64;
+                a.amp *= 0.82;
+                a.life = (0.10 * sr) as u64;
+            }
+            41 | 43 | 45 | 47 | 48 | 50 | 62 | 63 | 64 => {
+                // Resonant tom/conga sections with a short amplitude-dependent
+                // pitch bend. Congas sit higher and decay faster.
+                let (f, conga) = match gm_note {
+                    41 => (92.0, false),
+                    43 => (109.0, false),
+                    45 => (130.0, false),
+                    47 => (154.0, false),
+                    48 => (183.0, false),
+                    50 => (218.0, false),
+                    62 => (196.0, true),
+                    63 => (246.0, true),
+                    _ => (310.0, true),
+                };
+                a.kind = AnalogDrumKind::Tone;
+                a.dphase[0] = f * (1.18 + 0.16 * vel) / sr;
+                a.dphase_end[0] = f / sr;
+                a.dphase[1] = f * 2.12 / sr;
+                a.dphase_end[1] = a.dphase[1];
+                a.glide = (-1.0 / (0.016 * sr)).exp();
+                a.tone_env = 1.0;
+                let t60 = if conga { 0.30 } else { 0.47 };
+                a.tone_dec = t60_gain(t60, sr);
+                a.tone_gain = if conga { 0.62 } else { 0.72 };
+                a.noise_env = 1.0;
+                a.noise_dec = t60_gain(0.025, sr);
+                a.hp_c = 1.0 - (-core::f32::consts::TAU * 900.0 / sr).exp();
+                a.lp_c = 1.0 - (-core::f32::consts::TAU * 5_000.0 / sr).exp();
+                a.noise_gain = 0.06 + 0.18 * vel;
+                a.amp *= 0.64;
+                a.life = (0.82 * sr) as u64;
+            }
+            _ => {
+                // Unassigned GM percussion stays deliberately electronic: a
+                // short tuned blip rather than falling through to an acoustic
+                // modal drum and breaking the kit's identity.
+                a.kind = AnalogDrumKind::Tone;
+                let f = midi_to_hz(gm_note as f32).clamp(220.0, 1_800.0);
+                a.dphase[0] = f / sr;
+                a.dphase[1] = f * 1.61 / sr;
+                a.dphase_end = a.dphase;
+                a.tone_env = 1.0;
+                a.tone_dec = t60_gain(0.11, sr);
+                a.tone_gain = 0.45;
+                a.life = (0.24 * sr) as u64;
+            }
+        }
+        v.life = a.life;
+        v.analog = a;
+        v
+    }
+
     pub fn render(&mut self, out: &mut [f32], sr: f32) -> bool {
         if self.kind == DrumKind::Cymbal {
             return self.cym.render(out);
+        }
+        if self.kind == DrumKind::Analog {
+            return self.analog.render(out);
         }
         let dt = 1.0 / sr;
         for o in out.iter_mut() {
@@ -5771,6 +6189,7 @@ impl DrumVoice {
                     }
                 }
                 DrumKind::Cymbal => s = 0.0, // handled by early return above
+                DrumKind::Analog => s = 0.0, // handled by early return above
                 DrumKind::Noise => {
                     let n = self.rng.next();
                     self.hp += self.hp_c * (n - self.hp); // lowpass...
@@ -5874,7 +6293,7 @@ pub fn voice_pan(inst: Instrument, midi: u32, seed: u32) -> f32 {
         Instrument::Marimba | Instrument::Vibraphone => key(45.0, 96.0) * 0.50,
         Instrument::Glockenspiel | Instrument::MusicBox => key(60.0, 108.0) * 0.35,
         Instrument::EPiano => key(28.0, 96.0) * 0.30,
-        Instrument::Drums | Instrument::DrumsRock | Instrument::DrumsJazz => match midi {
+        Instrument::Drums | Instrument::DrumsRock | Instrument::DrumsJazz | Instrument::Drums808 => match midi {
             35 | 36 => 0.0,       // kick center
             38 | 40 => 0.05,      // snare just off-center
             42 | 44 => 0.28,      // hats player-left (audience right)
@@ -6184,6 +6603,7 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
         Instrument::Drums => Kernel::Drum(DrumVoice::start(midi, vel, sr, seed, KitStyle::Pop)),
         Instrument::DrumsRock => Kernel::Drum(DrumVoice::start(midi, vel, sr, seed, KitStyle::Rock)),
         Instrument::DrumsJazz => Kernel::Drum(DrumVoice::start(midi, vel, sr, seed, KitStyle::Jazz)),
+        Instrument::Drums808 => Kernel::Drum(DrumVoice::start_808(midi, vel, sr, seed)),
         Instrument::SynthPad => Kernel::Synth(SynthVoice::start(f0, vel, sr)),
         Instrument::Piano => Kernel::Piano(PianoVoice::start(midi, f0, vel, sr, seed)),
         Instrument::GuitarSteel => {
@@ -7507,6 +7927,174 @@ mod drum_kit_tests {
                 late(&rock) > late(&jazz),
                 "sr {sr}: rock tom should ring longer than jazz"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod drum_808_tests {
+    use super::*;
+
+    fn render(gm: u32, vel: f32, sr: f32, secs: f32) -> Vec<f32> {
+        let mut voice = DrumVoice::start_808(gm, vel, sr, 0x0808_2026);
+        let mut out = Vec::new();
+        let mut block = [0.0f32; 128];
+        for _ in 0..(secs * sr / 128.0) as usize {
+            block.fill(0.0);
+            let alive = voice.render(&mut block, sr);
+            out.extend_from_slice(&block);
+            if !alive {
+                break;
+            }
+        }
+        out
+    }
+
+    fn rms(x: &[f32]) -> f32 {
+        (x.iter().map(|s| s * s).sum::<f32>() / x.len().max(1) as f32).sqrt()
+    }
+
+    fn magnitude(x: &[f32], sr: f32, hz: f32, t0: f32, t1: f32) -> f32 {
+        let i0 = (t0 * sr) as usize;
+        let i1 = ((t1 * sr) as usize).min(x.len());
+        let w = core::f32::consts::TAU * hz / sr;
+        let (mut re, mut im) = (0.0f32, 0.0f32);
+        for (n, &sample) in x[i0..i1].iter().enumerate() {
+            let phase = w * n as f32;
+            re += sample * phase.cos();
+            im += sample * phase.sin();
+        }
+        (re * re + im * im).sqrt()
+    }
+
+    #[test]
+    fn voices_are_finite_bounded_and_terminate_at_both_rates() {
+        for sr in [44_100.0f32, 48_000.0] {
+            for gm in [36u32, 38, 39, 42, 46, 49, 56, 47, 63] {
+                let out = render(gm, 1.0, sr, 4.0);
+                assert!(out.len() < (3.5 * sr) as usize, "GM {gm} at {sr} failed to terminate");
+                assert!(out.iter().all(|s| s.is_finite()), "GM {gm} at {sr} produced a non-finite sample");
+                let peak = out.iter().fold(0.0f32, |p, &s| p.max(s.abs()));
+                assert!(peak > 1e-3 && peak < 2.0, "GM {gm} at {sr} peak {peak}");
+            }
+        }
+    }
+
+    #[test]
+    fn velocity_changes_level_and_snare_brightness() {
+        for sr in [44_100.0f32, 48_000.0] {
+            for gm in [36u32, 38, 39, 42, 56, 47] {
+                let soft = render(gm, 0.25, sr, 1.0);
+                let hard = render(gm, 1.0, sr, 1.0);
+                assert!(rms(&hard) > rms(&soft) * 1.3, "GM {gm} at {sr}: velocity level collapsed");
+            }
+            let soft = render(38, 0.25, sr, 0.4);
+            let hard = render(38, 1.0, sr, 0.4);
+            let bright = |x: &[f32]| magnitude(x, sr, 6_000.0, 0.0, 0.08) / magnitude(x, sr, 180.0, 0.0, 0.08).max(1e-9);
+            assert!(bright(&hard) > bright(&soft) * 1.2, "{sr}: hard snare should open its snappy/noise band");
+        }
+    }
+
+    #[test]
+    fn snare_decays_smoothly_instead_of_gating() {
+        for sr in [44_100.0f32, 48_000.0] {
+            let snare = render(38, 0.9, sr, 0.7);
+            let early = rms(&snare[(0.05 * sr) as usize..(0.10 * sr) as usize]);
+            let late = rms(&snare[(0.35 * sr) as usize..(0.45 * sr) as usize]);
+            assert!(early > late * 8.0, "{sr}: snare tone does not decay: early {early}, late {late}");
+            assert!(late > 1e-7, "{sr}: snare tail hard-gated before its declared lifetime");
+        }
+    }
+
+    #[test]
+    fn kick_has_long_51_hz_sub_tail() {
+        for sr in [44_100.0f32, 48_000.0] {
+            let kick = render(36, 0.9, sr, 1.5);
+            let sub = magnitude(&kick, sr, 51.0, 0.25, 0.65);
+            let upper = magnitude(&kick, sr, 102.0, 0.25, 0.65);
+            assert!(sub > upper * 4.0, "{sr}: kick tail is not sub-dominant ({sub} vs {upper})");
+            let tail = &kick[(0.55 * sr) as usize..(0.75 * sr) as usize];
+            assert!(rms(tail) > 1e-3, "{sr}: kick tail dies before 0.6 s");
+        }
+    }
+
+    #[test]
+    fn cowbell_keeps_both_oscillator_tones() {
+        for sr in [44_100.0f32, 48_000.0] {
+            let cowbell = render(56, 0.9, sr, 0.5);
+            let a = magnitude(&cowbell, sr, 540.0, 0.02, 0.22);
+            let b = magnitude(&cowbell, sr, 800.0, 0.02, 0.22);
+            assert!(a > 0.1 && b > 0.1, "{sr}: cowbell dyad missing: 540={a}, 800={b}");
+            let ratio = a / b;
+            assert!((0.2..5.0).contains(&ratio), "{sr}: cowbell dyad unbalanced: {ratio}");
+        }
+    }
+
+    #[test]
+    fn metallic_balance_is_stable_across_sample_rates() {
+        let mut ratios = [0.0f32; 2];
+        for (i, sr) in [44_100.0f32, 48_000.0].iter().copied().enumerate() {
+            let hat = render(42, 0.9, sr, 0.25);
+            let body = magnitude(&hat, sr, 6_000.0, 0.005, 0.08);
+            let air = magnitude(&hat, sr, 10_000.0, 0.005, 0.08);
+            ratios[i] = air / body.max(1e-9);
+            assert!((0.08..8.0).contains(&ratios[i]), "{sr}: metallic hat band balance collapsed: {}", ratios[i]);
+        }
+        let cross_rate = ratios[0] / ratios[1].max(1e-9);
+        assert!((0.65..1.55).contains(&cross_rate), "hat timbre shifts across rates: 44.1/48 ratio {cross_rate}");
+    }
+
+    #[test]
+    fn hat_filter_rejects_the_oscillator_fundamentals() {
+        for sr in [44_100.0f32, 48_000.0] {
+            let hat = render(42, 0.9, sr, 0.18);
+            let fundamentals = [205.3, 304.4, 369.6, 522.7, 540.0, 800.0]
+                .iter()
+                .map(|&f| magnitude(&hat, sr, f, 0.004, 0.07))
+                .sum::<f32>();
+            let metal = [5_800.0, 6_500.0, 7_200.0, 8_000.0]
+                .iter()
+                .map(|&f| magnitude(&hat, sr, f, 0.004, 0.07))
+                .sum::<f32>();
+            assert!(metal > fundamentals * 2.0, "{sr}: oscillator fundamentals leak through hat filter: metal={metal}, fundamentals={fundamentals}");
+        }
+    }
+
+    #[test]
+    fn repeated_hats_vary_by_seed_without_level_jumps() {
+        let sr = 48_000.0;
+        let render_seed = |seed| {
+            let mut voice = DrumVoice::start_808(42, 0.75, sr, seed);
+            let mut out = vec![0.0f32; 4_864];
+            for block in out.chunks_mut(128) {
+                voice.render(block, sr);
+            }
+            out
+        };
+        let a = render_seed(0x1111_2222);
+        let b = render_seed(0x3333_4444);
+        let difference = a.iter().zip(&b).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
+        assert!(difference > 1e-3, "equal-velocity hats are bit-identical across voice seeds");
+        let level_ratio = rms(&a) / rms(&b).max(1e-9);
+        assert!((0.6..1.67).contains(&level_ratio), "phase variation creates a level jump: {level_ratio}");
+    }
+
+    #[test]
+    fn maraca_is_a_short_air_band_noise_burst() {
+        for sr in [44_100.0f32, 48_000.0] {
+            let maraca = render(70, 0.9, sr, 0.12);
+            let low = [1_500.0, 2_500.0, 3_500.0, 4_500.0]
+                .iter()
+                .map(|&f| magnitude(&maraca, sr, f, 0.0, 0.03))
+                .sum::<f32>();
+            let air = [8_000.0, 10_000.0, 12_000.0, 14_000.0]
+                .iter()
+                .map(|&f| magnitude(&maraca, sr, f, 0.0, 0.03))
+                .sum::<f32>();
+            assert!(air > low * 1.05, "{sr}: maraca is not air-band forward: air={air}, low={low}");
+            let early = rms(&maraca[..(0.02 * sr) as usize]);
+            let late = rms(&maraca[(0.06 * sr) as usize..(0.08 * sr) as usize]);
+            assert!(early > late * 8.0, "{sr}: maraca tail is too long: early={early}, late={late}");
         }
     }
 }

@@ -2,6 +2,77 @@
   "_doc": "Reference-corpus analysis constraints (audit 2026-07-12). Corpus provenance and license decisions are owned by agentic-docs/licensing.md; audio remains scratchpad-only. This file owns known limitations: compare.py applies mask_after_s and fail-closed invalid_axes, then surfaces the resolved contract in its report.",
   "corpora": [
     {
+      "match": "references/drums-808-original/a43/canonical/kick-short",
+      "corpus": "A43 original Roland TR-808 short kick (Freesound 9698 HQ preview)",
+      "license": "Sampling+ 1.0",
+      "sr": 48000,
+      "level_normalized": false,
+      "invalid_axes": {
+        "lufs": "Preview gain and hardware output setting are not documented; absolute loudness is not a fit target.",
+        "velocity_loudness": "Only one hit at an undocumented control setting is available.",
+        "decay": "The author explicitly labels this a short kick and edited it in an Akai S5000; its tail is not a neutral decay-control reference.",
+        "release": "The source is an edited one-shot."
+      },
+      "notes": "Original hardware is explicit, but this is an edited lossy preview. Trust onset, pitch sweep, and spectral balance only. Canonical processing: decode, mono fold-down, resample to 48 kHz, prepend 30 ms, pad to 2.5 s."
+    },
+    {
+      "match": "references/drums-808-original/a43/canonical/snare",
+      "corpus": "A43 original Roland TR-808 snare (Freesound 11378 HQ preview)",
+      "license": "Sampling+ 1.0",
+      "sr": 48000,
+      "level_normalized": false,
+      "invalid_axes": {
+        "lufs": "Preview gain and hardware output setting are not documented; absolute loudness is not a fit target.",
+        "velocity_loudness": "Only one hit at undocumented tone/snappy settings is available.",
+        "decay": "The author explicitly discloses further editing and processing in Bias Peak.",
+        "release": "The source is an edited one-shot."
+      },
+      "notes": "Original hardware is explicit, but this is an edited lossy preview. Trust onset, resonant modes, and noise-band balance only. Canonical processing matches the kick entry."
+    },
+    {
+      "match": "references/drums-808-original/a43/canonical/maraca",
+      "corpus": "A43 original Roland TR-808 maraca (Freesound 9697 HQ preview)",
+      "license": "Sampling+ 1.0",
+      "sr": 48000,
+      "level_normalized": false,
+      "invalid_axes": {
+        "lufs": "Preview gain and hardware output setting are not documented; absolute loudness is not a fit target.",
+        "velocity_loudness": "Only one hit is available.",
+        "decay": "The 35 ms source was edited in an Akai S5000 and cannot establish the natural tail independently.",
+        "release": "The source is an edited one-shot."
+      },
+      "notes": "Original hardware is explicit, but this is an edited lossy preview. Trust onset and noise-band shape only. Canonical processing matches the kick entry."
+    },
+    {
+      "match": "references/drums-808-original/a43/canonical",
+      "corpus": "A43 original Roland TR-808 isolated voices (Freesound pack 532 HQ previews)",
+      "license": "Sampling+ 1.0",
+      "sr": 48000,
+      "level_normalized": false,
+      "invalid_axes": {
+        "lufs": "Preview gain, individual instrument level, and hardware output setting are not documented; absolute loudness is not a fit target.",
+        "velocity_loudness": "Only one hit per voice at undocumented control settings is available."
+      },
+      "notes": "Original hardware is explicit, but the author discloses editing and the staged files are lossy HQ previews. Use as a structural tune source, never as sole proof of original-unit fidelity. Canonical processing: decode, mono fold-down, resample to 48 kHz, prepend 30 ms, pad to 2.5 s."
+    },
+    {
+      "match": "references/drums-808-original/wikimedia",
+      "corpus": "Theofanis Siassios original Roland TR-808 pattern recording (Wikimedia Commons)",
+      "license": "CC-BY-SA-3.0",
+      "sr": 44100,
+      "level_normalized": false,
+      "invalid_axes": {
+        "attack": "The source is a mixed pattern, not an isolated aligned hit.",
+        "decay": "Voices overlap in the pattern.",
+        "lufs": "Pattern mix levels and output gain are undocumented.",
+        "partials": "Multiple voices overlap.",
+        "release": "The source is a continuous pattern.",
+        "tail": "Voices overlap in the pattern.",
+        "velocity_loudness": "Accent and mix settings are undocumented."
+      },
+      "notes": "Independent original hardware and VRT-confirmed provenance. Held-out arrangement listening only; never use it as an isolated-hit metric target."
+    },
+    {
       "match": "references/piano-salamander",
       "corpus": "Salamander Grand V3 (freepats mirror)",
       "license": "CC-BY-3.0",

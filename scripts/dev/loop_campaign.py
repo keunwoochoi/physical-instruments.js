@@ -147,6 +147,21 @@ def render_case(case, out_path):
         raise RuntimeError(f"render-note returned invalid metadata for {case['id']}: {proc.stdout}") from exc
 
 
+def expected_f0(case):
+    """Return a harmonic-analysis anchor only when MIDI pitch means pitch.
+
+    GM percussion note numbers select voices; they do not encode the voice's
+    fundamental. Treating note 70 as a 466 Hz maraca fundamental can also make
+    sparse/noise references divide by an empty harmonic match. Drum-specific
+    structure belongs in the profile and reference, not a fabricated f0.
+    """
+    family = case["render"]["family"]
+    if family.startswith("drums") or family == "percussion":
+        return None
+    midi = case["render"]["midi"]
+    return 440.0 * (2.0 ** ((midi - 69) / 12.0))
+
+
 def objective_vector(report):
     out = {
         "mr_stft.mean": report["mr_stft"]["mean"],
@@ -276,7 +291,7 @@ def run_campaign(args):
             expected_onset_s=r["lead_seconds"],
             note_off_s=None if is_drum else r["lead_seconds"] + r["note_seconds"],
             max_post_note_off_db=case["analysis"].get("max_post_note_off_db"),
-            expected_f0=440.0 * (2.0 ** ((r["midi"] - 69) / 12.0)),
+            expected_f0=expected_f0(case),
         )
         report_path = out / "reports" / f"{case['id']}.json"
         write_json(report_path, report)

@@ -635,12 +635,18 @@ impl Engine {
                 }
             }
         }
-        // voice choice: retrigger same (track,pitch) > free slot > oldest (steal)
+        // Voice choice: retrigger same (track,pitch) > free slot > oldest.
+        // The 808 kit is a bank of one-shot analog envelopes: replacing an
+        // active kick/snare slot hard-cuts its tail at an arbitrary phase.
+        // Preserve those tails in a fresh slot; normal pool stealing still
+        // bounds polyphony under pathological input.
         let mut slot = None;
-        for (i, v) in self.voices.iter().enumerate() {
-            if v.active() && v.track as usize == track && v.midi as u32 == midi && !v.releasing {
-                slot = Some(i);
-                break;
+        if inst != Instrument::Drums808 {
+            for (i, v) in self.voices.iter().enumerate() {
+                if v.active() && v.track as usize == track && v.midi as u32 == midi && !v.releasing {
+                    slot = Some(i);
+                    break;
+                }
             }
         }
         if slot.is_none() {
@@ -1732,7 +1738,7 @@ mod tests {
         let rms = |x: &[f32]| {
             (x.iter().map(|s| (*s as f64) * (*s as f64)).sum::<f64>() / x.len() as f64).sqrt()
         };
-        for inst in [Instrument::Drums, Instrument::DrumsRock, Instrument::DrumsJazz] {
+        for inst in [Instrument::Drums, Instrument::DrumsRock, Instrument::DrumsJazz, Instrument::Drums808] {
             let mut e = Engine::new(48_000.0);
             e.set_track(0, inst, 0.8, 0.0);
             e.note_on(0, 46, 0.9);
@@ -1751,6 +1757,25 @@ mod tests {
                 "{inst:?}: choke failed — ringing {ringing} vs choked {choked}"
             );
         }
+    }
+
+    #[test]
+    fn drums808_retriggers_preserve_one_shot_tails() {
+        let mut e = Engine::new(48_000.0);
+        e.set_track(0, Instrument::Drums808, 0.8, 0.0);
+        e.note_on(0, 36, 0.9);
+        render_seconds(&mut e, 0.2);
+        e.note_on(0, 36, 0.9);
+        assert_eq!(e.active_voices(), 2, "808 retrigger replaced the ringing kick tail");
+        for _ in 0..12 {
+            render_seconds(&mut e, 0.04);
+            e.note_on(0, 36, 0.9);
+        }
+        assert!(e.active_voices() > 2 && e.active_voices() <= MAX_VOICES);
+        let out = render_seconds(&mut e, 0.5);
+        assert!(out.iter().all(|sample| sample.is_finite()));
+        let peak = out.iter().fold(0.0f32, |p, &sample| p.max(sample.abs()));
+        assert!(peak <= 1.0, "repeated 808 kicks escaped the output guard: {peak}");
     }
 
     #[test]
