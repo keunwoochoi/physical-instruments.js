@@ -76,6 +76,40 @@ export function demoSong() {
       chord.slice(0, 2).forEach((p, i) =>
         add("piano", p + 12, human(bar + 2 * BEAT + i * 0.02, 6), 1.5 * BEAT, (44 + rand() * 10) * arc));
 
+      // Steel-string acoustic: fingerpicked arpeggio through pass 1, drops out when
+      // the electric takes over, returns under the final bar
+      if (pass === 0 || b === 3) {
+        const pat = [0, 2, 1, 2, 0, 2, 1, 2]; // root-high-mid rolling pattern
+        pat.forEach((ci, s) => {
+          const t = human(swung(bar + s * 0.5 * BEAT, s), 7);
+          add("guitar-steel", chord[ci] + (ci === 0 ? 0 : 12), t, 0.42 * BEAT, (48 + (s % 2) * 10 + rand() * 8) * arc);
+        });
+      }
+
+      // Clean electric: doubles the melody an octave down on pass 2 (call-response feel)
+      if (pass === 1 && b < 3) {
+        const line = MELODY2[b];
+        line.forEach((deg, s) => {
+          if (deg < 0 || s % 2 === 1) return; // sparser than the marimba line
+          const t = human(swung(bar + s * 0.5 * BEAT, s), 9);
+          add("guitar-electric", scale[deg] - 12, t, 0.9 * BEAT, (52 + rand() * 10) * arc);
+        });
+      }
+
+      // Distorted power-chord tag on the final bar: E5 shape on the G root
+      if (pass === 1 && b === 3) {
+        [55 - 12, 55 - 5, 55].forEach((p, i) =>
+          add("guitar-distorted", p, human(bar + 2 * BEAT, 4), 1.9 * BEAT, 100 + i * 4));
+        add("percussion", 49, human(bar + 2 * BEAT, 4), 0.3, 112, true);
+      }
+
+      // Ride takes over timekeeping on pass 2 (the improved cymbal gets a spotlight)
+      if (pass === 1) {
+        for (let e = 0; e < 4; e++) {
+          add("percussion", 51, human(swung(bar + e * BEAT, e * 2), 5), 0.15, 62 + (e % 2) * 12, true);
+        }
+      }
+
       // Bass: 1 · and-of-2 (swung) · 3 · approach on 4+
       add("bass", bass, human(bar, 4), 1.4 * BEAT, (92 + rand() * 8) * arc);
       add("bass", bass + 7, human(swung(bar + 1.5 * BEAT, 3), 6), 0.4 * BEAT, (68 + rand() * 8) * arc);
@@ -119,3 +153,19 @@ export function demoSong() {
 }
 
 export const DEMO_SONG_SECONDS = 8 * BAR;
+
+/** The arrangement's mix — shared by the browser playground and the Node render
+ *  harness so both hear the same balance (gains are musical choices; loudness
+ *  parity across families is already handled by the engine's measured makeup). */
+export const DEMO_MIX = {
+  piano: { gain: 0.62, pan: 0.25 },
+  bass: { gain: 0.66, pan: 0.0 },
+  marimba: { gain: 0.62, pan: -0.25 },
+  glockenspiel: { gain: 0.45, pan: 0.35 },
+  percussion: { gain: 0.58, pan: 0.1 },
+  drums: { gain: 0.58, pan: 0.1 },
+  strings: { gain: 0.42, pan: -0.15 },
+  "guitar-steel": { gain: 0.52, pan: -0.4 },
+  "guitar-electric": { gain: 0.52, pan: 0.45 },
+  "guitar-distorted": { gain: 0.56, pan: -0.1 },
+};

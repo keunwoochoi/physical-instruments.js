@@ -169,6 +169,8 @@ export interface PedalEvent {
 
 export interface PlayOptions {
   pedals?: readonly PedalEvent[];
+  /** Per-family mix (gain/pan) for auto-created tracks, e.g. {"drums": {gain: 0.6}}. */
+  tracks?: Readonly<Record<string, TrackOptions>>;
 }
 
 async function fetchWasmBytes(url: string | URL): Promise<ArrayBuffer> {
@@ -297,10 +299,11 @@ export async function createEngine(options: EngineOptions = {}): Promise<Engine>
    */
   function buildSchedule(
     notes: readonly NoteEvent[],
-    pedals: readonly PedalEvent[] | undefined,
+    options: PlayOptions,
     t0: number,
     resolve: (group: InstrumentGroup, events: WorkletEvent[]) => number,
   ): { events: WorkletEvent[]; end: number } {
+    const pedals = options.pedals;
     const events: WorkletEvent[] = [];
     let end = t0;
     for (const n of notes) {
@@ -323,18 +326,21 @@ export async function createEngine(options: EngineOptions = {}): Promise<Engine>
   }
 
   /** Track resolver for the live engine: per-family tracks persist across play() calls. */
-  function liveResolver(group: InstrumentGroup, events: WorkletEvent[]): number {
-    let idx = groupTracks.get(group);
-    if (idx === undefined) {
-      if (nextTrack >= MAX_TRACKS) throw new Error(`instruments.js: track limit (${MAX_TRACKS}) reached`);
-      idx = nextTrack++;
-      groupTracks.set(group, idx);
-      events.push({
-        type: "event", when: 0, kind: "track", track: idx,
-        inst: GROUP_TO_INSTRUMENT[group] ?? 0, gain: 0.8, pan: 0,
-      });
-    }
-    return idx;
+  function makeLiveResolver(mix: PlayOptions["tracks"]) {
+    return (group: InstrumentGroup, events: WorkletEvent[]): number => {
+      let idx = groupTracks.get(group);
+      if (idx === undefined) {
+        if (nextTrack >= MAX_TRACKS) throw new Error(`instruments.js: track limit (${MAX_TRACKS}) reached`);
+        idx = nextTrack++;
+        groupTracks.set(group, idx);
+        const m = mix?.[group] ?? {};
+        events.push({
+          type: "event", when: 0, kind: "track", track: idx,
+          inst: GROUP_TO_INSTRUMENT[group] ?? 0, gain: m.gain ?? 0.8, pan: m.pan ?? 0,
+        });
+      }
+      return idx;
+    };
   }
 
   const engine: Engine = {
@@ -349,7 +355,7 @@ export async function createEngine(options: EngineOptions = {}): Promise<Engine>
       await ready;
       resumeIfNeeded();
       const t0 = context.currentTime + SCHED_LEAD;
-      const { events, end } = buildSchedule(notes, options.pedals, t0, liveResolver);
+      const { events, end } = buildSchedule(notes, options, t0, makeLiveResolver(options.tracks));
       node.port.postMessage({ type: "events", list: events });
       const finish = end + 2.0; // let tails ring
       await new Promise<void>((resolve) => {
@@ -374,14 +380,15 @@ export async function createEngine(options: EngineOptions = {}): Promise<Engine>
       // which is cloned synchronously at construction.
       const local = new Map<InstrumentGroup, number>();
       let localNext = 0;
-      const { events } = buildSchedule(notes, options.pedals, 0.05, (group, evts) => {
+      const { events } = buildSchedule(notes, options, 0.05, (group, evts) => {
         let idx = local.get(group);
         if (idx === undefined) {
           idx = localNext++;
           local.set(group, idx);
+          const m = options.tracks?.[group] ?? {};
           evts.push({
             type: "event", when: 0, kind: "track", track: idx,
-            inst: GROUP_TO_INSTRUMENT[group] ?? 0, gain: 0.8, pan: 0,
+            inst: GROUP_TO_INSTRUMENT[group] ?? 0, gain: m.gain ?? 0.8, pan: m.pan ?? 0,
           });
         }
         return idx;

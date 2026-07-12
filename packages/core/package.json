@@ -9,7 +9,12 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    }
+    },
+    "./worklet": "./worklet/instruments-processor.js",
+    "./wasm": "./wasm/instruments_dsp.wasm"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "files": [
     "dist",

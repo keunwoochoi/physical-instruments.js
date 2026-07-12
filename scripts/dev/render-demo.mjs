@@ -51,8 +51,11 @@ function scheduleSong(notes) {
 }
 
 // per-track pans/gains matching a reasonable mix
-// post-normalization: track gains are musical choices, not loudness compensation
-const TRACK_STYLE = { piano: [0.8, 0.25], epiano: [0.8, 0.25], bass: [0.85, 0.0], marimba: [0.8, -0.25], glockenspiel: [0.6, 0.35], drums: [0.75, 0.1], percussion: [0.75, 0.1], strings: [0.55, -0.15], synthpad: [0.55, -0.15] };
+// single source of truth for the arrangement mix (shared with the playground)
+import { DEMO_MIX } from "../../apps/playground/demo-song.mjs";
+const TRACK_STYLE = Object.fromEntries(
+  Object.entries(DEMO_MIX).map(([k, v]) => [k, [v.gain, v.pan]]),
+);
 
 function applyEvent(x, p, e, styleByTrack) {
   if (e.kind === "track") {

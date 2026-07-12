@@ -52,7 +52,7 @@ eq(n1.startSeconds, 0.0, "n1 start");
 eq(n1.endSeconds, 0.5, "n1 end (quarter at 120 BPM)");
 assert.equal(n1.midiPitch, 69);
 assert.equal(n1.velocity, 100);
-assert.equal(n1.instrumentGroup, "guitar", "program 25 → guitar");
+assert.equal(n1.instrumentGroup, "guitar-steel", "program 25 → steel-string acoustic");
 
 // tick 96–192: tempo changed to 60 BPM at tick 96, so this quarter lasts 1.0 s
 eq(n2.startSeconds, 0.5, "n2 start");
@@ -68,6 +68,9 @@ eq(parsed.pedals[1].timeSeconds, 2.5, "pedal up");
 
 // GM mapping spot checks
 assert.equal(gmProgramToGroup(0), "piano");
+assert.equal(gmProgramToGroup(24), "guitar");
+assert.equal(gmProgramToGroup(27), "guitar-electric");
+assert.equal(gmProgramToGroup(30), "guitar-distorted");
 assert.equal(gmProgramToGroup(33), "bass");
 assert.equal(gmProgramToGroup(41), "strings");
 assert.equal(gmProgramToGroup(57), "brass");

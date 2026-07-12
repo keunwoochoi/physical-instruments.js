@@ -101,13 +101,14 @@
     Every sound on this page is synthesized in real time by a ~18 KB (gzipped) WASM engine —
     modal bars, Karplus-Strong strings, a tine e-piano, an anti-aliased subtractive pad,
     and a drum kit, mixed across independent tracks inside one AudioWorklet. Keyboard: <b>Z–M</b> lower octave, <b>Q–U</b> upper,
-    number row = drums when the kit is selected.
+    number row = drums when the kit is selected. <b>Space</b> = sustain pedal, <b>← →</b> = octave shift,
+    click height on a key = velocity.
   </p>
 
   <script type="module">
     import { createEngine } from "../../packages/core/dist/index.js";
     import { parseMidi } from "../../packages/midi/dist/index.js";
-    import { demoSong } from "./demo-song.mjs";
+    import { demoSong, DEMO_MIX } from "./demo-song.mjs";
 
     const $ = (id) => document.getElementById(id);
     const status = (t, isError = false) => {
@@ -178,12 +179,12 @@
     }
 
     const down = new Set();
-    function noteOn(midi) {
+    function noteOn(midi, vel = Number($("vel").value)) {
       if (!engine || down.has(midi)) return;
       down.add(midi);
       keyEls.get(midi)?.classList.add("down");
       const inst = $("inst").value;
-      track(inst).noteOn(midi, Number($("vel").value));
+      track(inst).noteOn(midi, vel);
     }
     function noteOff(midi) {
       if (!down.delete(midi)) return;
@@ -191,26 +192,57 @@
       track($("inst").value).noteOff(midi);
     }
 
+    // pointer Y within the key = velocity (top ≈ pp, bottom edge ≈ ff)
     keysEl.addEventListener("pointerdown", (e) => {
       const m = e.target.dataset?.midi;
-      if (m) { e.target.setPointerCapture(e.pointerId); noteOn(+m); }
+      if (m) {
+        e.target.setPointerCapture(e.pointerId);
+        const r = e.target.getBoundingClientRect();
+        const frac = Math.min(1, Math.max(0.05, (e.clientY - r.top) / r.height));
+        noteOn(+m, Math.round(24 + 103 * frac));
+      }
     });
     keysEl.addEventListener("pointerup", (e) => { const m = e.target.dataset?.midi; if (m) noteOff(+m); });
     keysEl.addEventListener("pointercancel", (e) => { const m = e.target.dataset?.midi; if (m) noteOff(+m); });
 
+    let octave = 0; // shift in octaves via ← →
+    let pedalDown = false;
     window.addEventListener("keydown", (e) => {
-      if (e.repeat || e.metaKey || e.ctrlKey) return;
+      if (e.metaKey || e.ctrlKey) return;
+      if (e.code === "Space") {
+        e.preventDefault();
+        if (!pedalDown && engine) {
+          pedalDown = true;
+          track($("inst").value === "drums" ? "drums" : $("inst").value).pedal(true);
+          status("sustain pedal DOWN (space)");
+        }
+        return;
+      }
+      if (e.repeat) return;
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        octave = Math.max(-2, Math.min(2, octave + (e.key === "ArrowRight" ? 1 : -1)));
+        status(`octave ${octave >= 0 ? "+" : ""}${octave}`);
+        return;
+      }
       if ($("inst").value === "drums") {
         const pad = PAD_KEYS[e.key];
         if (pad) hitPad(pad);
         return;
       }
       const i = KEYS.indexOf(e.key.toLowerCase());
-      if (i >= 0) noteOn(BASE + i);
+      if (i >= 0) noteOn(BASE + i + 12 * octave);
     });
     window.addEventListener("keyup", (e) => {
+      if (e.code === "Space") {
+        pedalDown = false;
+        if (engine) {
+          track($("inst").value === "drums" ? "drums" : $("inst").value).pedal(false);
+          status("engine live — pedal up");
+        }
+        return;
+      }
       const i = KEYS.indexOf(e.key.toLowerCase());
-      if (i >= 0) noteOff(BASE + i);
+      if (i >= 0) noteOff(BASE + i + 12 * octave);
     });
 
     // ---------- drum pads ----------
@@ -241,7 +273,7 @@
       if (!engine) return;
       $("play-song").disabled = true;
       status("playing the arrangement — 5 tracks, one engine…");
-      try { await engine.play(demoSong()); status("done — engine live"); }
+      try { await engine.play(demoSong(), { tracks: DEMO_MIX }); status("done — engine live"); }
       finally { $("play-song").disabled = false; }
     });
     $("stop").addEventListener("click", () => engine?.stop());
@@ -298,7 +330,7 @@
     $("download").addEventListener("click", async () => {
       if (!engine) return;
       status("rendering offline…");
-      const wav = await engine.renderOffline(demoSong());
+      const wav = await engine.renderOffline(demoSong(), { tracks: DEMO_MIX });
       const url = URL.createObjectURL(new Blob([wav], { type: "audio/wav" }));
       const a = Object.assign(document.createElement("a"), { href: url, download: "instruments-js-demo.wav" });
       a.click();
