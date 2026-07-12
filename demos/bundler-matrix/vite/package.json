@@ -1,0 +1,16 @@
+{
+  "name": "fixture-vite",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "instruments.js": "file:../../../packages/core"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}

@@ -29,6 +29,12 @@ The permissive license is part of the product. This file is the single owner of 
 | mi-gen / MIMS / miPhysics | GPL | CORDIS-ANIMA papers (Cadoz et al.) |
 | guitarix, RT-WDF | GPL | (not needed) |
 
+## Reference audio (match-reference loop)
+
+| Source | License | Use | Redistribution |
+|---|---|---|---|
+| NSynth test set (Engel et al. 2017, Magenta/Google) | CC-BY 4.0 | local reference corpus for render↔reference comparison (scratchpad only) | NOT committed to the repo; if references ever ship, add attribution per CC-BY |
+
 ## Port ledger
 
 Every ported file: `| path | origin file | origin license | date | PR | notes |`
