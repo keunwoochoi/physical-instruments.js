@@ -870,7 +870,21 @@ mod tests {
                 e.note_on(0, 57, 0.8); // A3
                 let out = render_seconds(&mut e, 0.7);
                 let tail = &out[(0.3 * sr) as usize..(0.6 * sr) as usize];
-                let f_est = estimate_pitch(tail, sr, 100.0, 500.0);
+                // Focus the estimator on the fundamental region: steel's
+                // stiffness-stretched upper partials (round 2) ring on the HF
+                // loss floor and bias a raw ACF sharp by tens of cents while
+                // the true f0 stays within ±3 cents (verified by DFT peak fit
+                // 2026-07-11; same estimator-vs-partials lesson as the piano).
+                let k = 1.0 - (-core::f32::consts::TAU * 550.0 / sr).exp();
+                let mut lp = 0.0f32;
+                let filtered: Vec<f32> = tail
+                    .iter()
+                    .map(|&s| {
+                        lp += k * (s - lp);
+                        lp
+                    })
+                    .collect();
+                let f_est = estimate_pitch(&filtered, sr, 100.0, 500.0);
                 assert!(out.iter().all(|s| s.is_finite()));
                 assert!(
                     (f_est - 220.0).abs() < 220.0 * 0.02,
