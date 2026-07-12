@@ -16,16 +16,22 @@
 > ```
 
 ```ts
-// The API this library exists to make true (v0 contract, see packages/core):
 import { createEngine } from "instruments.js";
+import { parseMidi } from "@instrumentsjs/midi";
 
 const engine = await createEngine();               // lazy AudioContext, gesture-safe
-const piano = engine.createTrack("piano");
-const bass  = engine.createTrack("bass", { gain: 0.8, pan: -0.2 });
+const piano = engine.createTrack("piano");         // hammer-collision waveguide piano
+piano.noteOn(60, 96);                              // velocity changes timbre, not just volume
+piano.pedal(true);                                 // sustain (CC64) — note-offs defer to pedal-up
 
-piano.noteOn(60, 96);                              // middle C, velocity 96 — timbre changes, not just volume
-await engine.play(notes);                          // or: play a whole multi-track note list
-const wav = await engine.renderOffline(notes);     // deterministic bounce to WAV
+const song = parseMidi(await file.arrayBuffer());  // any Standard MIDI File
+await engine.play(song.notes, {
+  pedals: song.pedals,
+  tracks: { drums: { gain: 0.6, pan: 0.1 } },      // per-family mix
+});
+
+const wav = await engine.renderOffline(song.notes, // deterministic bounce
+  { float32: true, onProgress: (f) => console.log(f) });
 ```
 
 ## Why
