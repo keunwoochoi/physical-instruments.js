@@ -3313,7 +3313,17 @@ impl DrumVoice {
                 v.amp = vel * amp;
                 v.click = ck0 + ckv * vel * vel;
                 v.hp_c = 0.08 + ckb * vel; // click lowpass: felt thud → hard slap
-                v.life = ((t60 * 1.6).max(0.5) * sr) as u64;
+                // resonant-head ring: after the batter transient the front head
+                // keeps singing at its own (slightly higher) tuning — refs hold
+                // an LF-band t60 of 1.1–1.3 s at EVERY velocity while the
+                // broadband envelope decays in ~0.25 s (two-stage tail).
+                // Jazz kicks are left open (long); rock/pop are muffled.
+                let (ring_t60, ring_amp) = match kit {
+                    KitStyle::Pop => (0.50, 0.30),
+                    KitStyle::Rock => (0.45, 0.30),
+                    KitStyle::Jazz => (1.35, 0.50),
+                };
+                v.life = ((t60 * 1.6).max(ring_t60 * 1.05).max(0.5) * sr) as u64;
                 // slap resonator: (freq, strength) per kit; amplitude ~vel^2
                 // (soft felt strokes barely knock; hard strokes do — refs:
                 // slap band −2.4 dB rel at vl4, −12.4 dB at vl1)
@@ -3338,9 +3348,12 @@ impl DrumVoice {
                     vel,
                     sr,
                     &[
+                        ModeDef { ratio: 1.04, amp: ring_amp, t60: ring_t60 },
                         ModeDef { ratio: 1.58, amp: 0.5, t60: 0.055 },
                         ModeDef { ratio: 3.4, amp: 0.28, t60: 0.035 },
                     ],
+                    // impulse-style charge (longer pulses pump the LF ring mode
+                    // ~7 dB hot and darken the attack — measured it3 regression)
                     0.6,
                     0.0,
                     0.0,
