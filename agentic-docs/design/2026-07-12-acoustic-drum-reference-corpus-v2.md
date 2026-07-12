@@ -1,7 +1,7 @@
 # Acoustic drum reference corpus v2
 
 Date: 2026-07-12
-Status: draft — this document proposes a source-diverse kick/snare evidence program for issue #43. It does not authorize downloading or redistributing audio, changing DSP, accepting any kit, or making pop/rock/jazz quality claims before source receipts, trust audits, panel review, and human listening pass.
+Status: draft — this document proposes a source-diverse kick/snare evidence program for issue #43. It does not authorize acquiring audio, unsealing a holdout, redistributing audio, changing DSP, accepting a kit, or making pop/rock/jazz quality claims before source receipts, a frozen split, trust audits, panel approval, and human listening pass.
 
 ## Motivation
 
@@ -10,14 +10,15 @@ The owner correctly challenged the evidence behind the pop, rock, and jazz kits,
 1. Four isolated cases cannot identify six core targets. The audited matrix has one pop kick, one rock kick, one rock snare, and one held-out jazz brush/snare; it has no pop snare, jazz kick, real velocity ladder, or source-independent held-out kick/snare pair.
 2. A genre label is not an acoustic specification. “Pop,” “rock,” and “jazz” must resolve to recorded construction, head/tuning/damping, beater or brush technique, microphone role, room contribution, and velocity behavior.
 3. One microphone perspective cannot own both the physical voice and the produced record. Close/direct channels may fit excitation and shell/body behavior; overhead, mid, and room channels are separate radiation/listening evidence and cannot be silently folded into the same numeric target.
-4. A single hit is not a drum. Real velocity layers and repeated hits must be evaluated as distributions; amplitude-scaled copies do not count as dynamics or round robins.
-5. The 808 campaign is comparatively better specified because it records original-hardware provenance and invalid axes explicitly. Acoustic kits need at least that level of honesty, plus source diversity and real performer variation.
+4. A single hit is not a drum. Every credible native hit and layer must survive canonicalization; three summary regions cannot replace the full velocity/timbre curve, and amplitude-scaled copies do not count as dynamics or repetitions.
+5. A held-out source is not fresh if its audio has already informed a fit. DRSKit has already been inspected and used during jazz work, so it is tune/calibration material only, never a fresh holdout.
+6. The 808 campaign is comparatively better specified because it records original-hardware provenance and invalid axes explicitly. Acoustic kits need at least that level of honesty, plus source diversity, performer variation, live control, spatial behavior, and full-arrangement stress.
 
 ## Thesis
 
-Build the acoustic-kit corpus around physical and recording axes first, then map those validated targets to product presets. Each pop, rock, and jazz kick/snare claim requires a tune source and an entirely source-independent held-out source, three real strike-energy regions, multiple repeated hits, and explicit close versus spatial microphone roles. Absolute velocity-to-loudness evidence is valid only within one unchanged recording chain; cross-source comparisons own timbre and envelope shape only unless gain calibration is documented.
+Build the acoustic-kit corpus around physical and recording axes first, then map validated targets to product presets. Each pop, rock, and jazz kick/snare claim requires at least four independent acquisition families: two or more tune families, one threshold-calibration family, and one globally sealed holdout family. The evidence retains real strike distributions, repeated hits, and explicit close versus spatial microphone roles. Absolute velocity-to-loudness evidence is valid only within one unchanged recording chain; cross-source comparisons own timbre and envelope shape only unless gain calibration is documented.
 
-The corpus remains scratchpad-only and content-addressed. Git stores source receipts, licenses, immutable digests, canonicalization operations, case manifests, invalid-axis declarations, and reports—not reference audio. DSP fitting cannot begin until the source-selection phase proves that every claimed axis is actually observable.
+The corpus remains private and content-addressed. Git stores normalized source metadata, access/unsealing records, license receipts, immutable digests, canonicalization operations, event manifests, invalid-axis declarations, and content-addressed reports—not reference audio. DSP fitting cannot begin until source selection proves that every claimed axis is observable and the split was frozen before any holdout audio was opened.
 
 ## Evidence base
 
@@ -25,23 +26,25 @@ The corpus remains scratchpad-only and content-addressed. Git stores source rece
 
 - The exact acoustic matrix at commit [`e59291d`](https://github.com/keunwoochoi/instruments.js/blob/e59291d1f7450e7c5e0f0ac2e07995fd37e3f885/evals/cases/drums.json) contains only four cases: pop kick ff, rock kick mf, rock snare ff, and held-out jazz brush mf. The audit finding is tracked in [issue #43](https://github.com/keunwoochoi/instruments.js/issues/43).
 - The exact reference contract at [`e59291d`](https://github.com/keunwoochoi/instruments.js/blob/e59291d1f7450e7c5e0f0ac2e07995fd37e3f885/evals/reference-manifest.json) identifies the existing `virtuosity-drums` material as CC0 and declares room bleed, but it does not make the four-case matrix source-diverse.
-- The four declared pop/rock/jazz files are absent from the visible scratchpad, while implementation comments attribute rock material to CC-BY Muldjord/Naked sources that the generic manifest can incorrectly inherit as Virtuosity/CC0. Unregistered references currently receive an empty corpus contract rather than a license/invalid-axis failure. P0/P1 must close these trust holes before any acquisition or fit.
+- The four declared pop/rock/jazz files are absent from the visible scratchpad, while implementation comments attribute rock material to CC-BY Muldjord/Naked sources that the generic manifest can incorrectly inherit as Virtuosity/CC0. Unregistered references currently receive an empty corpus contract rather than a license/invalid-axis failure. P0/P1 must close these trust holes before acquisition or fitting.
 - A staged Virtuosity receipt already records real soft/mid/hard jazz-kick close hits plus matched mid and overhead perspectives, without level normalization. This is useful tune evidence but cannot be its own held-out source.
 
 ### Primary source candidates
 
-- [Virtuosity Drums’ official product notes](https://versilian-studios.com/virtuosity-drums/) and [manual](https://versilian-studios.com/Distro/VirtuosityDrumsManual.pdf) document a CC0 contemporary-jazz kit, up to 36 natural dynamic layers for kick/snare/toms, independent kick/snare close microphones, overhead/mid/room/vintage positions, kick damping, snares on/off, bleed control, and diverse snare articulations. It has dense natural dynamics but no kick/snare round robins, so it is a jazz tune source rather than proof of all jazz drums.
-- [DRSKit’s official DrumGizmo page](https://www.drumgizmo.org/wiki/doku.php?id=kits%3Adrskit) declares CC-BY-4.0, says the handcrafted kit is intended from jazz through rock, and documents 13 channels including front/back kick, top/bottom snare, overheads, and ambience. The official archive contains dozens of power-ranked kick/snare hits plus rim and whisker techniques. It is the source-independent jazz held-out candidate and a neutral pop challenge source, not two independent sources.
-- [SM Drums’ official project page](https://smmdrums.wordpress.com/for-reaper/) documents dry, unnormalized WAVs with 127 kick velocity layers ×2 round robins and 127 snare layers ×4 round robins, including no-ring and studio-ring snare variants. However, the author page does not display an explicit legal grant; the SFZ catalog’s “Public Domain” label is not enough. SM Drums remains rights-blocked until a bundled license or written author confirmation is retained.
-- [Naked Drums’ licensed SFZ repository](https://github.com/sfzinstruments/WilkinsonAudio.NakedDrums) and [catalog entry](https://sfzinstruments.github.io/drums/naked_drums/) declare CC-BY-4.0, a Yamaha Recording Custom 22-inch kick, two documented snares, multiple room/overhead/close channels, ten round robins, and up to five velocity layers. It is the pop tune candidate pending exact archive, processing, and mic-map receipt verification.
-- [MuldjordKit’s official DrumGizmo page](https://drumgizmo.org/wiki/doku.php?id=kits%3Amuldjordkit) declares CC-BY-4.0, identifies a Tama Superstar metal/rock kit, and documents inside-kick D112/trigger, snare top/bottom, overhead, and ambience channels. It also declares a snare phase-inversion requirement and known low-layer defects; those caveats must become enforceable invalid-axis/source exclusions.
-- [CrocellKit’s official DrumGizmo page](https://drumgizmo.org/wiki/doku.php?id=kits%3Acrocellkit) declares CC-BY-4.0, identifies the actual metal-band recording kit, and documents independent inside/outside kick, top/bottom snare, three overhead, and two ambience channels. The archive contains 51 left-kick hits, 49 right-kick hits, and 98 center-snare hits; left/right double-pedal articulations must remain distinct. It is the source-independent rock held-out candidate after an energy-distribution audit.
-- [DrumGizmo’s official sampling workflow](https://drumgizmo.org/wiki/doku.php?id=getting_dgedit) instructs recording at least 30 hits per drum from very light to very hard with separate close, overhead, and room tracks. This supports distributional velocity/round-robin gates rather than one hand-picked hit per label.
-- [Big Rusty Drums’ official page](https://shop.karoryfer.com/pages/free-big-rusty-drums) and [CC0 repository](https://github.com/sfzinstruments/karoryfer.big-rusty-drums) document more than 4,400 samples from a 24-inch kick and 14×8 snare using sticks, brushes, and mallets, with close/overhead capture, snare bottom, damping variants, center/edge/rimshot/sidestick hits, and brush stirs/flutters. It is a source-independent brush/articulation candidate, not the velocity-curve authority because exact velocity-bin coverage is not published.
-- [Swirly Drums’ official page](https://shop.karoryfer.com/pages/free-swirly-drums) documents CC0 brush-only sampling, controllable snare stirs/flutters, center/edge hits, and a brushed kick among more than 4,700 samples. It is a brush-technique tune candidate, not automatically a jazz-kit target: the source itself says its drums are punk/metal instruments played gently with brushes.
+- [Virtuosity Drums’ official product notes](https://versilian-studios.com/virtuosity-drums/) and [manual](https://versilian-studios.com/Distro/VirtuosityDrumsManual.pdf) document a CC0 contemporary-jazz kit, up to 36 natural dynamic layers for kick/snare/toms, independent kick/snare close microphones, overhead/mid/room/vintage positions, kick damping, snares on/off, bleed control, and diverse snare articulations. It has dense natural dynamics but no kick/snare round robins, so it is tune material rather than repetition or holdout proof.
+- [DRSKit’s official DrumGizmo page](https://www.drumgizmo.org/wiki/doku.php?id=kits%3Adrskit) declares CC-BY-4.0, says the handcrafted kit is intended from jazz through rock, and documents 13 channels including front/back kick, top/bottom snare, overheads, and ambience. Its audio has already been inspected and used to fit jazz, so it is permanently contaminated for holdout use and may serve only tune or threshold-calibration roles.
+- [SM Drums’ official project page](https://smmdrums.wordpress.com/for-reaper/) documents dry, unnormalized WAVs with 127 kick velocity layers ×2 round robins and 127 snare layers ×4 round robins, including no-ring and studio-ring snare variants. The author page does not display an explicit legal grant; a secondary catalog’s “Public Domain” label is insufficient. SM Drums remains rights-blocked until a bundled license or written author confirmation is retained.
+- [Naked Drums’ licensed SFZ repository](https://github.com/sfzinstruments/WilkinsonAudio.NakedDrums) and [catalog entry](https://sfzinstruments.github.io/drums/naked_drums/) declare CC-BY-4.0, a Yamaha Recording Custom 22-inch kick, two documented snares, multiple room/overhead/close channels, ten round robins, and up to five velocity layers. Existing implementation attribution means P0 must conservatively classify its access history before assigning a role.
+- [MuldjordKit’s official DrumGizmo page](https://drumgizmo.org/wiki/doku.php?id=kits%3Amuldjordkit) declares CC-BY-4.0, identifies a Tama Superstar metal/rock kit, and documents inside-kick D112/trigger, snare top/bottom, overhead, and ambience channels. It also declares a snare phase-inversion requirement and known low-layer defects; those caveats must become enforceable operations/exclusions. Existing implementation attribution means it is presumptively tune material.
+- [CrocellKit’s official DrumGizmo page](https://drumgizmo.org/wiki/doku.php?id=kits%3Acrocellkit) declares CC-BY-4.0, identifies the actual metal-band recording kit, and documents independent inside/outside kick, top/bottom snare, three overhead, and two ambience channels. The archive contains 51 left-kick hits, 49 right-kick hits, and 98 center-snare hits; left/right double-pedal articulations must remain distinct. It is a metadata-only rock holdout candidate only if the access ledger proves its audio has never been opened.
+- [Kitty’s official DrumGizmo page](https://drumgizmo.org/wiki/doku.php?id=kits%3Akitty) declares CC-BY-4.0, describes a modern pop/rock hybrid kit, documents 14 independent channels, and separates kick in/out, snare top/bottom, overhead, room, and trash microphones. Hardware identity is intentionally undisclosed, so construction-dependent axes are invalid. It is a metadata-only calibration or holdout candidate until P0 verifies archive identity, hit coverage, processing, and access history.
+- [ShittyKit’s official DrumGizmo page](https://drumgizmo.org/wiki/doku.php?id=kits%3Ashittykit) declares CC-BY-4.0, identifies an 18-inch kick and 14×5 snare, documents close/overhead/M-S room capture, and says the source is unprocessed apart from time adjustment between close microphones and overhead. Its old fixed velocity groups and pre-existing time adjustment require explicit invalidity/operation records. It is a metadata-only compact/jazz challenge or holdout candidate until P0 verifies its distributions and access history.
+- [DrumGizmo’s official sampling workflow](https://drumgizmo.org/wiki/doku.php?id=getting_dgedit) instructs recording at least 30 hits per drum from very light to very hard with separate close, overhead, and room tracks. This supports distributional velocity/repetition gates rather than one hand-picked hit per label.
+- [Big Rusty Drums’ official page](https://shop.karoryfer.com/pages/free-big-rusty-drums) and [CC0 repository](https://github.com/sfzinstruments/karoryfer.big-rusty-drums) document more than 4,400 samples from a 24-inch kick and 14×8 snare using sticks, brushes, and mallets, with close/overhead capture, snare bottom, damping variants, center/edge/rimshot/sidestick hits, and brush stirs/flutters. It is a source-independent brush/articulation candidate, not a velocity-curve authority until exact coverage is audited.
+- [Swirly Drums’ official page](https://shop.karoryfer.com/pages/free-swirly-drums) documents CC0 brush-only sampling, controllable snare stirs/flutters, center/edge hits, and a brushed kick among more than 4,700 samples. It is a brush-technique tune candidate, not automatically a jazz target: the source says its drums are punk/metal instruments played gently with brushes.
 - [Ben Burnes’ official brushed-drum page](https://ben-burnes.gumroad.com/l/bb_brushed) declares CC0 Yamaha Birch Custom Absolute snare recordings with two brush types. It remains an optional challenge candidate until its downloaded manifest proves real dynamic/repetition coverage and a complete license receipt.
-- [ENST-Drums’ primary ISMIR paper](https://ismir2006.ismir.net/PAPERS/ISMIR0627_Paper.pdf) documents isolated hits and professional performances from three drummers and their own kits, with sticks, rods, mallets, brushes, close kick/snare channels, and stereo overheads. It is a high-value source-diversity candidate, but no staging is authorized until the dataset’s current audio-use terms are captured and approved.
-- [RWC Musical Instrument Sound’s primary database page](https://staff.aist.go.jp/m.goto/RWC-MDB/rwc-mdb-i.html) documents professional performers, multiple manufacturers/styles, and three dynamics including individual drum-kit sounds. It remains unverified because access/use terms and acquisition authority are not cleared.
+- [ENST-Drums’ primary ISMIR paper](https://ismir2006.ismir.net/PAPERS/ISMIR0627_Paper.pdf) documents isolated hits and professional performances from three drummers and their own kits, with sticks, rods, mallets, brushes, close kick/snare channels, and stereo overheads. Its research-use terms are not a permissive audio grant, so it stays authority-blocked.
+- [RWC Musical Instrument Sound’s primary database page](https://staff.aist.go.jp/m.goto/RWC-MDB/rwc-mdb-i.html) documents professional performers, multiple manufacturers/styles, and three dynamics including individual drum-kit sounds. It remains authority-blocked because access and audio-use terms are unclear.
 - The physical case model follows published snare-drum coupled-system work rather than treating a snare as one filtered noise burst ([Bilbao, JASA 2012](https://www.research.ed.ac.uk/en/publications/time-domain-simulation-and-sound-synthesis-for-the-snare-drum/)). Velocity is a physical axis because measured membrane spectra and modal behavior change with striking force ([Dahl, nonlinear drum-membrane study](https://www.research.ed.ac.uk/files/16389380/Nonlinear_Effects_in_Drum_Membranes.pdf)).
 - Attack is trajectory evidence, not one duration scalar: controlled timbre-perception work found attack temporal centroid more explanatory than attack time alone ([Kazazis, Depalle, and McAdams, JASA 2021](https://www.mcgill.ca/mpcl/files/mpcl/kazazis_2021b_jasa.pdf)).
 
@@ -51,90 +54,125 @@ Rejected core candidates are recorded rather than forgotten: Aasimonster has doc
 
 ## Design
 
-### 1. Source receipt and license boundary
+### 1. Truth ownership, receipts, and reproducible evidence
 
-Every accepted source gets a scratchpad receipt containing source URL, retrieval date, immutable upstream version or archive checksum, exact license text and checksum, credited authors/performers, original sample rate/bit depth, kit construction, heads/tuning/damping when known, strike implement or brush technique, microphone/channel map, disclosed processing, and every selected source-file SHA-256. Unknown facts remain explicitly `unknown`; genre is never used to invent construction or tuning. `agentic-docs/licensing.md` links the receipt class but does not duplicate per-file facts.
+The committed registry at `evals/reference-sources/acoustic-drums/registry-v2.json` owns normalized source metadata and stable foreign keys. Per-source committed receipts under `evals/reference-sources/acoustic-drums/receipts/` own URL, retrieval date, immutable upstream version/archive checksum, exact license text/checksum, attribution, access status, original format, disclosed processing, kit/capture facts, file inventory hashes, and valid/invalid axes. `agentic-docs/licensing.md` owns policy and links these receipts without repeating them.
 
-A source fails closed when the audio license is ambiguous, attribution cannot be satisfied, lossy previews are the only available assets, processing or normalization destroys a claimed axis, channel roles cannot be reconstructed, or upstream version identity is missing. Reference-only use does not relax provenance.
+Private archives live at `$IJ_REFERENCE_ROOT/sources/<source_id>/<archive_sha256>/`; private canonical audio lives at `$IJ_REFERENCE_ROOT/canonical/acoustic-drums-v2/<source_group_id>/`. Committed machine-readable reports live under `evals/evidence/acoustic-drums/v2/`; prose may interpret a report only by linking its content digest.
 
-### 2. Canonicalization without laundering the recording
+P1 adds one copy-paste interface for both licensed local audio and public fixtures:
 
-Canonical files preserve the source’s natural amplitude relationships within one mic chain. Allowed operations are decode, channel-role-preserving extraction, resampling with recorded kernel/version, polarity correction only when the source requires it, onset alignment to a fixed lead, and zero-padding to a declared duration. Every operation and pre/post digest is sealed.
+```sh
+npm run drums:corpus -- audit --registry evals/reference-sources/acoustic-drums/registry-v2.json --reference-root "$IJ_REFERENCE_ROOT" --out /tmp/drum-corpus-evidence
+npm run drums:corpus -- verify-evidence evals/evidence/acoustic-drums/v2
+```
 
-Close/direct, overhead or mid, and room/ambience channels remain separate cases. They are never averaged into a single “canonical drum.” Cross-source timbre comparisons may use a separately prepared level-matched listening copy, but that copy never replaces the raw-amplitude canonical evidence. Absolute LUFS and velocity-loudness axes are invalid across different sessions unless upstream gain calibration is documented.
+Each report records schema version, tool commit, runtime versions, command/config digest, registry digest, source receipt and archive digests, canonical/event-manifest digests, output digests, and generation time. Public CI runs schema, adversarial, duplicate/leakage, and stale-report fixtures without licensed audio; a rights-cleared local run consumes the same schema and emits the same artifact shape. Missing, stale, mismatched, or unregistered evidence fails closed.
 
-### 3. Distributional case model
+### 2. Identity, access history, and frozen roles
 
-The independent unit is `source_group_id = corpus + recording session + performer + physical kit + microphone setup`. Every hit, velocity, and channel from one source group remains on one side of the split. Each core source/voice/mic role uses three strike-energy regions—soft, medium, hard—selected from recorded hit-energy metadata or measured source RMS/peak ordering, never inferred from filenames alone. Each region retains at least five repeated hits when the source contains them, and an accepted deeply sampled source must expose at least 30 total varying hits per voice in line with DrumGizmo’s own capture guidance. The case report owns median and robust spread for attack, spectrum, band envelope, and loudness; tuning against one favorable round robin is forbidden.
+`source_family_id` is a stable opaque digest over the original audio-acquisition lineage before ports, edits, repackaging, or derivative formats; normalized upstream project, acquisition/session, performer, and kit identities back the digest. `source_group_id` is a stable opaque digest for one exact session + performer + physical kit + microphone setup within that family. `hit_id` is the source group + articulation + upstream physical-hit index and is identical across every microphone channel for that physical strike. Registry uniqueness and foreign-key checks reject unknown parents, duplicate audio, aliases masquerading as independent families, cross-role reuse, and one hit mapped to inconsistent energy or articulation metadata.
 
-Tune and held-out separation is by source group, not merely by hit, mic, or velocity. A fit may inspect every tune-source velocity and repeated-hit distribution. The held-out source remains sealed until the candidate and hypothesis are frozen. A third `threshold_calibration` role may establish repeat-vs-repeat metric floors once, but it can never tune DSP. Leave-one-source-family-out rotations are preregistered and all reported; favorable folds cannot be selected after the fact. Within-source extra repetitions and spatial microphones are diagnostics, not substitutes for source-independent holdout.
+Every source family has one global role: `tune`, `threshold_calibration`, or `sealed_holdout`; all derivative groups and microphones inherit it. A committed append-only access ledger records `metadata_only`, `audio_opened`, or `fit_used`, the first access/unseal issue and UTC time, actor, purpose, and archive digest. A holdout is eligible only if its family was `metadata_only` when the split was frozen; metadata/license-page inspection is allowed, audio preview or waveform inspection is not. DRSKit is recorded as `fit_used` and cannot be a holdout. Unknown historical access is conservatively contaminated.
 
-### 4. Product target matrix
+Before any DSP campaign, each core kick/snare preset target must have at least four eligible independent source families: at least two tune families, at least one threshold-calibration family, and at least one globally sealed holdout family. The split is frozen in a reviewed commit before acquisition. No source listed here is assigned a final role; P0 remains blocked until the access audit and coverage inventory make that allocation possible. Leave-one-tune-family-out folds are fixed then, and every fold is reported.
 
-| Preset | Tune source | Source-independent holdout | Core physical target |
+### 3. Group-coherent canonicalization and sample-rate policy
+
+Native masters are immutable. Canonicalization may decode, extract preserved channel roles, apply an explicitly sourced group-coherent polarity operation, choose one onset/crop anchor from the designated direct channel for each physical hit, apply that same crop to every channel, and zero-pad to a declared duration. It may not independently align microphones, normalize hits, suppress bleed, denoise, EQ, compress, or average channels. Original interchannel sample offsets survive; the report records the anchor channel, offset vector, polarity vector, and pre/post digests.
+
+Canonical 44.1 kHz and 48 kHz files are each generated directly from the native master with one pinned resampler/version/configuration; resampling is never chained. Candidate renders use the same two rates. The rate-parity report must show the same qualitative hypothesis result and no rate-specific artifact at both rates before a DSP PR can pass.
+
+Every metric case names a `projection_id`. Physical dry-mono fitting compares the engine’s dry voice only with a designated direct-microphone projection. Multichannel spatial evidence uses declared direct/overhead/room roles and a separately defined stereo observation projection; microphone channels never count as independent samples and the same dry mono render is never scored against all microphones as if they were interchangeable targets. Level-matched listening copies are separately hashed derivatives and never replace raw-amplitude canonicals.
+
+### 4. Full velocity curve, deterministic events, and repetitions
+
+Every credible native hit and layer is retained. One frozen energy rank per physical hit comes from trusted upstream energy metadata or a pinned window/metric on the designated direct channel and propagates unchanged to all microphones. Ties break by `hit_id`. Soft/medium/hard are empirical tercile summaries only; the primary velocity analysis covers the complete ordered curve, explicitly including the low-energy ghost transition and high-energy saturation region.
+
+Engine events use the frozen MIDI velocity grid `[8, 24, 40, 56, 72, 88, 104, 120, 127]`, fixed note times, fixed seeds, and immutable event IDs. The reference mapping from each engine event to empirical ranks/quantiles is preregistered before candidate rendering; no favorable hit may be selected afterward. Event manifests record tempo, articulation, MIDI velocity, reference quantile rule, repetition order, seed, overlap, and projection.
+
+A source/articulation is numerically eligible only with at least 24 physical hits and at least 8 hits in each tercile. Worst-decile checks require at least 40 eligible hits; 24–39 hits use a preregistered worst-quartile check, and lower coverage is listening/challenge evidence only. The final P0 inventory may raise these floors if calibration uncertainty remains too wide.
+
+### 5. Product hypotheses and candidate allocation
+
+| Preset | Candidate tune pool | Candidate calibration/holdout pool, subject to frozen access audit | Core physical target |
 |---|---|---|---|
-| Pop | Naked Drums | DRSKit neutral stick hits | dry/direct studio kick and snare, controlled low-band decay, clear but non-metallic attack, natural velocity curve; SM Drums may replace or augment only after rights clearance |
-| Rock | MuldjordKit | CrocellKit | harder beater/inside-kick attack, stronger high-mid snare crack and wire band, larger sustained shell/room energy without one narrow modal ring |
-| Jazz | Virtuosity Drums | DRSKit | less click-dominated kick, audible mid/overhead radiation, longer but diffuse decay, stick snare with controlled wire texture and source-credible room |
-| Jazz brush technique | Swirly Drums | Big Rusty Drums; DRS whisker hits as a second challenge | brush center/edge hit plus stir/flutter temporal texture; no release claim until source-independent dynamic/repetition coverage is verified |
+| Pop | DRSKit, Naked Drums, any already-opened Kitty material | unopened Kitty, Crocell, or another P0-qualified independent family | dry/direct studio kick and snare, controlled low-band decay, clear but non-metallic attack, full natural velocity curve |
+| Rock | MuldjordKit, DRSKit, any already-opened Crocell material | unopened Crocell, Kitty, or another P0-qualified independent family | harder beater/inside-kick attack, stronger high-mid snare crack and wire band, larger sustained shell/room energy without one narrow modal ring |
+| Jazz stick | Virtuosity Drums, DRSKit, ShittyKit if historically opened | unopened ShittyKit or another P0-qualified compact acoustic family | less click-dominated kick, diffuse rather than pitched decay, audible mid/overhead radiation, controlled snare-wire texture and source-credible room |
+| Jazz brush | Swirly Drums or historically opened brush material | unopened Big Rusty/Ben Burnes or another independent brush family | center/edge strikes plus separately modeled stir/flutter gestures; no continuous-brush release claim until the control and holdout gates pass |
 
-These are hypotheses to test, not permission to force every source toward a stereotype. A preset passes only when tune and held-out sources agree on the direction of improvement and owner listening prefers it in representative phrases.
+These rows are hypotheses, not role assignments and not permission to force every source toward a stereotype. Because each source family has one global corpus role, P0 must choose allocations that satisfy every target without reusing one family across tune/calibration/holdout. If four eligible families per core target cannot be assembled, that target remains blocked rather than weakening independence.
 
-### 5. Metrics and trust gates
+### 6. Metrics, uncertainty, and decision rule
 
-Kick and snare profiles retain the loop’s general MR-STFT, multiscale log-mel, loudness, and artifact gates, but add owned drum diagnostics:
+Kick and snare retain MR-STFT, multiscale log-mel, loudness, and artifact diagnostics and add:
 
 - attack energy trajectories in 0–5, 5–20, and 20–50 ms windows by low, low-mid, high-mid, and high bands;
-- onset crest, spectral flux, and centroid trajectories rather than one scalar attack centroid;
+- onset crest, spectral flux, and centroid trajectories rather than one attack scalar;
 - band-wise decay slopes and time-varying spectral centroid, with room/bleed invalidity applied by source/mic role;
-- pitch salience, peak Q, and harmonic concentration to reject the owner’s “vibraphone-like” narrow tonal kick failure even when total decay matches;
+- pitch salience, peak Q, and harmonic concentration to reject the owner’s “vibraphone-like” narrow tonal kick failure;
 - snare shell-to-wire/noise energy, high-band wire decay, and noise-to-tonal balance;
-- within-source velocity-to-loudness and velocity-to-timbre trajectories, plus monotonicity and saturation behavior;
-- repeated-hit median, interquartile range, and worst-decile artifact checks so the model matches a distribution rather than one sample.
+- within-source velocity-to-loudness and velocity-to-timbre trajectories, monotonicity, ghost transition, and saturation behavior;
+- repeated-hit median, normalized MAD, lower-tail behavior, and eligible worst-decile/worst-quartile artifacts.
 
-Signal trust also requires lossless native audio, deterministic transformations, no clipping or unexplained pre-onset transient, declared polarity/sample offset for multichannel groups, and duplicate-audio fingerprint rejection across source groups. Metric thresholds are calibrated on same-source repeat-vs-repeat and cross-source same-voice baselines before they gate DSP. A metric that cannot rank those known relationships predictably remains diagnostic-only. A candidate’s named hypothesis axis must improve by at least 0.5 pooled robust standard deviations on tune and keep the same direction in at least two source groups; every required held-out axis must have an upper 95% bootstrap regression bound no worse than +0.25 robust standard deviations. Removing any one tune source must retain the improvement sign or the result is labeled `source_specific`. No aggregate score may hide a red attack, tonality, velocity, or held-out gate.
+The independent statistical unit is the acquisition family, with source group nested within family and physical hit nested within group. A hierarchical clustered bootstrap resamples families first, then groups and physical hits; microphone channels are joint observations and never independent replicates. Normalized MAD means `1.4826 × median(abs(x - median(x)))` and is estimated from the threshold-calibration family’s repeat-difference distribution for the same voice, role, velocity region, rate, and metric.
 
-### 6. Listening evidence
+Each DSP PR preregisters one primary hypothesis metric before holdout unsealing. Required secondary safety axes use simultaneous 95% confidence bounds with Holm adjustment; descriptive diagnostics do not become gates after results are seen. Leave-one-tune-family-out results are all shown. The provisional design targets—at least 0.5 normalized-MAD improvement on the primary tune axis and no more than +0.25 normalized-MAD held-out regression—are not authoritative until P3 calibrates and freezes them before candidate rendering. A red attack, tonality, velocity, artifact, rate-parity, or held-out gate cannot be hidden by an aggregate score.
 
-Isolated full-playback A/B uses the L4 public/private bundle and preregisters whether loudness matching is appropriate for the question. Phrase campaigns add source-independent pop, rock, and jazz grooves with kick/snare interplay, repeated hits, ghost notes, fills, cymbal masking, and the shared reverb stage. Those phrases are listening stimuli, not aligned single-hit metric targets.
+### 7. Temporal, spatial, live, and human evidence
 
-Owner blind listening is required per preset. Trained-ear sessions must disclose mic perspective and must not compare a close render against an untreated room reference as though they were the same target. Physical iOS and live-playability gates remain independent.
+Phrase manifests contain fixed 8-bar patterns at 60, 120, and 180 BPM with 8th/16th/32nd same-velocity repeats, alternating ghost/accent strokes, kick/snare interleaving, rolls, fills, tempo changes, and overlapping tails. Each runs as dry and through the shared spatial stage. Spatial listening rejects implausible room buildup, detached early reflections, collapsed depth, or one kit occupying a different acoustic space from the arrangement.
+
+Stress manifests force simultaneous drum voices, full-arrangement polyphony, voice stealing, and long-tail overlap under shared reverb. Acceptance requires deterministic output, preserved priority attacks, graceful tail shedding, and no clicks, discontinuities, unintended choke, NaN/Inf, or silence.
+
+The trained-playability gate names an owner and at least one trained drummer or keyboard-drum performer. Each plays every candidate on a physical velocity-sensitive controller for at least 10 minutes across soft-to-hard touch, ghost notes, repeated strokes, rolls/fills, tempo changes, and the full arrangement. The issue freezes interface, monitoring chain and level, audio buffer, browser/device, latency measurement method, and incumbent before the session; the report records both invitations and fights instead of only preferences. A later MUSHRA gate should recruit at least five trained listeners, but a small panel cannot substitute for owner acceptance.
+
+Live input reports median and p95 input-to-audio latency, event jitter, dropout count, and callback load against the exact incumbent. P5 measures the device baseline and freezes an absolute ceiling plus a non-inferiority margin before candidate testing; zero dropouts is mandatory. A candidate cannot choose its ceiling after measurement.
+
+The physical iOS issue must name an actually available iPhone or iPad model and exact iOS/Safari version before P6 begins. On that device the procedure covers gesture unlock, repeated kick/snare/brush playback across the velocity grid, live controller input when supported, full-arrangement p50/p95 callback load and latency, dropout count, interruption/background/resume, recovery, and evidence export. Desktop WebKit is useful evidence but never substitutes for this gate.
+
+Continuous brush stir/flutter remains blocked until the public control contract can express time-varying per-note pressure, rate, damping, position/timbre, and release gestures with deterministic gesture manifests. Strike-only brush evidence may remain provisional; it cannot be labeled continuous brush modeling.
+
+### 8. DSP stability and budget gates
+
+Every later DSP PR runs 44.1/48 kHz all-velocity/all-seed single-hit and repeat torture tests, finite/bounded-state checks, tail-termination and denormal checks, hard-strike alias-energy diagnostics, deterministic voice-steal/overlap tests, and the worst simultaneous-drum full arrangement. It reports peak voice/mix CPU, memory, and callback load and runs `dsp-bench` against the 2.67 ms / 128-frame arrangement budget. Solo-instrument timing cannot waive an arrangement regression.
 
 ## Phased plan
 
-### P0 — source receipts and rejection ledger
+### P0 — registry, access audit, and split freeze
 
-One PR records the seven compact-corpus source receipts, optional candidate receipts, immutable archive/license hashes, exact selected file inventory, mic maps, processing/normalization facts, and explicit rejected sources. Gate: two accepted independent sources per pop/rock/jazz kick and snare, with no audio committed and every claimed axis traceable. SM Drums, ENST, RWC, or any paid/restricted source remains excluded until its own authority and rights gate is lifted.
+One PR creates the normalized registry/receipt schema, records candidate metadata and historical `metadata_only|audio_opened|fit_used` state without acquiring new audio, resolves generic-license misattribution, and freezes globally exclusive roles. Gate: every pop/rock/jazz core voice has at least two tune families, one calibration family, and one never-opened holdout family; the archive/license authority and capture axes are traceable; role leakage, alias families, and unknown access fail closed. If coverage is insufficient, P0 reports the block and no source is unsealed.
 
-### P1 — corpus schema and trust auditor
+### P1 — trust auditor and public evidence contract
 
-One PR extends the declarative case contract with source ID, voice, preset hypothesis, strike technique, energy region, repetition set, mic role, channel processing, and valid/invalid axes. The auditor rejects missing source independence, fake velocity ladders, mixed mic roles, absent repetitions, and cross-source absolute-loudness claims. Gate: adversarial fixtures fail for every rule and existing loop audits remain green.
+One PR implements the two `drums:corpus` commands, normalized IDs/foreign keys, immutable access transitions, group-coherent multichannel rules, event manifests, duplicate/leakage rejection, report freshness, and public synthetic/adversarial fixtures. Gate: public CI verifies the exact report shape without private audio, every adversarial fixture fails for its intended reason, and existing loop audits remain green.
 
-### P2 — pop canonical campaign
+### P2 — tune and threshold-calibration canonical campaign
 
-One PR stages Naked Drums tune and DRSKit neutral held-out kick/snare distributions, produces deterministic canonical receipts, calibrates repeat-distribution floors, and replaces provisional pop cases. Gate: three real energy regions × both voices × both sources, at least five repeats per region where available, complete provenance, and no DSP change. If the panel finds DRS insufficiently independent from the jazz holdout role, P2 remains blocked until another accepted pop source replaces it.
+One PR acquires only frozen tune/calibration roles, retains every credible native hit/layer, creates native-derived 44.1/48 canonicals, generates full-curve and temporal manifests, and calibrates repeat-distribution floors. Gate: coverage eligibility is reported per voice/source/articulation, multichannel identity is coherent, no holdout audio is opened, and no DSP changes.
 
-### P3 — rock canonical campaign
+### P3 — metric calibration and incumbent baseline
 
-One PR stages MuldjordKit tune and CrocellKit holdout while enforcing snare polarity, excluding disclosed defective hits, and separating inside/outside/overhead/room roles. Gate: the same distribution/provenance requirements plus explicit phase and trigger-channel policy; no DSP change.
+One PR validates drum diagnostics against repeat-vs-repeat and cross-source baselines, freezes robust-scale and simultaneous-inference rules, publishes every leave-one-family-out fold and failure example, and renders the untouched incumbents. Gate: each gating metric ranks known relationships predictably, numeric sound-quality thresholds are frozen before candidate work, and every untrusted existing claim is explicit.
 
-### P4 — jazz and brush canonical campaign
+### P4 — phrase, spatial, and reverb evidence rehearsal
 
-One PR stages Virtuosity tune and DRSKit holdout for stick kick/snare, retains close/mid/overhead/room diagnostics, and stages Swirly tune plus Big Rusty/DRS brush challenges. Gate: source-independent stick coverage passes; brush remains provisional unless its independent held-out dynamic/repetition contract passes.
+One PR rehearses deterministic phrase/stress manifests, dry/shared-space playback, full-arrangement voice-steal stress, storage/export, and the holdout report pipeline using synthetic sealed fixtures. Gate: evidence is reproducible, shared reverb is audibly and numerically present when enabled, dry and spatial projections remain distinct, no evidence path silently falls back, and the failed synthetic holdout cannot be reused for iteration.
 
-### P5 — metric calibration and provisional-baseline report
+### P5 — live, human, and physical-device protocol rehearsal
 
-One PR calibrates drum diagnostics against repeat-vs-repeat and cross-source baselines, publishes uncertainty and failure examples, then reruns current pop/rock/jazz renders without tuning. Gate: metrics separate known same-source variation from meaningful source/model defects and the report explicitly identifies every existing claim that remains untrusted.
+One PR rehearses trained-player forms, live latency/jitter capture, controller calibration, and the named physical iOS procedure on incumbents. Gate: the latency ceiling and non-inferiority margin are frozen, evidence export/recovery works, and named humans/device owners accept the protocol.
 
 ### P6 — DSP campaigns, one voice/preset hypothesis per PR
 
-Only after P0–P5 pass, open separate kick/snare modeling PRs with one physical hypothesis, tune/held-out evidence, full arrangement `dsp-bench`, cross-family drift, exact-head panel, and owner blind listening. Jazz kick #39 is re-evaluated rather than grandfathered; no prior parameter fit survives solely because it improved the old four-case matrix.
+Only after P0–P5 pass, open separate kick/snare modeling PRs with one preregistered physical hypothesis. Each campaign first fits tune-only data and freezes the candidate commit, metrics, mappings, thresholds, and renderer; only then may the custodian unseal and canonicalize the assigned holdout. A failed holdout ends that hypothesis and may not inform another iteration; a new hypothesis requires a still-sealed independent family. Final evidence includes both sample rates, temporal/spatial/live gates, full-arrangement `dsp-bench`, exact-head panel, trained-player report, owner blind listening, and physical iOS evidence. Jazz kick #39 is re-evaluated rather than grandfathered; no prior fit survives solely because it improved the old four-case matrix.
 
 ## Deferred until demanded
 
 - Toms, hats, rides, crashes, and percussion beyond phrase-level drift guards.
-- Shipping any reference audio or sampler runtime in the product.
+- Shipping reference audio or a sampler runtime in the product.
 - Emulating commercial production chains, sample replacement, gated reverb, or mastered-record loudness.
 - A genre classifier or a claim that one acoustic kit defines all pop, rock, or jazz.
 - Learned embeddings until weights, license, offline execution, and drum-domain validity pass separate review.
-- Brush release if a second independent, license-clean source cannot prove adequate dynamics and repetition.
+- Continuous brush release until a public time-varying control path and two independent license-clean source families pass the gesture, dynamic, and repetition gates.
