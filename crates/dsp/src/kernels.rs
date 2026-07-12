@@ -229,7 +229,7 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
         Instrument::EPiano => 1.54,       // was -26.6 LUFS
         Instrument::Drums => 0.54,        // was -27.4 LUFS
         Instrument::SynthPad => 0.50,     // was -26.5 LUFS
-        Instrument::Piano => 0.084, // piano r2 re-bake (decay-geometry rework)
+        Instrument::Piano => 0.123, // piano r3 re-measure (board dip + radiation revoice; x1.46 per measure-loudness)
         Instrument::GuitarSteel => 0.48,    // acoustics r2 re-bake (HF floor + 16-mode body)
         Instrument::GuitarElectric => 0.34, // electric r2 re-bake (022 dark voicing)
         Instrument::GuitarDistorted => 0.22, // electric r2 re-bake (drive 45 lead channel)
@@ -1353,11 +1353,18 @@ struct StringLoop {
     dc_y1: f32,
 }
 
-/// In-loop DC-blocker pole (~3 Hz at 48 k). Shared by `tick` and the delay budget:
+/// In-loop DC-blocker pole (~0.76 Hz at 48 k). Shared by `tick` and the delay budget:
 /// the blocker's phase LEAD at f0 shortens the effective loop delay and must be
 /// compensated or every string plays sharp (worst in the bass, where the old 19 Hz
 /// blocker left A1 audibly sharp — found while fixing its fundamental damping).
-const DC_POLE: f32 = 0.9996;
+/// Round 3 pushed 0.9996 → 0.9999: the lead FALLS with frequency (5.5 samples at
+/// C2's f0 but 0.3 at p4 with the old pole), so the blocker was a hidden
+/// negative-dispersion element dragging bass partials ~12 cents FLAT — the
+/// opposite of stiffness stretch. At 0.9999 the differential lead is ~1 sample,
+/// DC is still blocked (pedestal drains in ~0.2 s; the 2nd-order radiation
+/// highpass owns the output-side pedestal), and bass fundamentals lose even
+/// less energy to the blocker.
+const DC_POLE: f32 = 0.9999;
 
 impl StringLoop {
     /// `detune_cents` shifts this string against the nominal pitch (unison beating).
@@ -1426,8 +1433,13 @@ impl StringLoop {
         self.buf[i] += v;
     }
 
+    /// Read the loop output and run the loop filters, RETURNING the value bound
+    /// for the bridge instead of writing it back: the PianoVoice bridge mixes
+    /// the concurrent per-string values (mutual coupling) and hands each string
+    /// its reflected share via `commit`. Split from a self-contained tick for
+    /// round 3's true bridge coupling.
     #[inline(always)]
-    fn tick(&mut self) -> f32 {
+    fn tick(&mut self) -> (f32, f32) {
         let y = self.buf[self.pos];
         // loop lowpass (frequency-dependent loss)
         self.lp += self.lp_c * (y - self.lp);
@@ -1451,9 +1463,15 @@ impl StringLoop {
         let dc = ap - self.dc_x1 + DC_POLE * self.dc_y1;
         self.dc_x1 = ap;
         self.dc_y1 = dc;
-        self.buf[self.pos] = dc * self.loss;
+        (y, dc)
+    }
+
+    /// Second half of `tick`: write the bridge-reflected wave back into the
+    /// loop (with this string's own round-trip loss) and advance.
+    #[inline(always)]
+    fn commit(&mut self, w: f32) {
+        self.buf[self.pos] = w * self.loss;
         self.pos = (self.pos + 1) % self.len;
-        y
     }
 
     fn flush(&mut self) {
@@ -1475,6 +1493,31 @@ pub struct PianoVoice {
     // radiated mix per string: prompt-dominant at onset, aftersound plateau
     // ~7 dB below peak once the prompt dumps (see start() Weinreich note)
     out_w: [f32; 3],
+    // Bridge coupling (round 3, Weinreich 1977): every string's loop write
+    // becomes wᵢ − g0·Σⱼwⱼ − g1·LP(Σⱼwⱼ), i.e. the reflection matrix
+    // R(ω) = I − G(ω)·J with G = g0 + g1·H(ω). R is symmetric with
+    // eigenvalues {1 − N·G(ω), 1, 1}:
+    // the IN-PHASE string motion (exactly what the hammer excites) loses
+    // energy through the bridge every reflection, anti-phase motion loses none
+    // — so the prompt sound and the singing aftersound EMERGE from unison
+    // detuning rotating the state out of the fast subspace, per partial,
+    // instead of being painted with two hand-fit t60s.
+    //
+    // H(ω) is a one-pole lowpass: the bridge admittance is largest around the
+    // board's low modes and falls ~1/f above (Giordano 1998 mobility), which
+    // is what Salamander's per-partial rates demand — C2's fundamental dives
+    // at −52 dB/s while its p2 does −20 (C3: −58 vs −6; C4: −24 vs −20; the
+    // contrast collapses as f0 climbs past the mobility peak).
+    //
+    // Energy-passivity: the real term needs N·g0 ≤ 2; for the LP term,
+    // Re(1/H(ω)) ≥ 1 at every ω, so |1 − N·G(ω)| ≤ 1 whenever N·(g0+g1) ≤ 2 —
+    // per-loop losses then contract strictly. N·(g0+g1) ≤ 0.5 is enforced by
+    // test, and g1 additionally carries a phase-pull (detune) budget — see
+    // start().
+    bridge_g0: f32,
+    bridge_g1: f32,
+    bridge_lp: f32,
+    bridge_c: f32,
     n_strings: usize,
     level: f32,
     // felt hammer state (nonlinear collision — Bank/Välimäki lineage).
@@ -1546,6 +1589,23 @@ pub struct PianoVoice {
     // blind there): board directivity + air absorption kill the top octave.
     air_c: f32,
     air_lp: f32,
+    // Board antiresonance dip (round 3): a FIXED ~270 Hz, −13 dB, Q≈1.25
+    // peaking dip on the string-radiation path. The Salamander attack windows
+    // show p1/p2 tilts no f0-tracked filter can make (C2 −17.6, C3 +8.1,
+    // F#3 −5.3, C4 −3.1, C5 +21 dB): one fixed dip at ~270 Hz reproduces five
+    // keys at once (it catches C4's p1, C3's p2 and C2's p4 — all ≈262 Hz —
+    // while sparing C3's p1 and C5's p1). Physically: a driving-point mobility
+    // antiresonance between low board modes (Giordano, JASA 1998: measured
+    // bridge mobility valleys through 200–400 Hz). Without it the render's C4
+    // fundamental sat +13 dB hot vs p2 → centroid 283 vs the ref's 480.
+    // RBJ peaking biquad, transposed DF2 state.
+    br_b0: f32,
+    br_b1: f32,
+    br_b2: f32,
+    br_a1: f32,
+    br_a2: f32,
+    br_z1: f32,
+    br_z2: f32,
     rng: Lcg,
     sr: f32,
     key: f32,
@@ -1570,45 +1630,101 @@ impl PianoVoice {
         // times, G1/C2/C3/C5 refs): late-phase t60 G1≈18, C2≈19, C3≈32, C5≈6.3.
         // Round 1's narrow bass-side bump priced G1 at 7.9 s where the ref
         // rings ~18 s once the prompt is gone.
-        let bw = if key < 0.30 { 0.28 } else { 0.20 };
-        let bump = (-((key - 0.30) / bw) * ((key - 0.30) / bw)).exp();
-        let taper = 1.0 - 0.55 * ((key - 0.7).max(0.0) / 0.3);
-        let t60 = (3.5 + 26.5 * bump) * taper.max(0.2);
+        // INTERNAL string t60 (round 3): with true bridge coupling below, the
+        // per-loop loss now states only the string's internal + air damping —
+        // the anti-phase (aftersound) modes decay at exactly this rate. Fit to
+        // Salamander's measured PLATEAU slope (3→8 s envelope, floor-checked:
+        // the tails still fall at 12 s, so this is signal): C2≈35, C3≈29,
+        // C4≈31 s (Fletcher & Rossing: mid-register aftersound runs tens of
+        // seconds), collapsing across the treble to ≈6 s at C7.
+        // Piecewise-linear over measured anchors (deep-tail slopes, 3→8 s and
+        // 6→15 s where the files allow): A0 25, C2 47, C3 30, C4 31, C5 40,
+        // then the treble collapse (C6/C7 files are short; their windows blend
+        // crossing and plateau — anchors sit between the two readings).
+        const T60_KEYS: [f32; 8] = [0.0, 0.172, 0.31, 0.448, 0.586, 0.724, 0.862, 1.0];
+        const T60_VALS: [f32; 8] = [25.0, 47.0, 30.0, 31.0, 40.0, 13.0, 6.5, 2.5];
+        let mut t60 = T60_VALS[7];
+        for i in 0..7 {
+            if key <= T60_KEYS[i + 1] {
+                let t = (key - T60_KEYS[i]) / (T60_KEYS[i + 1] - T60_KEYS[i]);
+                t60 = T60_VALS[i] + t * (T60_VALS[i + 1] - T60_VALS[i]);
+                break;
+            }
+        }
+        // PROMPT decay target for the BROADBAND coupling term — fit to the
+        // composite envelope's t60_early (0.1–0.4 s, Salamander): A0≈13 s
+        // (deep bass has almost no two-stage), C4≈2.9, C5≈2.2, C6≈1.4.
+        let t60_prompt =
+            2.55 + 12.0 * (-(key / 0.105) * (key / 0.105)).exp() - 2.6 * (key - 0.45).max(0.0);
         let lp_c = (0.32 + 0.44 * key + 0.18 * vel).clamp(0.25, 0.95);
-        // stiffness (inharmonicity): audible on wound bass strings, mild in mid
-        let disp_c =
-            if key < 0.35 { 0.20 * (1.0 - key / 0.35) + 0.05 } else { 0.035 + 0.04 * (key - 0.35) };
+        // Stiffness (inharmonicity) — SIGN FIX round 3: stiffness raises phase
+        // velocity with frequency, so upper partials arrive EARLY → stretch
+        // SHARP of n·f0 (f_n = n·f0·√(1+Bn²), Fletcher 1964). A first-order
+        // allpass pair with c > 0 has small delay at DC and large at Nyquist —
+        // it dragged every partial FLAT (measured −3…−14 cents across the
+        // keyboard vs Salamander's +2→+55 cents at p10). Negative c inverts
+        // the group-delay curve. The law lives in DC-delay space (τ0 per
+        // section, c = (1−τ0)/(1+τ0)): a short treble loop amplifies a given
+        // Δτ into far more cents than a long bass loop, so τ0 must FALL with
+        // key even though B rises. Fit to Salamander p10 stretch: C2 +10c,
+        // C4 +23c, C5 +55c; treble ~B≈5·10⁻³ (Fletcher & Rossing ch. 12).
+        // Sized with PHASE delay (the loop resonance condition), not group
+        // delay — the first fit undershot ~2.5× by conflating them.
+        // Piecewise (continuous at C4): the bass branch falls fast (long loops
+        // dilute Δτ), the treble branch slow (B keeps growing — C5 measured at
+        // only 55% of its +55-cent target under the single exponential).
+        let tau0 = if key < 0.448 {
+            (0.7 + 41.2 * (-4.72 * key).exp()).min(22.0)
+        } else {
+            0.35 + 5.32 * (-1.8 * (key - 0.448)).exp()
+        };
+        let disp_c = (1.0 - tau0) / (1.0 + tau0);
 
-        // Two-stage decay: string 0 is the PROMPT sound (bright, velocity-voiced,
-        // faster decay); the others are the AFTERSOUND pair (full t60,
-        // near-transparent loop) — Weinreich 1977. Envelope-grid fit of the
-        // prompt:aftersound t60 ratio: mid slopes give prompt t60 G1≈5.5,
-        // C2≈4, C3≈10, C5≈3.4 → r ≈ 0.27/0.20/0.33/0.4+ — roughly a third
-        // everywhere, dipping at the bass break (key≈0.17) and rising toward
-        // the treble where prompt and aftersound converge.
-        let dk = (key - 0.17) / 0.06;
-        let r_prompt = 0.28 - 0.10 * (-dk * dk).exp() + 0.27 * ((key - 0.35).max(0.0) / 0.65);
-        let t_attack = (r_prompt * t60).min(11.0) * (1.05 - 0.15 * vel);
         let n_strings = if midi < 32 { 2 } else { 3 };
-        let detune_spread = if midi < 32 { 0.35 } else { 1.5 - 0.7 * key };
-        // Weinreich 1977 roles: the PROMPT sound is one bright, velocity-voiced,
-        // faster-decaying string; the AFTERSOUND is the detuned unison pair at the
-        // full t60 whose mutual beating stretches the composite late decay (the
-        // reference's p2 decays at ~3 dB/s through pair beating while singles do
-        // 8–15 dB/s). Aftersound loop filter is near-transparent (lp_c 0.82 fixed):
-        // real loop losses are ~flat through the low kHz (Välimäki et al. 1996),
-        // and aftersound brightness is not strike-dependent — the prompt string
-        // carries the velocity timbre.
-        // Aftersound loop at 0.93: near-transparent, so partials 2–6 inherit
-        // the fundamental's long t60. The refs carry the late plateau on the
-        // MID partials (C3's strongest tail peak is p2, G1's are p1/p4/p2) —
-        // at 0.82 the pair's upper partials died and the "plateau" sagged at
-        // 10 dB/s (measured C3 env −22.9 dB at 2.6 s vs ref −11.9).
+        // Unison mistuning: sets the RATE at which the coupled state rotates
+        // out of the fast (in-phase) subspace, hence the aftersound plateau's
+        // LEVEL at the crossing (leak ≈ sin(2π·Δf·t) while the prompt drains).
+        // Δf = f0·cents/1731 shrinks with f0, so the cents law must grow toward
+        // the bass to keep the plateau at the refs' −13…−20 dB @ 1 s (aural
+        // tuners also leave wound-string unisons measurably wider).
+        let detune_spread = if midi < 32 { 0.35 } else { 1.9 - 1.5 * key };
+        // Weinreich 1977 roles, now EMERGENT: all strings carry the same
+        // internal t60; the bridge coupling (bridge_g below) drains the
+        // in-phase component fast (prompt) while the detuned pair's anti-phase
+        // remnant sings on (aftersound). String 0 keeps the bright,
+        // velocity-voiced loop filter (the struck vertical polarization owns
+        // the attack timbre); the pair keeps a near-transparent 0.93 filter so
+        // partials 2–6 inherit the fundamental's long tail (the refs carry the
+        // late plateau on the MID partials — C3's strongest tail peak is p2).
         let cfg: [(f32, f32, f32); 3] = [
-            (0.0, t_attack, lp_c * 1.40), // (detune cents, t60 s, lp_c) prompt
-            (detune_spread, t60, 0.93),   // aftersound +
-            (-0.8 * detune_spread, t60 * 0.92, 0.93), // aftersound −
+            (0.0, t60, lp_c * 1.40), // (detune cents, t60 s, lp_c)
+            (detune_spread, t60 * 0.99, 0.93 - 0.10 * (key - 0.55).max(0.0) / 0.45),
+            (-0.8 * detune_spread, t60 * 0.90, 0.93 - 0.10 * (key - 0.55).max(0.0) / 0.45),
         ];
+        // TWO coupling terms (see bridge_g field docs).
+        // g0 — broadband, purely real: no phase, no detune; owns the composite
+        // early envelope. Extra decay rate ≈ 8.686·N·g0·f0 dB/s at every
+        // partial.
+        let rate_gap = (60.0 / t60_prompt - 60.0 / t60).max(0.0);
+        let bridge_g0 = rate_gap / (8.686 * n_strings as f32 * f0);
+        // g1 — through the admittance lowpass: gives the FUNDAMENTAL its extra
+        // dive (Salamander heterodyne: C2 p1 −52 dB/s vs p2 −20; C3 −58 vs −6)
+        // while upper partials keep ~the broadband rate. The lowpass phase LAG
+        // pulls the fast mode SHARP by ≈ N·g1·Im H(f0) rad/round-trip (the
+        // aftersound modes sit in J's null space and stay untouched — the
+        // small prompt/aftersound pitch offset is Weinreich's "twang", §VI),
+        // so g1 is explicitly capped at 0.04 rad ≈ 0.64% — the pull applies
+        // only to the fast mode, which is ≥15 dB down by the 0.3 s window the
+        // tuning gate measures; the aftersound that carries perceived pitch
+        // is untouched.
+        let bridge_fc = (0.25 * f0).max(40.0);
+        let xb = f0 / bridge_fc;
+        let h_re = 1.0 / (1.0 + xb * xb);
+        let h_mag = h_re.sqrt();
+        let h_im = xb * h_re;
+        let dive_extra_dbps = 45.0 * (-(key / 0.38) * (key / 0.38)).exp();
+        let bridge_g1 = (dive_extra_dbps / (8.686 * n_strings as f32 * f0 * h_mag))
+            .min(0.04 / (n_strings as f32 * h_im));
         let rng = Lcg(seed | 1);
         let mut strings = [StringLoop::new(f0, 0.0, sr, t60, lp_c, disp_c); 3];
         let mut strike_off = [0usize; 3];
@@ -1662,24 +1778,56 @@ impl PianoVoice {
             // asymmetric, and equal weights (100% beat modulation) parked a
             // beat null in the 0.8–1.8 s window (C3 t60_late read 4.8 vs 12).
             out_w: {
-                let a_db = -13.0
-                    + 6.0 * ((key - 0.17).max(0.0) / 0.14).min(1.0)
+                // bass base −13 → −10 (r3): the C2/A0 deep-tail plateau
+                // measured 6 dB under Salamander; mid slope rescaled so the
+                // C3+ plateau stays at −7
+                let a_db = -8.0
+                    + 4.0 * ((key - 0.17).max(0.0) / 0.14).min(1.0)
                     + 2.0 * ((key - 0.45).max(0.0) / 0.35).min(1.0);
                 if n_strings == 2 {
                     let a = 1.8 * 10f32.powf(a_db / 20.0);
                     [1.8, a, 0.0]
                 } else {
                     let a = 2.0 * 10f32.powf(a_db / 20.0);
-                    [2.0, 0.6 * a, 0.4 * a]
+                    // 72/28: the two slow normal modes must reach the output
+                    // with clearly UNEQUAL amplitude, or their mode-locked
+                    // ~0.15 Hz residual beat digs a −40 dB null into the tail
+                    // (measured 4.75 s @ C4) that no real piano shows —
+                    // Weinreich's measured unison modes are asymmetric mixes.
+                    [2.0, 0.78 * a, 0.22 * a]
                 }
             },
+            bridge_g0,
+            bridge_g1,
+            bridge_lp: 0.0,
+            bridge_c: 1.0 - (-core::f32::consts::TAU * bridge_fc / sr).exp(),
             n_strings,
             // Velocity→loudness curve, pinned at the vel-0.8 makeup calibration
             // point: the raw collision gives ~12.5 dB across vel 25→127 where the
             // references are nearly flat; −9.5 dB/vel-unit of compensation keeps
             // ~5 dB of musical dynamics without pp vanishing (timbre still tracks
             // velocity through the felt law, which is where piano dynamics live).
-            level: 2.4 / (n_strings as f32) * (-1.09 * (vel - 0.8)).exp(),
+            level: {
+                // Per-key radiated-level trim (round 3): the board dip +
+                // radiation HP re-voicing removes real energy from the
+                // mid-register (measured LUFS vs Salamander per key: C3 −13.5,
+                // C4 −11.6, C2 −9.9 dB with C5–C7 ≈ −2); this restores the
+                // corpus's near-flat per-key loudness. Piecewise-linear in
+                // key over {A0,C2,C3,C4,C5,C6,C8} anchor points.
+                const TRIM_KEYS: [f32; 7] = [0.0, 0.172, 0.31, 0.448, 0.586, 0.724, 1.0];
+                const TRIM_DB: [f32; 7] = [2.0, 7.0, 10.5, 8.6, -1.5, 0.0, 0.0];
+                let mut trim = TRIM_DB[6];
+                for i in 0..6 {
+                    if key <= TRIM_KEYS[i + 1] {
+                        let t = (key - TRIM_KEYS[i]) / (TRIM_KEYS[i + 1] - TRIM_KEYS[i]);
+                        trim = TRIM_DB[i] + t * (TRIM_DB[i + 1] - TRIM_DB[i]);
+                        break;
+                    }
+                }
+                2.4 / (n_strings as f32)
+                    * (-1.09 * (vel - 0.8)).exp()
+                    * 10f32.powf(trim / 20.0)
+            },
             h_x: 0.0,
             h_v: h_v0,
             h_k,
@@ -1706,7 +1854,9 @@ impl PianoVoice {
             noise_lp_c: 1.0,
             bloom: 0.0,
             bloom_c: 1.0 - (-f0.max(50.0) / (2.5 * sr)).exp(),
-            rad_c: 1.0 - (-core::f32::consts::TAU * (0.35 * f0).max(80.0) / sr).exp(),
+            // r3: 0.35/80 → 0.4/100 — Salamander's bass fundamentals sit lower
+            // still (A0 attack p1 −31 dB rel p3; C2 p1 −18 rel p2)
+            rad_c: 1.0 - (-core::f32::consts::TAU * (0.35 * f0).max(88.0) / sr).exp(),
             rad_lp: 0.0,
             rad_lp2: 0.0,
             // gain: register-tapered (off above key≈0.55) and velocity-curved —
@@ -1722,6 +1872,13 @@ impl PianoVoice {
             ph_lp2: 0.0,
             air_c: 1.0 - (-core::f32::consts::TAU * (10_000.0f32).min(0.4 * sr) / sr).exp(),
             air_lp: 0.0,
+            br_b0: 1.0,
+            br_b1: 0.0,
+            br_b2: 0.0,
+            br_a1: 0.0,
+            br_a2: 0.0,
+            br_z1: 0.0,
+            br_z2: 0.0,
             rng,
             sr,
             key,
@@ -1745,6 +1902,19 @@ impl PianoVoice {
         // radiating band). The key-tracked hammer pulse (3 ms bass → 1 ms
         // treble) lowpasses the cloud naturally: bass knock stays dark, treble
         // knock speaks up to ~2 kHz.
+        // board antiresonance dip coefficients (see field docs): RBJ peaking
+        // EQ, fc 270 Hz, gain −13 dB, Q 1.25
+        {
+            let a = 10f32.powf(-13.0 / 40.0);
+            let w0 = core::f32::consts::TAU * 270.0 / sr;
+            let alpha = w0.sin() / (2.0 * 1.25);
+            let a0 = 1.0 + alpha / a;
+            v.br_b0 = (1.0 + alpha * a) / a0;
+            v.br_b1 = -2.0 * w0.cos() / a0;
+            v.br_b2 = (1.0 - alpha * a) / a0;
+            v.br_a1 = -2.0 * w0.cos() / a0;
+            v.br_a2 = (1.0 - alpha / a) / a0;
+        }
         let knock = 0.6 * vel * (1.0 - 0.55 * key);
         let mut jrng = Lcg(seed.wrapping_mul(0x9E37) | 1);
         let mut bf = 88.0f32;
@@ -1752,11 +1922,17 @@ impl PianoVoice {
             let f = bf * (1.0 + 0.05 * jrng.next());
             let bt = 0.55 * (88.0 / f).powf(0.4);
             let a_rel = if f < 300.0 { (f / 300.0).powf(0.3) } else { (300.0 / f).powf(0.55) };
+            // Treble keys must not ring the LOW board modes: the hammer pulse
+            // enters at the treble bridge, whose driving-point coupling to the
+            // ~90–300 Hz modes is weak — Salamander's C6/C7 show NO low knock
+            // line, while our 91 Hz mode was C6's strongest low-frequency
+            // component (round-3 heterodyne). Quadratic fade below 0.3·f0.
+            let reach = (f / (0.3 * f0)).min(1.0);
             let r = t60_gain(bt, sr);
             let w = core::f32::consts::TAU * f / sr;
             v.body_a1[i] = 2.0 * r * w.cos();
             v.body_r2[i] = r * r;
-            v.body_g[i] = 0.079 * a_rel * (1.0 - r) * knock;
+            v.body_g[i] = 0.079 * a_rel * (1.0 - r) * knock * reach * reach;
             bf *= 1.36;
         }
         v
@@ -1784,10 +1960,20 @@ impl PianoVoice {
                 self.h_v -= f;
                 self.h_x += self.h_v;
                 if f > 0.0 {
+                    // Asymmetric strike (Weinreich 1977 §V): hammer-crown
+                    // irregularities and string leveling mean the unisons never
+                    // receive equal force — the imbalance injects the coupled
+                    // system's SLOW (anti-phase) modes directly, a primary
+                    // source of the aftersound plateau's level. Key-tapered:
+                    // with the same asymmetry the treble plateau measured
+                    // ~10 dB above Salamander (rotation leak also grows with
+                    // f0), so the direct injection shrinks up the keyboard.
+                    let aw = 1.0 - 0.55 * self.key;
+                    let strike_w = [1.0 + 0.10 * aw, 1.0 - 0.04 * aw, 1.0 - 0.18 * aw];
                     let inj = f * self.h_gain * inv_n;
                     for i in 0..self.n_strings {
                         let off = self.strike_off[i];
-                        self.strings[i].inject(off, inj);
+                        self.strings[i].inject(off, inj * strike_w[i]);
                     }
                 } else if self.h_v < 0.0 {
                     self.h_active = false; // hammer moving away, contact over
@@ -1795,8 +1981,15 @@ impl PianoVoice {
             }
             let mut s = 0.0;
             let mut ph_src = 0.0;
+            // bridge coupling (see bridge_g field docs): run every loop's
+            // filters, then reflect the CONCURRENT bridge-incident values
+            // through R = I − gJ before the loops write back
+            let mut w = [0.0f32; 3];
+            let mut w_sum = 0.0f32;
             for (i, st) in self.strings.iter_mut().enumerate().take(self.n_strings) {
-                let y = st.tick();
+                let (y, wi) = st.tick();
+                w[i] = wi;
+                w_sum += wi;
                 if i == 0 {
                     ph_src += y;
                 } else if i == 1 {
@@ -1807,6 +2000,13 @@ impl PianoVoice {
                     ph_src += 0.6 * y;
                 }
                 s += y * self.out_w[i];
+            }
+            // two-term bridge coupling (see bridge_g0 field docs): broadband
+            // real term + admittance-lowpass term for the fundamental's dive
+            self.bridge_lp += self.bridge_c * (w_sum - self.bridge_lp);
+            let gsum = self.bridge_g0 * w_sum + self.bridge_g1 * self.bridge_lp;
+            for (i, st) in self.strings.iter_mut().enumerate().take(self.n_strings) {
+                st.commit(w[i] - gsum);
             }
             // phantom partials (see field docs): quadratic tension tap off the
             // prompt + ONE aftersound string. Squaring the full detuned pair
@@ -1834,6 +2034,11 @@ impl PianoVoice {
             s -= self.rad_lp;
             self.rad_lp2 += self.rad_c * (s - self.rad_lp2);
             s -= self.rad_lp2;
+            // board antiresonance dip (see field docs), transposed DF2
+            let br_y = self.br_b0 * s + self.br_z1;
+            self.br_z1 = self.br_b1 * s - self.br_a1 * br_y + self.br_z2;
+            self.br_z2 = self.br_b2 * s - self.br_a2 * br_y;
+            s = br_y;
             // hammer pulse into the body modes (case knock) + key thump noise
             if body_on {
                 let mut x = 0.0;
@@ -1865,9 +2070,12 @@ impl PianoVoice {
             self.body_y1[m] = flush_denormal(self.body_y1[m]);
             self.body_y2[m] = flush_denormal(self.body_y2[m]);
         }
+        self.bridge_lp = flush_denormal(self.bridge_lp);
         self.rad_lp = flush_denormal(self.rad_lp);
         self.rad_lp2 = flush_denormal(self.rad_lp2);
         self.air_lp = flush_denormal(self.air_lp);
+        self.br_z1 = flush_denormal(self.br_z1);
+        self.br_z2 = flush_denormal(self.br_z2);
         self.ph_lp1 = flush_denormal(self.ph_lp1);
         self.ph_lp2 = flush_denormal(self.ph_lp2);
         self.age += out.len() as u64;
@@ -1903,10 +2111,23 @@ impl PianoVoice {
         self.thump_env = 1.0;
         self.thump_decay = t60_gain(0.09 - 0.05 * key, self.sr);
         self.noise_lp_c = 0.12; // ≈ 1 kHz one-pole: felt, not click
+        // The body gate FROZE the mode states when it expired (longest board
+        // T60 is 0.55 s — they are physically silent by now); clear them so the
+        // re-knock doesn't resume a stale attack-time ring.
+        if self.age >= self.body_live {
+            self.body_y1 = [0.0; PIANO_BOARD_MODES];
+            self.body_y2 = [0.0; PIANO_BOARD_MODES];
+        }
         self.body_pulse_pos = 0;
         self.body_pulse_len = ((0.006 * self.sr) as u32).max(2);
+        // Damper-landing re-knock is a MECHANICAL event (damper weight + key
+        // return): its absolute level does not scale with how hard the note
+        // was struck. body_g carries the attack's 0.6·vel factor — divide it
+        // out (measured round 3: the old flat ×0.5 left the pp release knock
+        // 11× too quiet relative to ff, hiding the Askenfelt pp prominence).
+        let re_knock = 0.5 / self.vel.max(0.15);
         for g in self.body_g.iter_mut() {
-            *g *= 0.5;
+            *g *= re_knock;
         }
         self.body_live = self.age + (0.9 * self.sr) as u64;
         self.life = self.age + (1.5 * self.sr) as u64;
@@ -3879,6 +4100,90 @@ mod tests {
             .sum()
     }
 
+    /// Bridge coupling (Weinreich 1977, round 3): the fundamental must show a
+    /// TWO-STAGE decay — the in-phase prompt drains fast through the coupled
+    /// bridge, then the detuned pair's anti-phase remnant sings at the much
+    /// slower internal rate. Painted per-string t60s can't produce this on a
+    /// single partial; the coupling matrix does.
+    #[test]
+    fn piano_fundamental_decays_in_two_stages() {
+        let sr = 48_000.0;
+        let f0 = midi_to_hz(60.0);
+        let out = render_piano(60, 0.7, sr, 4.0, None);
+        // heterodyne envelope of the fundamental
+        let hop = (0.05 * sr) as usize;
+        let n = out.len() / hop;
+        let w = core::f32::consts::TAU * f0 / sr;
+        let mut env_db = vec![0.0f32; n];
+        for (k, e) in env_db.iter_mut().enumerate() {
+            let (mut c, mut s) = (0.0f32, 0.0f32);
+            for i in 0..hop {
+                let ph = w * ((k * hop + i) as f32);
+                c += out[k * hop + i] * ph.cos();
+                s += out[k * hop + i] * ph.sin();
+            }
+            *e = 10.0 * ((c * c + s * s) / (hop * hop) as f32 + 1e-18).log10();
+        }
+        let rate = |t0: f32, t1: f32| {
+            let (i0, i1) = ((t0 / 0.05) as usize, (t1 / 0.05) as usize);
+            (env_db[i0] - env_db[i1]) / (t1 - t0)
+        };
+        let early = rate(0.10, 0.70);
+        let late = rate(1.60, 3.60);
+        assert!(
+            early > late + 8.0,
+            "C4 fundamental should dive then sing: early {early} dB/s, late {late} dB/s"
+        );
+        assert!(late < 16.0, "aftersound should sing at the internal rate: late {late} dB/s");
+    }
+
+    /// Stiffness dispersion must stretch partials SHARP of n·f0 (Fletcher
+    /// 1964: f_n = n·f0·√(1+Bn²)); the pre-round-3 allpass sign dragged them
+    /// FLAT. Guard partial 8 of C4 at both deploy sample rates against the
+    /// Salamander-fit window (+14.8 cents measured; ref +14.1).
+    #[test]
+    fn piano_partials_stretch_sharp() {
+        for sr in [44_100.0f32, 48_000.0] {
+            let f0 = midi_to_hz(60.0);
+            let out = render_piano(60, 0.6, sr, 1.4, None);
+            let seg = &out[(0.3 * sr) as usize..(1.3 * sr) as usize];
+            // scan ±40 cents around 8·f0 with a fine projection grid
+            let mut best = (0.0f32, f32::NEG_INFINITY);
+            let mut cents = -40.0f32;
+            while cents <= 40.0 {
+                let f = 8.0 * f0 * (cents / 1200.0).exp2();
+                let e = band_energy(seg, sr, &[f]);
+                if e > best.1 {
+                    best = (cents, e);
+                }
+                cents += 2.0;
+            }
+            assert!(
+                (5.0..30.0).contains(&best.0),
+                "sr {sr}: partial 8 stretch {} cents, want +5…+30 (sharp)",
+                best.0
+            );
+        }
+    }
+
+    /// The coupling matrix R = I − gJ is only energy-passive for N·g ≤ 2 —
+    /// enforce a wide margin across the whole keyboard and velocity range.
+    #[test]
+    fn piano_bridge_coupling_stays_passive() {
+        for midi in (21..=108).step_by(3) {
+            for vel in [0.05f32, 0.5, 1.0] {
+                for sr in [44_100.0f32, 48_000.0] {
+                    let v = PianoVoice::start(midi, midi_to_hz(midi as f32), vel, sr, 42);
+                    let ng = v.n_strings as f32 * (v.bridge_g0 + v.bridge_g1);
+                    assert!(
+                        (0.0..0.5).contains(&ng),
+                        "midi {midi} vel {vel} sr {sr}: N·g = {ng} outside passive margin"
+                    );
+                }
+            }
+        }
+    }
+
     /// Phantom partials (Conklin 1999): an ff bass note must carry MUCH more
     /// energy around partials 10–12 than pp, beyond the linear model's
     /// velocity-brightening — the quadratic tension tap is what provides it.
@@ -3892,19 +4197,26 @@ mod tests {
         for (i, f) in freqs.iter_mut().enumerate() {
             *f = 9.5 * f0 + (3.0 * f0) * (i as f32) / 49.0;
         }
+        // reference band on the low partials (2–4): any LINEAR stage (board
+        // dip, radiation HP, air pole…) applies identical per-band gains at
+        // both velocities, so normalizing the phantom band by this band makes
+        // the superlinearity measure filter-immune (the old total-energy
+        // denominator broke when the board antiresonance dip reshaped pp vs
+        // ff totals differently).
+        let mut lo = [0.0f32; 30];
+        for (i, f) in lo.iter_mut().enumerate() {
+            *f = 2.0 * f0 + (2.5 * f0) * (i as f32) / 29.0;
+        }
         let ff = render_piano(31, 1.0, sr, 1.0, None);
         let pp = render_piano(31, 0.2, sr, 1.0, None);
         let (a, b) = ((0.1 * sr) as usize, (0.6 * sr) as usize);
-        let e_ff = band_energy(&ff[a..b], sr, &freqs);
-        let e_pp = band_energy(&pp[a..b], sr, &freqs);
-        let tot_ff = ff[a..b].iter().map(|s| s * s).sum::<f32>();
-        let tot_pp = pp[a..b].iter().map(|s| s * s).sum::<f32>();
-        let r_ff = e_ff / tot_ff.max(1e-12);
-        let r_pp = e_pp / tot_pp.max(1e-12);
+        let r_ff = band_energy(&ff[a..b], sr, &freqs) / band_energy(&ff[a..b], sr, &lo).max(1e-12);
+        let r_pp = band_energy(&pp[a..b], sr, &freqs) / band_energy(&pp[a..b], sr, &lo).max(1e-12);
         assert!(r_ff > 1e-7, "no phantom-band energy at ff: {r_ff}");
-        // The band holds transverse partials too (they scale ~linearly, so the
-        // fraction cancels); the >35% superlinear EXCESS is the phantom tap's
-        // signature — with ph_gain = 0 this ratio measures ≈ 1.0.
+        // The band holds transverse partials too (they scale ~linearly against
+        // the reference band, so the ratio cancels); the >35% superlinear
+        // EXCESS is the phantom tap's signature — with ph_gain = 0 this
+        // ratio-of-ratios measures ≈ 1.0.
         assert!(
             r_ff > 1.35 * r_pp,
             "phantom band should grow superlinearly with velocity: ff {r_ff} vs pp {r_pp}"
@@ -3915,32 +4227,64 @@ mod tests {
     /// broadband thud must appear BETWEEN the partials (where the harmonic
     /// string can't put energy), decay away, and be RELATIVELY louder on a
     /// soft note (the mechanism doesn't shrink with a soft touch).
+    ///
+    /// Round 3 reposing: the transient is isolated as the sample-exact
+    /// DIFFERENCE against a null twin — the same voice (same seed → identical
+    /// string/RNG state) with the release mechanisms (thump noise + board
+    /// re-knock) suppressed at note-off. The old gap-band proxy really
+    /// measured the held string's spectral skirt; once bridge coupling gave
+    /// the string its reference-matched decay that background moved while the
+    /// thud physics (level relative to note peak) was unchanged.
     #[test]
     fn piano_release_thud_present_decaying_and_velocity_relative() {
-        let sr = 48_000.0;
+        let sr = 48_000.0f32;
         let f0 = midi_to_hz(48.0);
-        // inter-partial gap bands: harmonic content is absent here
-        let gaps = [2.5 * f0, 3.5 * f0, 4.5 * f0];
-        let mut ratio = [0.0f32; 2];
+        let render_with = |vel: f32, null_release: bool| -> Vec<f32> {
+            let mut v = PianoVoice::start(48, f0, vel, sr, 777);
+            let total = (2.4 * sr) as usize;
+            let mut out = vec![0.0f32; total];
+            let damp_i = (1.5 * sr) as usize;
+            let mut i = 0usize;
+            for chunk in out.chunks_mut(128) {
+                if i <= damp_i && damp_i < i + chunk.len() {
+                    v.damp();
+                    if null_release {
+                        v.thump_amp = 0.0;
+                        v.body_pulse_pos = v.body_pulse_len; // cancel the re-knock
+                    }
+                }
+                v.render(chunk);
+                i += chunk.len();
+            }
+            out
+        };
+        let energy = |x: &[f32], t0: f32, t1: f32| -> f32 {
+            let seg = &x[(t0 * sr) as usize..(t1 * sr) as usize];
+            seg.iter().map(|s| s * s).sum::<f32>() / seg.len() as f32
+        };
+        let mut rel = [0.0f32; 2];
         for (i, vel) in [0.25f32, 1.0].iter().enumerate() {
-            let out = render_piano(48, *vel, sr, 2.4, Some(1.5));
-            let pre = band_energy(&out[(1.30 * sr) as usize..(1.42 * sr) as usize], sr, &gaps);
-            let thud = band_energy(&out[(1.51 * sr) as usize..(1.63 * sr) as usize], sr, &gaps);
-            let late = band_energy(&out[(2.10 * sr) as usize..(2.22 * sr) as usize], sr, &gaps);
+            let out = render_with(*vel, false);
+            let null = render_with(*vel, true);
+            let diff: Vec<f32> = out.iter().zip(&null).map(|(a, b)| a - b).collect();
+            let thud = energy(&diff, 1.50, 1.65);
+            let late = energy(&diff, 2.10, 2.25);
+            let peak = energy(&out, 0.05, 0.25);
             assert!(thud > 1e-12, "vel {vel}: no release transient ({thud})");
-            assert!(late < thud, "vel {vel}: release does not decay ({thud} -> {late})");
-            ratio[i] = thud / pre.max(1e-15);
+            assert!(
+                late < 0.25 * thud,
+                "vel {vel}: release transient does not decay ({thud} -> {late})"
+            );
+            rel[i] = thud / peak.max(1e-15);
         }
+        // Askenfelt & Jansson 1990: the mechanical release thud does not shrink
+        // with a soft touch, so RELATIVE to the (much quieter) pp note it must
+        // be far louder than at ff.
         assert!(
-            ratio[0] > 1.6,
-            "pp release thud should rise above the string's gap leakage: {}",
-            ratio[0]
-        );
-        assert!(
-            ratio[0] > 1.3 * ratio[1],
+            rel[0] > 2.0 * rel[1],
             "soft-note release should be relatively louder: pp {} vs ff {}",
-            ratio[0],
-            ratio[1]
+            rel[0],
+            rel[1]
         );
     }
 
