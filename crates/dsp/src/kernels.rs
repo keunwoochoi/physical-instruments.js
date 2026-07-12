@@ -69,6 +69,66 @@ pub fn amp_defaults(inst: Instrument) -> (f32, f32) {
     }
 }
 
+/// Magnetic-pickup resonance per instrument: (resonant-lowpass Hz, Q). The RLC
+/// resonance of a real pickup is the core "electric" tone; 0.0 = bypass.
+pub fn pickup_defaults(inst: Instrument) -> (f32, f32) {
+    match inst {
+        Instrument::GuitarElectric => (4200.0, 2.6),
+        Instrument::GuitarDistorted => (3400.0, 3.2),
+        _ => (0.0, 0.0),
+    }
+}
+
+pub const MAX_BODY_MODES: usize = 8;
+
+/// Instrument body as a parallel modal resonator bank on the track bus
+/// (Karjalainen/Smith commuted-body lineage: string+body are ~linear, so the body
+/// can be one shared filter per track). Returns (dry mix, modes[(freq Hz, t60 s, gain)]).
+/// A plucked string without this is a string nailed to a plank — the single biggest
+/// reason bare EKS guitars sound thin (listening note 2026-07-11).
+pub fn body_defaults(inst: Instrument) -> (f32, &'static [(f32, f32, f32)]) {
+    match inst {
+        // acoustic guitars: A0 Helmholtz air mode, T1 top plate, mid-mode ladder
+        Instrument::Guitar => (
+            0.55,
+            &[
+                (98.0, 0.28, 1.5),
+                (196.0, 0.20, 1.9),
+                (292.0, 0.14, 1.1),
+                (428.0, 0.10, 0.85),
+                (555.0, 0.08, 0.6),
+                (712.0, 0.06, 0.45),
+                (1050.0, 0.045, 0.3),
+            ],
+        ),
+        Instrument::GuitarSteel => (
+            0.55,
+            &[
+                (102.0, 0.26, 1.4),
+                (208.0, 0.18, 1.8),
+                (315.0, 0.13, 1.0),
+                (460.0, 0.09, 0.8),
+                (610.0, 0.075, 0.6),
+                (890.0, 0.055, 0.45),
+                (1280.0, 0.04, 0.3),
+            ],
+        ),
+        // piano: soundboard low-mode ladder (broad, subtle — per-voice knock stays)
+        Instrument::Piano => (
+            0.75,
+            &[
+                (62.0, 0.30, 0.7),
+                (110.0, 0.24, 0.9),
+                (175.0, 0.18, 0.8),
+                (255.0, 0.13, 0.6),
+                (370.0, 0.10, 0.45),
+                (520.0, 0.08, 0.3),
+            ],
+        ),
+        _ => (1.0, &[]),
+    }
+}
+
 /// Per-instrument loudness makeup, applied at the track bus so equal velocity lands
 /// at roughly equal perceived level across families. Values are MEASURED, not tuned
 /// by eye: `scripts/dev/measure-loudness.mjs` renders a reference note per family

@@ -13,7 +13,10 @@
 
 pub mod kernels;
 
-use kernels::{amp_defaults, makeup_gain, start_voice, Instrument, Kernel, Voice, MAX_BLOCK};
+use kernels::{
+    amp_defaults, body_defaults, makeup_gain, pickup_defaults, start_voice, Instrument, Kernel,
+    Voice, MAX_BLOCK, MAX_BODY_MODES,
+};
 
 pub const MAX_VOICES: usize = 64;
 pub const MAX_TRACKS: usize = 16;
@@ -44,6 +47,23 @@ pub struct TrackBus {
     amp_x1: f32,
     amp_f1: f32,
     tone_lp: f32,
+    // body resonator bank (acoustic instruments): parallel modes + dry path
+    body_n: usize,
+    body_dry: f32,
+    body_a1: [f32; MAX_BODY_MODES],
+    body_r2: [f32; MAX_BODY_MODES],
+    body_g: [f32; MAX_BODY_MODES],
+    body_y1: [f32; MAX_BODY_MODES],
+    body_y2: [f32; MAX_BODY_MODES],
+    // magnetic-pickup resonance (electrics): RBJ resonant lowpass biquad
+    pk_on: bool,
+    pk_b0: f32,
+    pk_b1: f32,
+    pk_b2: f32,
+    pk_a1: f32,
+    pk_a2: f32,
+    pk_z1: f32,
+    pk_z2: f32,
     // smoothed equal-power gains (one-pole per block, no zipper noise)
     gl: f32,
     gr: f32,
@@ -94,6 +114,21 @@ impl Engine {
                 amp_x1: 0.0,
                 amp_f1: 0.0,
                 tone_lp: 0.0,
+                body_n: 0,
+                body_dry: 1.0,
+                body_a1: [0.0; MAX_BODY_MODES],
+                body_r2: [0.0; MAX_BODY_MODES],
+                body_g: [0.0; MAX_BODY_MODES],
+                body_y1: [0.0; MAX_BODY_MODES],
+                body_y2: [0.0; MAX_BODY_MODES],
+                pk_on: false,
+                pk_b0: 0.0,
+                pk_b1: 0.0,
+                pk_b2: 0.0,
+                pk_a1: 0.0,
+                pk_a2: 0.0,
+                pk_z1: 0.0,
+                pk_z2: 0.0,
                 gl: 0.0,
                 gr: 0.0,
             }; MAX_TRACKS],
@@ -117,6 +152,36 @@ impl Engine {
             } else {
                 0.0
             };
+            // body resonator bank (acoustics)
+            let sr = self.sample_rate;
+            let (dry, modes) = body_defaults(instrument);
+            t.body_dry = dry;
+            t.body_n = modes.len().min(MAX_BODY_MODES);
+            for (i, &(f, t60, g)) in modes.iter().take(t.body_n).enumerate() {
+                let r = (-6.907755 / (t60 * sr)).exp();
+                let w = core::f32::consts::TAU * f / sr;
+                t.body_a1[i] = 2.0 * r * w.cos();
+                t.body_r2[i] = r * r;
+                t.body_g[i] = g * (1.0 - r);
+                t.body_y1[i] = 0.0;
+                t.body_y2[i] = 0.0;
+            }
+            // magnetic-pickup resonance (electrics): RBJ resonant lowpass
+            let (pf, pq) = pickup_defaults(instrument);
+            t.pk_on = pf > 0.0;
+            if t.pk_on {
+                let w = core::f32::consts::TAU * pf / sr;
+                let (sw, cw) = w.sin_cos();
+                let alpha = sw / (2.0 * pq);
+                let a0 = 1.0 + alpha;
+                t.pk_b0 = ((1.0 - cw) / 2.0) / a0;
+                t.pk_b1 = (1.0 - cw) / a0;
+                t.pk_b2 = t.pk_b0;
+                t.pk_a1 = (-2.0 * cw) / a0;
+                t.pk_a2 = (1.0 - alpha) / a0;
+                t.pk_z1 = 0.0;
+                t.pk_z2 = 0.0;
+            }
         }
     }
 
@@ -273,6 +338,37 @@ impl Engine {
                 bus.gl = tl;
                 bus.gr = tr;
                 continue;
+            }
+            // body resonator bank (acoustics): parallel modes + dry path
+            if bus.body_n > 0 {
+                for i in 0..frames {
+                    let x = self.track_buf[i];
+                    let mut acc = bus.body_dry * x;
+                    for m in 0..bus.body_n {
+                        let y = bus.body_a1[m] * bus.body_y1[m] - bus.body_r2[m] * bus.body_y2[m]
+                            + bus.body_g[m] * x;
+                        bus.body_y2[m] = bus.body_y1[m];
+                        bus.body_y1[m] = y;
+                        acc += y;
+                    }
+                    self.track_buf[i] = acc;
+                }
+                for m in 0..bus.body_n {
+                    bus.body_y1[m] = flush_denormal(bus.body_y1[m]);
+                    bus.body_y2[m] = flush_denormal(bus.body_y2[m]);
+                }
+            }
+            // magnetic-pickup resonance (electrics), before the amp
+            if bus.pk_on {
+                for i in 0..frames {
+                    let x = self.track_buf[i];
+                    let y = bus.pk_b0 * x + bus.pk_z1;
+                    bus.pk_z1 = bus.pk_b1 * x - bus.pk_a1 * y + bus.pk_z2;
+                    bus.pk_z2 = bus.pk_b2 * x - bus.pk_a2 * y;
+                    self.track_buf[i] = y;
+                }
+                bus.pk_z1 = flush_denormal(bus.pk_z1);
+                bus.pk_z2 = flush_denormal(bus.pk_z2);
             }
             // amp stage (electric guitars): ADAA tanh — antialiased waveshaping
             // without oversampling — then a one-pole tone/cab lowpass
