@@ -469,6 +469,15 @@ pub struct PluckVoice {
     /// bridge (force drives the body, displacement does not radiate). 0 = off.
     br_rho: f32,
     br_x1: f32,
+    /// radiation high-pass (breathing-sphere monopole, Woodhouse 2012 §2:
+    /// R(ω) = (iω/ω_c)/(1 + iω/ω_c), f_c ≈ 250 Hz): a guitar radiates volume
+    /// acceleration — the body is a poor radiator below its lowest air/plate
+    /// modes, which is why real low-E fundamentals sit ~12 dB under h3 while
+    /// a raw string tap keeps them dominant. rad_k = 0 disables.
+    rad_k: f32,
+    rad_p: f32,
+    rad_x1: f32,
+    rad_y1: f32,
     /// tension modulation: hard plucks start sharp and settle (band-limited —
     /// the fractional-delay allpass coefficient follows a smoothed env²).
     tm_dev: f32,
@@ -535,6 +544,8 @@ pub struct AcPluck {
     pub rel_click: f32,
     /// bridge differencer leak (0 = raw displacement out)
     pub br_rho: f32,
+    /// radiation monopole high-pass corner (Hz; 0 = off)
+    pub rad_hz: f32,
     pub level: f32,
 }
 
@@ -852,6 +863,10 @@ impl PluckVoice {
             ds2y: [0.0; MAX_DISP],
             br_rho: 0.0,
             br_x1: 0.0,
+            rad_k: 0.0,
+            rad_p: 0.0,
+            rad_x1: 0.0,
+            rad_y1: 0.0,
             tm_dev: 0.0,
             tm_env: 0.0,
             tm_c: 0.0,
@@ -991,12 +1006,26 @@ impl PluckVoice {
         // Bridge differencer kills the fundamental (−38 dB at E2): renormalize
         // output level to the |H_br| magnitude at 3·f0, so the force spectrum's
         // TILT is kept but overall loudness stays register-comparable.
-        let level = if p.br_rho > 0.0 {
+        let mut level = if p.br_rho > 0.0 {
             let w3 = (3.0 * w0).min(core::f32::consts::FRAC_PI_2);
             let mag = (1.0 - 2.0 * p.br_rho * w3.cos() + p.br_rho * p.br_rho).sqrt();
             p.level / mag.max(1e-3)
         } else {
             p.level
+        };
+        // Radiation monopole HP (bilinear s/(s+ω_c)); renormalized at 3·f0 like
+        // the differencer so the low-register CUT below f_c is a tilt, not a
+        // register-level rebalance.
+        let (rad_k, rad_p) = if p.rad_hz > 0.0 {
+            let t = (core::f32::consts::PI * p.rad_hz / sr).tan();
+            let (k, pl) = (1.0 / (1.0 + t), (1.0 - t) / (1.0 + t));
+            let w3 = (3.0 * w0).min(core::f32::consts::FRAC_PI_2);
+            let mag = k * 2.0 * (w3 * 0.5).sin()
+                / (1.0 - 2.0 * pl * w3.cos() + pl * pl).sqrt();
+            level /= mag.max(1e-3).min(1.0);
+            (k, pl)
+        } else {
+            (0.0, 0.0)
         };
         let mut v = Self {
             len,
@@ -1016,6 +1045,8 @@ impl PluckVoice {
             disp_a,
             disp_n: disp_n as u8,
             br_rho: p.br_rho,
+            rad_k,
+            rad_p,
             tm_dev,
             tm_c: 1.0 - (-core::f32::consts::TAU * 6.0 / sr).exp(),
             frac1,
@@ -1259,14 +1290,22 @@ impl PluckVoice {
             } else {
                 mix
             };
-            *o += outv * self.level;
+            let mut sig = outv * self.level;
             // direct contact-click transient (bypasses the string loop)
             if self.tr_env > 1e-7 {
                 let n = self.tr_rng.next();
-                *o += self.tr_env * 0.5 * (n - self.tr_hp);
+                sig += self.tr_env * 0.5 * (n - self.tr_hp);
                 self.tr_hp = n;
                 self.tr_env *= self.tr_dec;
             }
+            // radiation monopole high-pass (see rad_k docs)
+            if self.rad_k > 0.0 {
+                let y = self.rad_p * self.rad_y1 + self.rad_k * (sig - self.rad_x1);
+                self.rad_x1 = sig;
+                self.rad_y1 = y;
+                sig = y;
+            }
+            *o += sig;
         }
         self.dsx = dsx;
         self.dsy = dsy;
@@ -1286,6 +1325,7 @@ impl PluckVoice {
         }
         self.tm_env = flush_denormal(self.tm_env);
         self.br_x1 = flush_denormal(self.br_x1);
+        self.rad_y1 = flush_denormal(self.rad_y1);
         self.age += out.len() as u64;
         self.age < self.life
     }
@@ -3660,6 +3700,8 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
                 // dominant in mid/high register; low-register h2 emphasis comes
                 // from the body's T1 mode, not a global force tilt
                 br_rho: 0.0,
+                // radiated sound only: monopole HP (Woodhouse 2012 f_c ~250 Hz)
+                rad_hz: 250.0,
                 // register slope ~12 dB/key (within-source NSynth slope is
                 // ~9 dB/key; cross-source fits inflate it); mild velocity curve
                 level: 0.5 * (0.55 + 0.45 * vel) * (1.4 * key.min(0.9)).exp(),
@@ -3700,6 +3742,7 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
                 stiff_b: 1.2e-5,
                 tm_cents: 0.0,
                 br_rho: 0.0,
+                rad_hz: 0.0, // DI bass: no acoustic radiation filter
                 level: 0.5 * (0.5 + 0.5 * vel),
             };
             Kernel::Pluck(PluckVoice::start_acoustic(&p, sr, seed))
@@ -3778,6 +3821,7 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
                 // show ≤3 cents, so this stays subtle
                 tm_cents: 4.0,
                 br_rho: 0.995,
+                rad_hz: 250.0,
                 level: 0.5 * (0.55 + 0.45 * vel) * (0.83 * key).exp(),
             };
             Kernel::Pluck(PluckVoice::start_acoustic(&p, sr, seed))
