@@ -312,6 +312,25 @@ def partial_decay(x, sr, top=6):
     return out
 
 
+def manifest_lookup(ref_path):
+    """Match ref_path against evals/reference-manifest.json `match` substrings.
+    Returns the corpus entry (known limitations: sr ceiling, level normalization,
+    release-gate mask) or None. Fit with eyes open."""
+    import os
+    here = os.path.dirname(os.path.abspath(__file__))
+    mpath = os.path.join(here, "..", "..", "evals", "reference-manifest.json")
+    try:
+        with open(mpath) as f:
+            man = json.load(f)
+    except OSError:
+        return None
+    p = str(ref_path)
+    for c in man.get("corpora", []):
+        if c.get("match") and c["match"] in p:
+            return c
+    return None
+
+
 def main():
     render_path, ref_path = sys.argv[1], sys.argv[2]
     profile = "default"
@@ -321,6 +340,11 @@ def main():
     xr, sr_r = load_mono(render_path)
     xf, sr_f = load_mono(ref_path)
     gates = artifact_gates(xr, xf, sr_r, sr_ref=sr_f)  # native rate, pre-resample/pre-normalize
+    ref_meta = manifest_lookup(ref_path)
+    if ref_meta and ref_meta.get("mask_after_s"):
+        # hard release gates in the corpus tax physically-correct tails: truncate
+        m = ref_meta["mask_after_s"]
+        xr, xf = xr[: int(m * sr_r)], xf[: int(m * sr_f)]
     sr = min(sr_r, sr_f)
     xr, xf = resample_to(xr, sr_r, sr), resample_to(xf, sr_f, sr)
     l_r, l_f = lufs(xr, sr), lufs(xf, sr)
@@ -344,6 +368,7 @@ def main():
         "lufs": {"render": round(l_r, 1), "reference": round(l_f, 1), "delta": round(l_r - l_f, 1)},
         "logmel_dist": lm,
         "weighting": "flat" if flat else "K (BS.1770)",
+        "ref_corpus": ({k: ref_meta[k] for k in ("corpus", "sr", "level_normalized", "mask_after_s", "notes") if k in ref_meta} if ref_meta else None),
         "centroid": {"render": centroid_traj(xr, sr), "reference": centroid_traj(xf, sr)},
         "envelope": {"render": envelope_stats(xr, sr), "reference": envelope_stats(xf, sr)},
         "partials": {"render": partials(xr, sr), "reference": partials(xf, sr)},
