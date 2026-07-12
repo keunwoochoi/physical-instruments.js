@@ -619,7 +619,10 @@ mod tests {
             e.note_on(0, 57, 0.8); // A3 = 220 Hz
             let out = render_seconds(&mut e, 0.6);
             let tail = &out[(0.25 * sr) as usize..(0.55 * sr) as usize];
-            let f_est = zero_crossings(tail) as f32 / 2.0 / 0.3;
+            // autocorrelation, not zero crossings: the reference-matched guitar
+            // has h2 ≥ h1 in the tail (as the NSynth references do), which
+            // doubles a zero-crossing count (same panel finding as the piano)
+            let f_est = estimate_pitch(tail, sr, 100.0, 500.0);
             assert!((f_est - 220.0).abs() < 220.0 * 0.02, "sr={sr}: estimated {f_est} Hz, want 220");
         }
     }
@@ -635,7 +638,7 @@ mod tests {
             e.note_on(0, 69, vel); // A4 = 440 Hz — short period exposes the error
             let out = render_seconds(&mut e, 0.6);
             let tail = &out[(0.25 * 48_000.0) as usize..(0.55 * 48_000.0) as usize];
-            let f_est = zero_crossings(tail) as f32 / 2.0 / 0.3;
+            let f_est = estimate_pitch(tail, 48_000.0, 200.0, 900.0);
             assert!(
                 (f_est - 440.0).abs() < 440.0 * 0.02,
                 "vel={vel}: estimated {f_est} Hz, want 440"
