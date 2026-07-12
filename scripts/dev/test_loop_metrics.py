@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Synthetic and metamorphic validation for the loop metric kernel."""
 
+import json
 import os
 import sys
 import tempfile
@@ -10,7 +11,7 @@ import numpy as np
 import soundfile as sf
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import compare
+import loop_metrics as compare
 
 
 SR = 48_000
@@ -160,6 +161,27 @@ class ReportContractTests(unittest.TestCase):
         self.assertFalse(report["axis_validity"]["lufs"]["valid"])
         self.assertIsNone(report["lufs"]["delta"])
         self.assertIn("release", report["axis_validity"])
+
+
+class GoldenFixtureTests(unittest.TestCase):
+    def test_committed_equation_fixtures_match_versioned_golden_report(self):
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        fixture_dir = os.path.join(root, "evals", "metrics", "loop-v1")
+        with open(os.path.join(fixture_dir, "expected.json")) as f:
+            expected = json.load(f)
+        ref = os.path.join(fixture_dir, "reference.wav")
+        candidate = os.path.join(fixture_dir, "candidate-artifact.wav")
+        identity = compare.compare_files(ref, ref, expected_onset_s=0.05)
+        mutation = compare.compare_files(candidate, ref, expected_onset_s=0.05)
+
+        self.assertEqual(identity["inputs"]["render"]["sha256"], expected["identity"]["render_sha256"])
+        self.assertEqual(identity["mr_stft"], expected["identity"]["mr_stft"])
+        self.assertEqual(identity["gates"], expected["identity"]["gates"])
+        self.assertEqual(mutation["inputs"]["render"]["sha256"], expected["artifact_mutation"]["render_sha256"])
+        self.assertEqual(mutation["mr_stft"], expected["artifact_mutation"]["mr_stft"])
+        self.assertEqual(mutation["logmel_dist"], expected["artifact_mutation"]["logmel_dist"])
+        self.assertEqual(mutation["gates"], expected["artifact_mutation"]["gates"])
+        self.assertEqual(mutation["interpretation"], "untrusted")
 
 
 if __name__ == "__main__":

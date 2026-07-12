@@ -1,0 +1,140 @@
+{
+  "artifact_mutation": {
+    "gates": {
+      "all_pass": false,
+      "clipping": {
+        "occupancy": 0.0,
+        "pass": true,
+        "peak": 0.9
+      },
+      "dc_offset": {
+        "pass": true,
+        "peak_ratio": 0.0002
+      },
+      "finite": {
+        "pass": true,
+        "value": true
+      },
+      "max_sample_jump": {
+        "pass": false,
+        "value": 2.0
+      },
+      "onset_crest_db": {
+        "pass": false,
+        "reference": 0.3,
+        "render": 6.4
+      },
+      "post_note_off_energy": {
+        "pass": null,
+        "status": "not_evaluated"
+      },
+      "pre_onset_energy": {
+        "pass": true,
+        "relative_db": -240.0
+      },
+      "release_discontinuity": {
+        "pass": null,
+        "status": "not_evaluated"
+      },
+      "trusted": false,
+      "ultrasonic_ratio": {
+        "pass": false,
+        "value": 1.0722
+      }
+    },
+    "interpretation": "untrusted",
+    "logmel_dist": {
+      "attack": 0.9966,
+      "mid": 1.0292,
+      "overall": 1.0065,
+      "tail": 0.9936
+    },
+    "metric_version": "2026.07.12-l1",
+    "mr_stft": {
+      "alignment": {
+        "lag_ms": 0.0,
+        "lag_samples": 0,
+        "max_lag_ms": 12.0,
+        "method": "moving_rms_threshold",
+        "status": "applied"
+      },
+      "mean": 1.1391,
+      "w1024": 1.006,
+      "w256": 1.406,
+      "w4096": 1.0053
+    },
+    "reference_sha256": "0a3664c121555f0c9e55d85ed0fca97ab72194b9525e65f5a82b71f95a322059",
+    "render_sha256": "267288bbc8e52442d579a968b0359fa5d8edcb47aab78cc04672904247a18637",
+    "schema_version": "1.0.0"
+  },
+  "fixture_version": 1,
+  "generator": "scripts/dev/generate_loop_goldens.py",
+  "identity": {
+    "gates": {
+      "all_pass": true,
+      "clipping": {
+        "occupancy": 0.0,
+        "pass": true,
+        "peak": 0.30298
+      },
+      "dc_offset": {
+        "pass": true,
+        "peak_ratio": 0.00043
+      },
+      "finite": {
+        "pass": true,
+        "value": true
+      },
+      "max_sample_jump": {
+        "pass": true,
+        "value": 0.097
+      },
+      "onset_crest_db": {
+        "pass": true,
+        "reference": 0.3,
+        "render": 0.3
+      },
+      "post_note_off_energy": {
+        "pass": null,
+        "status": "not_evaluated"
+      },
+      "pre_onset_energy": {
+        "pass": true,
+        "relative_db": -240.0
+      },
+      "release_discontinuity": {
+        "pass": null,
+        "status": "not_evaluated"
+      },
+      "trusted": true,
+      "ultrasonic_ratio": {
+        "pass": true,
+        "value": 0.0
+      }
+    },
+    "interpretation": "trusted",
+    "logmel_dist": {
+      "attack": 0.0,
+      "mid": 0.0,
+      "overall": 0.0,
+      "tail": 0.0
+    },
+    "metric_version": "2026.07.12-l1",
+    "mr_stft": {
+      "alignment": {
+        "lag_ms": 0.0,
+        "lag_samples": 0,
+        "max_lag_ms": 12.0,
+        "method": "moving_rms_threshold",
+        "status": "applied"
+      },
+      "mean": 0.0,
+      "w1024": 0.0,
+      "w256": 0.0,
+      "w4096": 0.0
+    },
+    "reference_sha256": "0a3664c121555f0c9e55d85ed0fca97ab72194b9525e65f5a82b71f95a322059",
+    "render_sha256": "0a3664c121555f0c9e55d85ed0fca97ab72194b9525e65f5a82b71f95a322059",
+    "schema_version": "1.0.0"
+  }
+}

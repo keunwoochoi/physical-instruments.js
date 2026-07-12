@@ -11,3 +11,4 @@ __pycache__/
 *.py[cod]
 evals/incumbents/renders/
 .claude/worktrees/
+.worktrees/
