@@ -438,6 +438,9 @@ pub struct PluckVoice {
     tr_dec: f32,
     tr_hp: f32,
     tr_rng: Lcg,
+    /// release voicing: post-note-off t60 and pluck-off click level
+    rel_t60: f32,
+    rel_click: f32,
     /// f0 > 0 marks the acoustic path (per-period loss calibration, new damp)
     f0: f32,
 }
@@ -479,6 +482,12 @@ pub struct AcPluck {
     pub stiff_b: f32,
     /// initial tension-mod sharpening at vel = 1 (cents; small — refs show ≤3c)
     pub tm_cents: f32,
+    /// post-note-off decay t60 (s): finger/palm damping is not instantaneous —
+    /// steel refs ring ~0.5 s after release, nylon chokes fast
+    pub rel_t60: f32,
+    /// fret/finger release-click level ("pluck-off"), scaled by the string's
+    /// remaining energy at note-off
+    pub rel_click: f32,
     /// bridge differencer leak (0 = raw displacement out)
     pub br_rho: f32,
     pub level: f32,
@@ -791,6 +800,8 @@ impl PluckVoice {
             tr_dec: 0.0,
             tr_hp: 0.0,
             tr_rng: Lcg(1),
+            rel_t60: 0.0,
+            rel_click: 0.0,
             f0: 0.0,
         }
     }
@@ -952,6 +963,8 @@ impl PluckVoice {
             tr_env: p.click * (0.35 + 0.65 * p.vel) * level,
             tr_dec: t60_gain(0.035, sr),
             tr_rng: Lcg(seed.rotate_left(13) | 1),
+            rel_t60: p.rel_t60,
+            rel_click: p.rel_click,
             f0: p.f0,
             ..Self::blank()
         };
@@ -1195,11 +1208,27 @@ impl PluckVoice {
 
     pub fn damp(&mut self) {
         if self.f0 > 0.0 {
-            // acoustic path: per-period loss for a ~90 ms release (finger/palm
-            // damping), voice retired shortly after
-            self.loss = per_period_gain(0.09, self.f0);
+            // acoustic path: per-period loss toward the instrument's release
+            // t60 — finger/palm damping is not instantaneous (steel refs ring
+            // ~0.5 s after note-off); voice retired once the tail is spent
+            let rel = self.rel_t60.max(0.05);
+            self.loss = per_period_gain(rel, self.f0);
             self.loss2 = self.loss;
-            self.life = self.age + (0.25 * self.sr) as u64;
+            self.life = self.age + ((3.0 * rel + 0.15) * self.sr) as u64;
+            // pluck-off: the fret/finger release re-excites the top with a
+            // short click scaled by the string's REMAINING energy (a decayed
+            // note releases quietly) — audible at note-off in the refs
+            if self.rel_click > 0.0 {
+                let mut acc = 0.0f32;
+                for &b in self.buf.iter().take(self.len) {
+                    acc += b * b;
+                }
+                let rms = (acc / self.len.max(1) as f32).sqrt();
+                let amp = self.rel_click * rms.min(1.0) * self.level;
+                if amp > self.tr_env {
+                    self.tr_env = amp;
+                }
+            }
         } else {
             self.loss = t60_gain(0.07, self.sr);
             self.life = self.age + (0.1 * self.sr) as u64;
@@ -2898,6 +2927,8 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
                 snap: 0.5,
                 scrape: 0.06,
                 click: 0.0,
+                rel_t60: 0.10,
+                rel_click: 0.25,
                 pol_mix: 0.35,
                 pol_detune_cents: 2.2,
                 pol_t60_ratio: 0.55,
@@ -2938,6 +2969,8 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
                 snap: 0.35,
                 scrape: 0.03,
                 click: 0.0,
+                rel_t60: 0.12,
+                rel_click: 0.15,
                 pol_mix: 0.25,
                 pol_detune_cents: 1.2,
                 pol_t60_ratio: 0.5,
@@ -3003,6 +3036,8 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
                 snap: 0.12,
                 scrape: 0.008,
                 click: 1.35,
+                rel_t60: 0.90,
+                rel_click: 0.5,
                 // two-stage decay, Weinreich roles corrected round 2: the
                 // strongly-coupled (plucked) polarization decays FAST; the
                 // orthogonal one couples weakly to the bridge and carries the
@@ -3181,6 +3216,61 @@ mod tests {
             assert!((17.0..40.0).contains(&c10), "sr={sr}: h10 stretch {c10} cents");
             assert!(c10 > c5 + 5.0, "sr={sr}: stretch not progressive ({c5} → {c10})");
         }
+    }
+
+    /// Release transient ("pluck-off"): note-off on a ringing steel string must
+    /// re-brighten the output briefly (fret/finger click) and then decay on the
+    /// release t60 — not chop to silence in 90 ms. Nylon still chokes fast.
+    #[test]
+    fn steel_release_clicks_and_rings_nylon_chokes() {
+        let sr = 48_000.0f32;
+        let hf = |seg: &[f32]| {
+            // crude HF energy: first-difference RMS
+            let mut acc = 0.0f32;
+            for i in 1..seg.len() {
+                let d = seg[i] - seg[i - 1];
+                acc += d * d;
+            }
+            (acc / seg.len() as f32).sqrt()
+        };
+        let rms =
+            |seg: &[f32]| (seg.iter().map(|s| s * s).sum::<f32>() / seg.len() as f32).sqrt();
+        let run = |inst: Instrument| -> (f32, f32, f32, f32) {
+            let mut k = start_voice(inst, 45, 0.9, sr, 4242);
+            let mut out = vec![0.0f32; (2.2 * sr) as usize];
+            let off = (1.0 * sr) as usize;
+            let mut i = 0;
+            while i < out.len() {
+                let end = (i + 128).min(out.len());
+                if let Kernel::Pluck(p) = &mut k {
+                    if i <= off && off < end {
+                        p.damp();
+                    }
+                    p.render(&mut out[i..end]);
+                }
+                i = end;
+            }
+            let pre_hf = hf(&out[off - 4800..off]);
+            let post_hf = hf(&out[off..off + 4800]);
+            let at_02 = rms(&out[off + (0.2 * sr) as usize..off + (0.3 * sr) as usize]);
+            let pre = rms(&out[off - 4800..off]);
+            (pre_hf, post_hf, pre, at_02)
+        };
+        let (pre_hf, post_hf, pre, at_02) = run(Instrument::GuitarSteel);
+        assert!(
+            post_hf > pre_hf * 1.3,
+            "steel release click missing: HF {pre_hf} -> {post_hf}"
+        );
+        // release t60 0.35 s ⇒ still ringing at +0.25 s, but clearly decaying
+        assert!(
+            at_02 > pre * 1e-4 && at_02 < pre * 0.6,
+            "steel release tail off: pre {pre}, at+0.25 {at_02}"
+        );
+        let (_, _, pre_n, at_02n) = run(Instrument::Guitar);
+        assert!(
+            at_02n < pre_n * 0.05,
+            "nylon must choke fast: pre {pre_n}, at+0.25 {at_02n}"
+        );
     }
 
     /// Steel HF loss saturates on the blend filter's bypass floor: the 2.3–2.7

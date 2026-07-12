@@ -255,6 +255,10 @@ impl Engine {
             Instrument::Vibraphone
                 | Instrument::EPiano
                 | Instrument::Guitar
+                // steel was missing from this list — its notes NEVER released
+                // (round-2 finding: refs choke/ring at note-off, renders sailed
+                // through it; the release-transient work was inaudible)
+                | Instrument::GuitarSteel
                 | Instrument::Bass
                 | Instrument::SynthPad
                 | Instrument::Piano
