@@ -1073,6 +1073,48 @@ mod tests {
     }
 
     #[test]
+    fn electric_amp_ride_flattens_clean_sustain() {
+        // Amp round (owner 2026-07-12: "notes must remain longer"): the bus
+        // gain-ride (rail-recovery compression) must hold the singing region.
+        // Pre-ride the 0.5→2.5 s envelope dropped ~16 dB (string rate); with
+        // the 3:1 ride it must stay under 12 dB. Both rates: the ride is
+        // coefficient-computed from sr.
+        for sr in [44_100.0f32, 48_000.0f32] {
+            let mut e = Engine::new(sr);
+            e.set_track(0, Instrument::GuitarElectric, 0.9, 0.0);
+            e.note_on(0, 45, 0.6);
+            let out = render_seconds(&mut e, 2.8);
+            let rms = |a: f32, b: f32| {
+                let s = &out[(a * sr) as usize..(b * sr) as usize];
+                (s.iter().map(|x| x * x).sum::<f32>() / s.len() as f32).sqrt().max(1e-9)
+            };
+            let drop = 20.0 * (rms(0.5, 0.7) / rms(2.5, 2.7)).log10();
+            assert!(out.iter().all(|s| s.is_finite()));
+            assert!(drop < 12.0, "sr={sr}: clean sustain fell {drop:.1} dB over 0.5-2.5 s");
+        }
+    }
+
+    #[test]
+    fn distorted_amp_holds_output_for_seconds() {
+        // Drive-sustain: the ride re-feeds the tanh limiter, so a single held
+        // note stays within ~3 dB of its sustained level for seconds (FreePats
+        // refs hold 3.6-22.6 s; pre-ride we fell out after ~1.1 s at mp).
+        for sr in [44_100.0f32, 48_000.0f32] {
+            let mut e = Engine::new(sr);
+            e.set_track(0, Instrument::GuitarDistorted, 0.9, 0.0);
+            e.note_on(0, 45, 0.6);
+            let out = render_seconds(&mut e, 4.0);
+            let rms = |a: f32, b: f32| {
+                let s = &out[(a * sr) as usize..(b * sr) as usize];
+                (s.iter().map(|x| x * x).sum::<f32>() / s.len() as f32).sqrt().max(1e-9)
+            };
+            let drop = 20.0 * (rms(0.3, 0.5) / rms(3.7, 3.9)).log10();
+            assert!(out.iter().all(|s| s.is_finite()));
+            assert!(drop.abs() < 3.0, "sr={sr}: distorted hold broke: {drop:.1} dB 0.3->3.7 s");
+        }
+    }
+
+    #[test]
     fn electric_release_squeak_bounded_and_terminates() {
         // Fret-release noise: bursts at note-off on the drive channel, stays
         // bounded, and the voice still terminates promptly at both rates.
