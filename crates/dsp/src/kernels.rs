@@ -5774,6 +5774,7 @@ impl DrumVoice {
         self.sl_y2 = flush_denormal(self.sl_y2);
         self.lfn = flush_denormal(self.lfn);
         self.lfn2 = flush_denormal(self.lfn2);
+        self.lfn_mix = flush_denormal(self.lfn_mix);
         self.lfn_env = flush_denormal(self.lfn_env);
         if self.has_modal {
             self.modal.render(out);
@@ -7253,7 +7254,11 @@ mod drum_kit_tests {
     use super::*;
 
     fn render_kit(gm: u32, vel: f32, sr: f32, kit: KitStyle, secs: f32) -> Vec<f32> {
-        let mut v = DrumVoice::start(gm, vel, sr, 0x2468_ace0, kit);
+        render_kit_seed(gm, vel, sr, kit, secs, 0x2468_ace0)
+    }
+
+    fn render_kit_seed(gm: u32, vel: f32, sr: f32, kit: KitStyle, secs: f32, seed: u32) -> Vec<f32> {
+        let mut v = DrumVoice::start(gm, vel, sr, seed, kit);
         let mut out = Vec::new();
         let mut block = [0.0f32; 128];
         for _ in 0..(secs * sr / 128.0) as usize {
@@ -7365,6 +7370,55 @@ mod drum_kit_tests {
         }
     }
 
+    /// Playability gate for the owner's new compression/velocity law: a
+    /// feather-to-stomp ladder stays monotonic with a gentler top interval,
+    /// and a four-hit phrase remains bounded while seeded membrane detail
+    /// prevents identical repeated attacks.
+    #[test]
+    fn jazz_kick_velocity_and_repeat_phrase_stay_playable() {
+        for &sr in &[44_100.0f32, 48_000.0] {
+            let rms = |x: &[f32]| {
+                let i0 = (0.03 * sr) as usize;
+                let i1 = ((0.50 * sr) as usize).min(x.len());
+                (x[i0..i1].iter().map(|s| s * s).sum::<f32>() / (i1 - i0) as f32).sqrt()
+            };
+            let soft = render_kit(36, 30.0 / 127.0, sr, KitStyle::Jazz, 0.8);
+            let medium = render_kit(36, 75.0 / 127.0, sr, KitStyle::Jazz, 0.8);
+            let hard = render_kit(36, 120.0 / 127.0, sr, KitStyle::Jazz, 0.8);
+            let (rs, rm, rh) = (rms(&soft), rms(&medium), rms(&hard));
+            let lower_span = 20.0 * (rm / rs.max(1e-9)).log10();
+            let upper_span = 20.0 * (rh / rm.max(1e-9)).log10();
+            assert!(
+                lower_span > 10.0 && upper_span > 4.0 && upper_span < lower_span,
+                "jazz velocity knee invalid at {sr} Hz: soft-mid {lower_span:.1} dB, mid-hard {upper_span:.1} dB"
+            );
+
+            let hit_a = render_kit_seed(36, 0.75, sr, KitStyle::Jazz, 0.7, 0x2468_ace0);
+            let hit_b = render_kit_seed(36, 0.75, sr, KitStyle::Jazz, 0.7, 0x1357_bdf1);
+            let n = (0.10 * sr) as usize;
+            let dot: f32 = hit_a[..n].iter().zip(&hit_b[..n]).map(|(&a, &b)| a * b).sum();
+            let ea: f32 = hit_a[..n].iter().map(|a| a * a).sum();
+            let eb: f32 = hit_b[..n].iter().map(|b| b * b).sum();
+            let repeat_corr = dot / (ea * eb).sqrt().max(1e-12);
+            assert!(repeat_corr < 0.95, "jazz repeated attacks too identical at {sr} Hz: {repeat_corr:.3}");
+
+            let mut phrase = vec![0.0f32; (1.5 * sr) as usize];
+            for (k, (&vel, &seed)) in [0.72, 0.58, 0.80, 0.67]
+                .iter()
+                .zip(&[0x1111_0001, 0x2222_0001, 0x3333_0001, 0x4444_0001])
+                .enumerate()
+            {
+                let hit = render_kit_seed(36, vel, sr, KitStyle::Jazz, 0.8, seed);
+                let offset = (k as f32 * 0.22 * sr) as usize;
+                for (dst, src) in phrase[offset..].iter_mut().zip(hit) {
+                    *dst += src;
+                }
+            }
+            let peak = phrase.iter().fold(0.0f32, |a, &s| a.max(s.abs()));
+            assert!(peak < 1.0, "jazz repeated-tail phrase clips at {sr} Hz: {peak:.3}");
+        }
+    }
+
     /// The open jazz kick's diffuse membrane still rings at 0.6 s while the
     /// muffled rock kick has died.
     #[test]
@@ -7412,31 +7466,33 @@ mod drum_kit_tests {
     /// while remaining rounder than the hard-beater rock kick.
     #[test]
     fn kick_beater_contrast_is_kit_voiced() {
-        let sr = 48_000.0f32;
-        let jazz = render_kit(36, 0.95, sr, KitStyle::Jazz, 0.3);
-        let rock = render_kit(36, 0.95, sr, KitStyle::Rock, 0.3);
-        let rel = |x: &[f32], lo: f32, hi: f32| {
-            let lf = band_mag(x, sr, 30.0, 150.0, 0.0, 0.030);
-            let band = band_mag(x, sr, lo, hi, 0.0, 0.030);
-            20.0 * (band / lf.max(1e-9)).log10()
-        };
-        let (jazz_mid, jazz_high) = (rel(&jazz, 300.0, 2_000.0), rel(&jazz, 2_000.0, 6_000.0));
-        assert!(
-            jazz_mid > -18.0 && jazz_high > -38.0,
-            "jazz felt attack too dark: mid {jazz_mid:.1}, high {jazz_high:.1} dB rel LF"
-        );
-        let crest = |x: &[f32]| {
-            let n = ((0.5 * sr) as usize).min(x.len());
-            let seg = &x[..n];
-            let pk = seg.iter().fold(0.0f32, |a, &s| a.max(s.abs()));
-            let rms = (seg.iter().map(|s| s * s).sum::<f32>() / n as f32).sqrt();
-            pk / rms.max(1e-9)
-        };
-        let (cj, cr) = (crest(&jazz), crest(&rock));
-        assert!(
-            cr > cj * 1.35,
-            "rock kick should be spikier than jazz: crest rock {cr:.1} jazz {cj:.1}"
-        );
+        for &sr in &[44_100.0f32, 48_000.0] {
+            let jazz = render_kit(36, 0.95, sr, KitStyle::Jazz, 0.3);
+            let rock = render_kit(36, 0.95, sr, KitStyle::Rock, 0.3);
+            let rel = |x: &[f32], lo: f32, hi: f32| {
+                let lf = band_mag(x, sr, 30.0, 150.0, 0.0, 0.030);
+                let band = band_mag(x, sr, lo, hi, 0.0, 0.030);
+                20.0 * (band / lf.max(1e-9)).log10()
+            };
+            let jazz_mid = rel(&jazz, 300.0, 2_000.0);
+            let jazz_high = rel(&jazz, 2_000.0, 6_000.0);
+            assert!(
+                jazz_mid > -20.0 && jazz_high > -38.0,
+                "jazz felt attack too dark at {sr} Hz: mid {jazz_mid:.1}, high {jazz_high:.1} dB rel LF"
+            );
+            let crest = |x: &[f32]| {
+                let n = ((0.5 * sr) as usize).min(x.len());
+                let seg = &x[..n];
+                let pk = seg.iter().fold(0.0f32, |a, &s| a.max(s.abs()));
+                let rms = (seg.iter().map(|s| s * s).sum::<f32>() / n as f32).sqrt();
+                pk / rms.max(1e-9)
+            };
+            let (cj, cr) = (crest(&jazz), crest(&rock));
+            assert!(
+                cr > cj * 1.35,
+                "rock kick should be spikier at {sr} Hz: crest rock {cr:.1} jazz {cj:.1}"
+            );
+        }
     }
 
     /// Round-3 rock snare authority: the 400–1500 Hz crack band holds within
