@@ -6023,6 +6023,22 @@ impl DrumVoice {
                 a.amp *= 1.2;
                 a.life = (0.72 * sr) as u64;
             }
+            70 => {
+                // Maraca: the hardware noise source is sharply high-passed
+                // and opened by a very short envelope. Do not let the GM
+                // selector fall through to a pitched blip: an original-unit
+                // hit is an air-band burst with no stable partials.
+                a.kind = AnalogDrumKind::Snare;
+                a.tone_env = 0.0;
+                a.tone_gain = 0.0;
+                a.noise_env = 1.0;
+                a.noise_dec = t60_gain(0.032, sr);
+                a.hp_c = 1.0 - (-core::f32::consts::TAU * 7_200.0 / sr).exp();
+                a.lp_c = 1.0 - (-core::f32::consts::TAU * 18_000.0 / sr).exp();
+                a.noise_gain = 1.0;
+                a.amp *= 0.82;
+                a.life = (0.09 * sr) as u64;
+            }
             41 | 43 | 45 | 47 | 48 | 50 | 62 | 63 | 64 => {
                 // Resonant tom/conga sections with a short amplitude-dependent
                 // pitch bend. Congas sit higher and decay faster.
@@ -8011,6 +8027,25 @@ mod drum_808_tests {
         assert!(difference > 1e-3, "equal-velocity hats are bit-identical across voice seeds");
         let level_ratio = rms(&a) / rms(&b).max(1e-9);
         assert!((0.6..1.67).contains(&level_ratio), "phase variation creates a level jump: {level_ratio}");
+    }
+
+    #[test]
+    fn maraca_is_a_short_air_band_noise_burst() {
+        for sr in [44_100.0f32, 48_000.0] {
+            let maraca = render(70, 0.9, sr, 0.12);
+            let low = [1_500.0, 2_500.0, 3_500.0, 4_500.0]
+                .iter()
+                .map(|&f| magnitude(&maraca, sr, f, 0.0, 0.03))
+                .sum::<f32>();
+            let air = [8_000.0, 10_000.0, 12_000.0, 14_000.0]
+                .iter()
+                .map(|&f| magnitude(&maraca, sr, f, 0.0, 0.03))
+                .sum::<f32>();
+            assert!(air > low * 1.4, "{sr}: maraca is not air-band forward: air={air}, low={low}");
+            let early = rms(&maraca[..(0.02 * sr) as usize]);
+            let late = rms(&maraca[(0.06 * sr) as usize..(0.08 * sr) as usize]);
+            assert!(early > late * 8.0, "{sr}: maraca tail is too long: early={early}, late={late}");
+        }
     }
 }
 
