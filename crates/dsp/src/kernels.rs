@@ -227,14 +227,14 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
         Instrument::Guitar => 0.126,       // round-2 re-bake (body refit + release; was -22.1 LUFS at 0.194)
         Instrument::Bass => 0.63,         // round-2 re-bake (DI tilt body)
         Instrument::EPiano => 1.54,       // was -26.6 LUFS
-        Instrument::Drums => 0.54,        // was -27.4 LUFS
+        Instrument::Drums => 0.43,        // drums r3 re-bake (kick vel law + snare band)
         Instrument::SynthPad => 0.50,     // was -26.5 LUFS
         Instrument::Piano => 0.123, // piano r3 re-measure (board dip + radiation revoice; x1.46 per measure-loudness)
         Instrument::GuitarSteel => 0.48,    // acoustics r2 re-bake (HF floor + 16-mode body)
         Instrument::GuitarElectric => 0.34, // electric r2 re-bake (022 dark voicing)
         Instrument::GuitarDistorted => 0.22, // electric r2 re-bake (drive 45 lead channel)
-        Instrument::DrumsRock => 0.32,      // measured 2026-07-11 (pyloudnorm -22.6 pre-bake)
-        Instrument::DrumsJazz => 0.51,      // measured 2026-07-11 (pyloudnorm -25.5 pre-bake)
+        Instrument::DrumsRock => 0.29,      // drums r3 re-bake (rock snare 1.45 anchor)
+        Instrument::DrumsJazz => 0.70,      // drums r3 re-bake (brush GM38 + open kick)
     }
 }
 
@@ -3243,6 +3243,57 @@ impl CymbalVoice {
         v
     }
 
+    /// China (GM 52): upturned-edge plate — strongly nonlinear contact floods
+    /// energy across the spectrum almost instantly (bloom taus ~⅓ of a
+    /// crash's), the mode field is denser/noisier (wider bands: ring 30/f vs
+    /// 44/f), the low skeleton is a dissonant cluster, and the trash decays
+    /// fast (~60% of crash). Rossing, Science of Percussion Instruments
+    /// ch. 20 (china/swish); no license-clean reference exists (same search
+    /// posture as splash, r2) — voiced from the crash under these physics.
+    fn china(vel: f32, sr: f32, seed: u32) -> Self {
+        let mut v = Self::new(seed);
+        v.burst_dec = t60_gain(0.030, sr);
+        v.amp = 1.1 * (0.25 + 0.75 * vel);
+        v.life = (2.6 * sr) as u64;
+        let mut jit = Lcg(seed ^ 0xc41a | 1);
+        let imp = 0.08;
+        // dissonant low cluster (near-tritone spacing, beating)
+        for (f, ring, burst) in [(438.0, 1.4, 0.15f32), (593.0, 1.2, 0.13), (617.0, 1.1, 0.10)] {
+            v.push_band(
+                CymBand {
+                    freq: f,
+                    ring_t60: ring,
+                    burst: burst * imp * vel.powf(0.8),
+                    chick: 0.0,
+                    wash: 0.0,
+                    decay_t60: ring,
+                    bloom_frac: 0.0,
+                    bloom_tau: 0.0,
+                },
+                sr,
+            );
+        }
+        let n_wash = CYM_BANDS - v.n_bands;
+        for k in 0..n_wash {
+            let t = k as f32 / (n_wash - 1) as f32;
+            let f = 500.0 * (16500.0f32 / 500.0).powf(t) * (1.0 + 0.08 * jit.next());
+            let ring = 30.0 / f; // wider bands = trashier texture
+            let decay = (1.7 * (2000.0 / f).powf(0.35)).clamp(0.8, 2.0);
+            let depth = 0.9 * (0.75 + 0.25 * vel);
+            let (bloom_frac, bloom_tau) = if f < 2500.0 { (depth, 0.016) } else { (depth, 0.009) };
+            let lnr = (f / 3000.0).ln();
+            let burst = (0.14 + 0.9 * (-lnr * lnr / 1.4).exp()) * vel.powf(0.7) * imp;
+            let wash = 0.66 * if f < 900.0 { (f / 900.0).powf(1.2) } else { 1.0 };
+            let chick = 0.3 * (f / 6000.0).powf(0.8).min(2.0) * vel.powf(1.2);
+            v.push_band(
+                CymBand { freq: f, ring_t60: ring, burst, chick, wash, decay_t60: decay, bloom_frac, bloom_tau },
+                sr,
+            );
+        }
+        v.cap_strike(1.6);
+        v
+    }
+
     /// Splash (GM 55): an 8–10" thin crash. No license-clean reference exists
     /// (see references ledger), so this is the crash model under plate scaling
     /// physics: modal frequencies scale ~h/d² (Rossing, Science of Percussion
@@ -3421,9 +3472,20 @@ pub struct DrumVoice {
     hp_c: f32,
     noise_amt: f32,
     tone_amt: f32,
+    /// snare-wire noise upper band edge (one-pole lowpass after the hp
+    /// highpass = broad bandpass): wires are head-driven and radiate
+    /// ~300 Hz–6 kHz, NOT white to Nyquist (white hiss was round-2's
+    /// "weak" snare: all energy above the crack band)
+    lp: f32,
+    lp_c: f32,
     /// kick beater-click gain (velocity-shaped; hp/hp_c double as the click's
     /// brightness lowpass for the Kick kind)
     click: f32,
+    /// beater contact ramp on the kick body: raised-cosine 0→1 over the
+    /// contact time (felt compresses ~5–8 ms, hard beaters ~4 ms) — the refs
+    /// peak 6–10 ms AFTER onset; an instant-on sine is the "electronic" edge
+    atk_ph: f32,
+    atk_dp: f32,
     /// beater "slap" resonator: an impulse-rung two-pole at the head's
     /// overtone region (~500–700 Hz, t60 ~30 ms) — the mid-band knock that
     /// separates a hard beater hit from the pitched fundamental (CC0 hard-kick
@@ -3472,7 +3534,11 @@ impl DrumVoice {
             hp_c: 0.2,
             noise_amt: 1.0,
             tone_amt: 0.0,
+            lp: 0.0,
+            lp_c: 1.0, // pass-through unless a kind sets a band edge
             click: 0.0,
+            atk_ph: 1.0,
+            atk_dp: 0.0,
             sl_a1: 0.0,
             sl_r2: 0.0,
             sl_y1: 0.0,
@@ -3495,26 +3561,52 @@ impl DrumVoice {
                 // initial pitch (membrane tension modulation, Rossing ch. 2)
                 // and a brighter, louder beater click (CC0 kick refs: 30 ms
                 // centroid 306 Hz hard vs 148 Hz soft).
-                // (f_start base, vel span, f_end, sweep s, t60, click base,
+                // (f_end Hz, start ratio vel span, sweep tau s, t60, click base,
                 //  click vel span, click brightness, amp)
-                // De-danced 2026-07-12 (owner: "too electronic / dance music"):
-                // an acoustic kick's pitch drop is a fast transient (~12-15 ms)
-                // over a SMALL range (~1.5-1.7x), not a 909 whoop (3x over 40 ms);
-                // the body is short, the character is beater + shell.
-                let (f0, f0v, f1, sw, t60, ck0, ckv, ckb, amp) = match kit {
-                    KitStyle::Pop => (72.0, 14.0, 48.0, 0.014, 0.22, 0.22, 0.85, 0.55, 0.9),
-                    KitStyle::Rock => (74.0, 16.0, 44.0, 0.015, 0.26, 0.30, 1.10, 0.66, 1.0),
-                    KitStyle::Jazz => (108.0, 14.0, 72.0, 0.012, 0.30, 0.10, 0.50, 0.38, 0.8),
+                // De-danced round 3 (owner r2: "too electronic / dance music"):
+                // tension-modulation pitch shift decays with amplitude SQUARED
+                // (Rossing ch.2 / Fletcher-Rossing membrane nonlinearity), so
+                // the glide is spent in ~2x the envelope rate: tau 5-6.5 ms,
+                // start elevation <= ~1.35x. Measured on the CC0 vl4 kick:
+                // glide ratio 1.28 settling in ~3 ms; vl1 shows none. A 909
+                // whoop (2-3x over 15-40 ms) is exactly the "dance" signature.
+                // f_end: jazz 77 Hz (measured, 18" tuned high); rock 50 Hz
+                // (22" — 44 Hz read as sub-bass/808); pop 54 Hz tight.
+                let (f1, rv, sw, t60, ck0, ckv, ckb, amp) = match kit {
+                    KitStyle::Pop => (54.0, 0.22, 0.006, 0.22, 0.22, 0.85, 0.55, 0.9),
+                    KitStyle::Rock => (50.0, 0.26, 0.0065, 0.26, 0.30, 1.10, 0.66, 1.0),
+                    KitStyle::Jazz => (77.0, 0.18, 0.005, 0.30, 0.10, 0.50, 0.38, 0.8),
                 };
                 v.kind = DrumKind::Kick;
-                v.freq = f0 + f0v * vel;
+                // contact ramp: felt (jazz) ~7 ms base, harder beaters ~5 ms;
+                // harder hits compress faster (same law as ModalVoice contact)
+                let contact_ms = match kit {
+                    KitStyle::Jazz => 7.0,
+                    _ => 5.0,
+                } * (1.35 - 0.5 * vel).max(0.5);
+                v.atk_ph = 0.0;
+                v.atk_dp = 1000.0 / (contact_ms * sr);
+                v.freq = f1 * (1.10 + rv * vel);
                 v.freq_end = f1;
                 v.sweep = (-1.0 / (sw * sr)).exp();
                 v.decay = t60_gain(t60, sr);
-                v.amp = vel * amp;
+                // dynamic law: refs span 26 dB LUFS from feathered (vl1) to
+                // slammed (vl4); linear-in-vel gave only ~10 dB. Head drive is
+                // supralinear in stick/beater speed (momentum + contact time)
+                v.amp = vel.powf(1.7) * amp;
                 v.click = ck0 + ckv * vel * vel;
                 v.hp_c = 0.08 + ckb * vel; // click lowpass: felt thud → hard slap
-                v.life = ((t60 * 1.6).max(0.5) * sr) as u64;
+                // resonant-head ring: after the batter transient the front head
+                // keeps singing at its own (slightly higher) tuning — refs hold
+                // an LF-band t60 of 1.1–1.3 s at EVERY velocity while the
+                // broadband envelope decays in ~0.25 s (two-stage tail).
+                // Jazz kicks are left open (long); rock/pop are muffled.
+                let (ring_t60, ring_amp) = match kit {
+                    KitStyle::Pop => (0.50, 0.30),
+                    KitStyle::Rock => (0.45, 0.30),
+                    KitStyle::Jazz => (1.35, 0.50),
+                };
+                v.life = ((t60 * 1.6).max(ring_t60 * 1.05).max(0.5) * sr) as u64;
                 // slap resonator: (freq, strength) per kit; amplitude ~vel^2
                 // (soft felt strokes barely knock; hard strokes do — refs:
                 // slap band −2.4 dB rel at vl4, −12.4 dB at vl1)
@@ -3523,11 +3615,26 @@ impl DrumVoice {
                     KitStyle::Rock => (540.0, 3.2),
                     KitStyle::Jazz => (700.0, 1.6),
                 };
-                let r = t60_gain(0.060, sr);
+                // "openness": undamped heads keep their overtone band ringing
+                // (refs: 400–1500 Hz t60 0.6–0.9 s on the open jazz kick);
+                // pillow-muffled rock/pop kicks choke it within ~100 ms
+                let open = match kit {
+                    KitStyle::Pop => 1.6,
+                    KitStyle::Rock => 1.4,
+                    KitStyle::Jazz => 6.0,
+                };
+                let r = t60_gain(0.060 * open, sr);
                 let w = core::f32::consts::TAU * sf / sr;
                 v.sl_a1 = 2.0 * r * w.cos();
                 v.sl_r2 = r * r;
-                let a = sa * vel.powf(1.05);
+                // √open normalization: longer ring at the same strike amplitude
+                // would inflate the 30 ms attack-window energy (it4 overshoot:
+                // jazz slap band went +10 dB); keep window level, extend ring.
+                // Compressive contact law on top: head tension nonlinearity
+                // limits the local knock displacement at high drive (ff hits
+                // were pinning the master knee ~+6 dB — an audible squash)
+                let a_raw = sa * vel.powf(1.05) / (open / 1.6f32).sqrt();
+                let a = a_raw / (1.0 + 0.18 * a_raw);
                 let phi = core::f32::consts::PI * Lcg(seed ^ 0x51a9 | 1).next();
                 v.sl_y1 = a * (phi - w).sin();
                 v.sl_y2 = a * (phi - 2.0 * w).sin();
@@ -3539,9 +3646,20 @@ impl DrumVoice {
                     vel,
                     sr,
                     &[
-                        ModeDef { ratio: 1.58, amp: 0.5, t60: 0.055 },
-                        ModeDef { ratio: 3.4, amp: 0.28, t60: 0.035 },
+                        ModeDef { ratio: 1.04, amp: ring_amp, t60: ring_t60 },
+                        ModeDef {
+                            ratio: 1.58,
+                            amp: 0.5 / (open / 1.6f32).sqrt(),
+                            t60: 0.055 * open,
+                        },
+                        ModeDef {
+                            ratio: 3.4,
+                            amp: 0.28 / (open / 1.6f32).sqrt(),
+                            t60: 0.035 * open,
+                        },
                     ],
+                    // impulse-style charge (longer pulses pump the LF ring mode
+                    // ~7 dB hot and darken the attack — measured it3 regression)
                     0.6,
                     0.0,
                     0.0,
@@ -3549,6 +3667,41 @@ impl DrumVoice {
                 );
             }
             38 | 40 => {
+                // Jazz GM 38 = BRUSH tap (GM 40 keeps the stick jazz snare).
+                // A brush is dozens of thin bristles arriving distributed over
+                // 10–30 ms: noise-dominated, soft onset, little modal ping —
+                // the defining jazz comp texture. Measured on the CC0
+                // Frankensnare brush refs (close mic): time-to-peak 22 ms
+                // (hard) to 42 ms (soft) vs 4 ms for sticks; soft taps
+                // wire-bright (cen30 ~3.3 kHz), hard taps head-forward
+                // (~0.9 kHz); t60 0.18–0.24 s.
+                let brush = matches!(kit, KitStyle::Jazz) && gm_note == 38;
+                if brush {
+                    let dyn_g = 0.30 + 0.70 * vel;
+                    v.decay = t60_gain(0.21, sr);
+                    // wire band closes with velocity: light taps are bright
+                    // bristle-on-wire sizzle (ref cen30 ~3.3 kHz), hard taps
+                    // drive the head and read dark (~0.9 kHz)
+                    let lp_hz = 5800.0 - 3800.0 * vel;
+                    v.hp_c = 1.0 - (-core::f32::consts::TAU * 400.0 / sr).exp();
+                    v.lp_c = 1.0 - (-core::f32::consts::TAU * lp_hz / sr).exp();
+                    v.amp = 0.75 * dyn_g;
+                    v.noise_amt = 0.30 + 0.55 * vel;
+                    // bristle-arrival ramp on the noise (soft attack)
+                    let arrive_ms = 30.0 * (1.35 - 0.6 * vel).max(0.4);
+                    v.atk_ph = 0.0;
+                    v.atk_dp = 1000.0 / (arrive_ms * sr);
+                    // quiet head tone: a plain enveloped sine gated by the
+                    // SAME bristle ramp — a modal bank fed a long soft pulse
+                    // leaks the pulse shape as a sub-200 Hz "pat" thump at
+                    // t≈4 ms (measured; quasi-static resonator response), so
+                    // no ModalVoice here. Tone grows with velocity (hard taps
+                    // read head-forward in the refs).
+                    v.freq = 214.0;
+                    v.tone_amt = 0.04 + 0.42 * vel;
+                    v.life = (0.40 * sr) as u64;
+                    return v;
+                }
                 // Snare, kit-voiced: shell fundamental + coupled-head partials
                 // (ratios 1.3–3.0 measured on the CC0 virtuosity snare, 182 Hz
                 // fundamental). Conventions: pop = tight/bright/damped; rock =
@@ -3557,32 +3710,49 @@ impl DrumVoice {
                 // Owsinski). Velocity: wires dominate soft hits, shell tone
                 // grows with velocity (soft ref is relatively wire-bright) —
                 // wires get a level floor, the modal shell scales with vel.
-                // (shell Hz, decay, hp_c, noise base, noise vel span,
-                //  modal gain, life s)
-                // rock row hardened 2026-07-12 (owner: "too weak")
-                let (shell, dec, hpc, n0, nv, mg, life) = match kit {
-                    KitStyle::Pop => (186.0, 0.14, 0.40, 0.30, 0.60, 0.40, 0.32),
-                    KitStyle::Rock => (158.0, 0.24, 0.26, 0.44, 0.74, 0.85, 0.44),
-                    KitStyle::Jazz => (214.0, 0.20, 0.32, 0.24, 0.55, 0.60, 0.40),
+                // (shell Hz, decay, wire band lo Hz, wire band hi Hz,
+                //  noise base, noise vel span, modal gain, life s)
+                // rock row hardened 2026-07-12 (owner: "too weak"); round 3
+                // moved the wires from white hiss into a 300 Hz–6.5 kHz band
+                // (head-driven wires; refs hold 400–1500 Hz at +14…+23 dB
+                // over LF while our hiss put it 18 dB UNDER)
+                let (shell, dec, hp_hz, lp_hz, n0, nv, mg, life) = match kit {
+                    KitStyle::Pop => (186.0, 0.14, 400.0, 6000.0, 0.30, 0.60, 0.40, 0.32),
+                    KitStyle::Rock => (158.0, 0.24, 300.0, 4500.0, 0.44, 0.74, 0.85, 0.44),
+                    KitStyle::Jazz => (214.0, 0.20, 450.0, 6500.0, 0.24, 0.55, 0.60, 0.40),
                 };
                 v.decay = t60_gain(dec, sr);
-                v.hp_c = hpc;
-                // velocity lives HERE (wires floor + span) and in the shell's
-                // modal excitation — not in v.amp, or the wires pick up a
-                // second vel factor and soft hits lose their relative wire
-                // brightness (the CC0 soft snare is wire-forward)
-                v.amp = if matches!(kit, KitStyle::Rock) { 1.25 } else { 0.95 };
+                v.hp_c = 1.0 - (-core::f32::consts::TAU * hp_hz / sr).exp();
+                v.lp_c = 1.0 - (-core::f32::consts::TAU * lp_hz / sr).exp();
+                // velocity mostly lives HERE (wires floor + span) and in the
+                // shell's modal excitation — plus a mild global dynamic factor
+                // (refs span ~22 dB vl6→vl34; wires-only gave 8) that keeps
+                // the wire/shell balance (soft hits stay wire-forward, as in
+                // the CC0 soft snare). Rock anchored louder: the backbeat must
+                // move air (owner r2: "too weak").
+                let dyn_g = 0.30 + 0.70 * vel;
+                v.amp = if matches!(kit, KitStyle::Rock) { 1.45 } else { 0.95 } * dyn_g;
                 v.noise_amt = n0 + nv * vel;
                 v.has_modal = true;
                 let dl = dec / 0.14; // shell ring scales with the kit's looseness
+                // dyn_g on every mode amp = same global dynamic factor as the
+                // wires: keeps the soft-hit wire/shell balance while widening
+                // the total span (mg is the strike pulse LENGTH — don't scale it)
                 v.modal = ModalVoice::start(
                     shell,
                     vel,
                     sr,
                     &[
-                        ModeDef { ratio: 1.0, amp: 1.0, t60: 0.11 * dl },
-                        ModeDef { ratio: 1.55, amp: 0.6, t60: 0.08 * dl },
-                        ModeDef { ratio: 2.1, amp: 0.3, t60: 0.06 * dl },
+                        ModeDef { ratio: 1.0, amp: 1.0 * dyn_g, t60: 0.11 * dl },
+                        ModeDef { ratio: 1.55, amp: 0.6 * dyn_g, t60: 0.08 * dl },
+                        ModeDef { ratio: 2.1, amp: 0.3 * dyn_g, t60: 0.06 * dl },
+                        // coupled-head "crack" modes: the ring at 400–1300 Hz
+                        // ((2,1)/(0,2)/(3,1)-family, air-load stretched) that
+                        // the refs hold +14…+23 dB over LF — strongly velocity
+                        // -grown (ModalVoice brightens uppers ~vel^(1+))
+                        ModeDef { ratio: 2.65, amp: 0.55 * dyn_g, t60: 0.055 * dl },
+                        ModeDef { ratio: 3.3, amp: 0.50 * dyn_g, t60: 0.045 * dl },
+                        ModeDef { ratio: 4.4, amp: 0.35 * dyn_g, t60: 0.035 * dl },
                     ],
                     mg,
                     0.0,
@@ -3622,11 +3792,88 @@ impl DrumVoice {
                 v.cym = CymbalVoice::bell(vel, sr, seed);
                 v.life = v.cym.life;
             }
+            52 => {
+                // china: trashy fast-flood accent
+                v.kind = DrumKind::Cymbal;
+                v.cym = CymbalVoice::china(vel, sr, seed);
+                v.life = v.cym.life;
+            }
             55 => {
                 // splash: small fast crash
                 v.kind = DrumKind::Cymbal;
                 v.cym = CymbalVoice::splash(vel, sr, seed);
                 v.life = v.cym.life;
+            }
+            41 | 43 | 45 | 47 | 48 | 50 => {
+                // Toms, kit-voiced (round 3): reuse the acoustic kick machinery
+                // (swept body + contact ramp + force click + overtone modal).
+                // Tunings follow size/genre convention (Drum Tuning Bible;
+                // Owsinski): rock 12/13/16" tuned LOW with long sustain, jazz
+                // 8/12/14" tuned a fourth-ish higher, shorter and darker, pop
+                // between. GM ladder 41→50 spans floor→high rack.
+                let idx = match gm_note {
+                    41 => 0,
+                    43 => 1,
+                    45 => 2,
+                    47 => 3,
+                    48 => 4,
+                    _ => 5,
+                } as f32;
+                // (f of GM41, per-step ratio, t60, click brightness, amp)
+                let (f_lo, step, t60, ckb, amp) = match kit {
+                    KitStyle::Pop => (70.0, 1.165f32, 0.38, 0.45, 0.85),
+                    KitStyle::Rock => (62.0, 1.170, 0.50, 0.50, 0.95),
+                    KitStyle::Jazz => (82.0, 1.160, 0.30, 0.32, 0.75),
+                };
+                let f1 = f_lo * step.powf(idx);
+                v.kind = DrumKind::Kick;
+                v.freq_end = f1;
+                // gentle head bend: much smaller and a bit slower than a kick
+                v.freq = f1 * (1.04 + 0.06 * vel);
+                v.sweep = (-1.0 / (0.020 * sr)).exp();
+                v.decay = t60_gain(t60, sr);
+                let dyn_g = 0.30 + 0.70 * vel;
+                v.amp = amp * dyn_g;
+                // stick contact: ~3 ms ramp, force-shaped click
+                v.atk_ph = 0.0;
+                v.atk_dp = 1000.0 / (3.0 * (1.35 - 0.5 * vel).max(0.5) * sr);
+                v.click = 0.10 + 0.45 * vel * vel;
+                v.hp_c = 0.06 + ckb * vel;
+                // stick "thwack": head-knock resonator tracked to the drum
+                // (~4.5×f1, clamped to the 450–950 Hz knock region) — low toms
+                // otherwise have NO energy above 400 Hz (modal tops out at
+                // 2.14×f1) and read as sine blobs
+                let sf = (4.5 * f1).clamp(450.0, 950.0);
+                let sa = match kit {
+                    KitStyle::Jazz => 1.0,
+                    _ => 1.5,
+                };
+                let r = t60_gain(0.050, sr);
+                let w = core::f32::consts::TAU * sf / sr;
+                v.sl_a1 = 2.0 * r * w.cos();
+                v.sl_r2 = r * r;
+                let a = sa * vel.powf(1.4);
+                let phi = core::f32::consts::PI * Lcg(seed ^ 0x70a9 | 1).next();
+                v.sl_y1 = a * (phi - w).sin();
+                v.sl_y2 = a * (phi - 2.0 * w).sin();
+                // membrane overtones (1.59/2.14 ideal-membrane series) + a
+                // resonant-head ring like the kick's two-stage tail
+                v.has_modal = true;
+                v.modal = ModalVoice::start(
+                    f1,
+                    vel,
+                    sr,
+                    &[
+                        ModeDef { ratio: 1.05, amp: 0.35 * dyn_g, t60: t60 * 1.3 },
+                        ModeDef { ratio: 1.59, amp: 0.5 * dyn_g, t60: t60 * 0.45 },
+                        ModeDef { ratio: 2.14, amp: 0.25 * dyn_g, t60: t60 * 0.28 },
+                    ],
+                    0.6,
+                    0.0,
+                    0.0,
+                    seed ^ 0x70e5,
+                );
+                v.life = ((t60 * 1.5).max(0.45) * sr) as u64;
             }
             _ => {
                 // tom-ish fallback: pitched mode by GM note
@@ -3664,14 +3911,26 @@ impl DrumVoice {
                 DrumKind::Kick => {
                     self.freq = self.freq_end + (self.freq - self.freq_end) * self.sweep;
                     self.phase = (self.phase + self.freq * dt).fract();
-                    s = (core::f32::consts::TAU * self.phase).sin() * self.env;
-                    // beater-contact click for the first ~4 ms: velocity-shaped
-                    // gain (click) through a velocity-opened lowpass (hp/hp_c) —
-                    // felt-beater thud at pp, hard slap at ff
-                    if self.age < (0.010 * sr) as u64 {
+                    // raised-cosine beater-contact ramp (body only: click IS
+                    // the contact, slap resonator IS the contact knock)
+                    let atk = if self.atk_ph < 1.0 {
+                        let g = 0.5 * (1.0 - (core::f32::consts::PI * self.atk_ph).cos());
+                        self.atk_ph += self.atk_dp;
+                        g
+                    } else {
+                        1.0
+                    };
+                    s = (core::f32::consts::TAU * self.phase).sin() * self.env * atk;
+                    // beater-contact click: velocity-shaped gain (click) through
+                    // a velocity-opened lowpass (hp/hp_c), modulated by the
+                    // contact FORCE pulse sin²(π·ph) — noise exists only while
+                    // beater and head touch, peaking mid-contact (felt thud at
+                    // pp, hard slap at ff)
+                    if self.atk_ph < 1.0 {
+                        let force = (core::f32::consts::PI * self.atk_ph).sin();
                         let n = self.rng.next();
                         self.hp += self.hp_c * (n - self.hp);
-                        s += self.click * self.hp * self.env;
+                        s += self.click * self.hp * force * force;
                     }
                     // beater slap ring (impulse initial condition, decays on its own)
                     let y = self.sl_a1 * self.sl_y1 - self.sl_r2 * self.sl_y2;
@@ -3684,10 +3943,19 @@ impl DrumVoice {
                     let n = self.rng.next();
                     self.hp += self.hp_c * (n - self.hp); // lowpass...
                     let hp = n - self.hp; // ...subtracted = one-pole highpass
-                    s = hp * self.env * self.noise_amt;
+                    self.lp += self.lp_c * (hp - self.lp); // band upper edge
+                    // bristle-arrival ramp (brush voicings; 1.0 = no-op else)
+                    let atk = if self.atk_ph < 1.0 {
+                        let g = 0.5 * (1.0 - (core::f32::consts::PI * self.atk_ph).cos());
+                        self.atk_ph += self.atk_dp;
+                        g
+                    } else {
+                        1.0
+                    };
+                    s = self.lp * self.env * self.noise_amt * atk;
                     if self.tone_amt > 0.0 {
                         self.phase = (self.phase + self.freq * dt).fract();
-                        s += self.tone_amt * (core::f32::consts::TAU * self.phase).sin() * self.env;
+                        s += self.tone_amt * (core::f32::consts::TAU * self.phase).sin() * self.env * atk;
                     }
                 }
             }
@@ -3696,6 +3964,7 @@ impl DrumVoice {
             self.age += 1;
         }
         self.hp = flush_denormal(self.hp);
+        self.lp = flush_denormal(self.lp);
         self.env = flush_denormal(self.env);
         self.sl_y1 = flush_denormal(self.sl_y1);
         self.sl_y2 = flush_denormal(self.sl_y2);
@@ -4573,7 +4842,7 @@ mod cymbal_tests {
     #[test]
     fn cymbals_finite_bounded_and_terminate_at_both_rates() {
         for &sr in &[44100.0f32, 48000.0] {
-            for &gm in &[42u32, 44, 46, 49, 51, 53, 55, 57, 59] {
+            for &gm in &[42u32, 44, 46, 49, 51, 52, 53, 55, 57, 59] {
                 let out = render_drum(gm, 1.0, sr);
                 for (i, &s) in out.iter().enumerate() {
                     assert!(s.is_finite(), "GM {gm} sr {sr}: non-finite at {i}");
@@ -4585,7 +4854,7 @@ mod cymbal_tests {
 
     #[test]
     fn cymbal_velocity_is_monotonic() {
-        for &gm in &[42u32, 46, 49, 51, 53, 55] {
+        for &gm in &[42u32, 46, 49, 51, 52, 53, 55] {
             let soft = rms(&render_drum(gm, 0.3, 48000.0));
             let hard = rms(&render_drum(gm, 1.0, 48000.0));
             assert!(
@@ -4670,6 +4939,180 @@ mod cymbal_tests {
         // closed hat, by contrast, must be short
         let hat = render_drum(42, 0.8, 48000.0);
         assert!((hat.len() as f32) < 1.0 * 48000.0, "closed hat rings too long");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Drum-kit round-3 regression tests (kick transient truth, snare crack,
+// brush articulation, kit-voiced toms)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod drum_kit_tests {
+    use super::*;
+
+    fn render_kit(gm: u32, vel: f32, sr: f32, kit: KitStyle, secs: f32) -> Vec<f32> {
+        let mut v = DrumVoice::start(gm, vel, sr, 0x2468_ace0, kit);
+        let mut out = Vec::new();
+        let mut block = [0.0f32; 128];
+        for _ in 0..(secs * sr / 128.0) as usize {
+            block.fill(0.0);
+            let alive = v.render(&mut block, sr);
+            out.extend_from_slice(&block);
+            if !alive {
+                break;
+            }
+        }
+        out
+    }
+
+    /// Goertzel-style band magnitude over a time window.
+    fn band_mag(x: &[f32], sr: f32, f0: f32, f1: f32, t0: f32, t1: f32) -> f32 {
+        let (i0, i1) = ((t0 * sr) as usize, ((t1 * sr) as usize).min(x.len()));
+        let seg = &x[i0..i1];
+        let mut acc = 0.0f32;
+        let mut f = f0;
+        while f < f1 {
+            let w = core::f32::consts::TAU * f / sr;
+            let (mut re, mut im) = (0.0f32, 0.0f32);
+            for (n, &s) in seg.iter().enumerate() {
+                let ph = w * n as f32;
+                re += s * ph.cos();
+                im += s * ph.sin();
+            }
+            acc += re * re + im * im;
+            f *= 1.12;
+        }
+        acc.sqrt()
+    }
+
+    /// Dominant frequency in [lo, hi] via dense Goertzel scan.
+    fn peak_hz(x: &[f32], sr: f32, lo: f32, hi: f32, t0: f32, t1: f32) -> f32 {
+        let (i0, i1) = ((t0 * sr) as usize, ((t1 * sr) as usize).min(x.len()));
+        let seg = &x[i0..i1];
+        let mut best = (0.0f32, lo);
+        let mut f = lo;
+        while f < hi {
+            let w = core::f32::consts::TAU * f / sr;
+            let (mut re, mut im) = (0.0f32, 0.0f32);
+            for (n, &s) in seg.iter().enumerate() {
+                let ph = w * n as f32;
+                re += s * ph.cos();
+                im += s * ph.sin();
+            }
+            let m = re * re + im * im;
+            if m > best.0 {
+                best = (m, f);
+            }
+            f *= 1.01;
+        }
+        best.1
+    }
+
+    fn env_peak_ms(x: &[f32], sr: f32) -> f32 {
+        let hop = (0.002 * sr) as usize;
+        let mut best = (0.0f32, 0usize);
+        for (k, ch) in x.chunks(hop).enumerate().take(60) {
+            let r: f32 = ch.iter().map(|s| s * s).sum::<f32>() / ch.len() as f32;
+            if r > best.0 {
+                best = (r, k);
+            }
+        }
+        best.1 as f32 * 2.0
+    }
+
+    /// Round-3 kick truth: the pitch reads as a TRANSIENT (settled within
+    /// 12% of steady by ~20 ms; start elevation bounded) — not a dance sweep.
+    /// Checked at both rates on every kit.
+    #[test]
+    fn kick_glide_is_a_transient() {
+        for &sr in &[44_100.0f32, 48_000.0] {
+            for kit in [KitStyle::Pop, KitStyle::Rock, KitStyle::Jazz] {
+                let out = render_kit(36, 1.0, sr, kit, 0.6);
+                let early = peak_hz(&out, sr, 35.0, 130.0, 0.020, 0.080);
+                let steady = peak_hz(&out, sr, 35.0, 130.0, 0.080, 0.240);
+                let ratio = early / steady;
+                assert!(
+                    (0.85..1.13).contains(&ratio),
+                    "{kit:?} sr {sr}: pitch not settled by 20 ms (early {early:.1} vs steady {steady:.1})"
+                );
+            }
+        }
+    }
+
+    /// Round-3 two-stage tail: the open jazz kick still rings at 0.6 s
+    /// (resonant-head mode) while the muffled rock kick has died.
+    #[test]
+    fn kick_two_stage_tail_is_kit_voiced() {
+        let sr = 48_000.0f32;
+        let jazz = render_kit(36, 1.0, sr, KitStyle::Jazz, 1.5);
+        let rock = render_kit(36, 1.0, sr, KitStyle::Rock, 1.5);
+        let late = |x: &[f32]| {
+            let (i0, i1) = ((0.55 * sr) as usize, (0.70 * sr) as usize);
+            if x.len() < i1 {
+                return 0.0;
+            }
+            (x[i0..i1].iter().map(|s| s * s).sum::<f32>() / (i1 - i0) as f32).sqrt()
+        };
+        let (lj, lr) = (late(&jazz), late(&rock));
+        assert!(lj > 1e-4, "jazz kick tail dead at 0.6 s: {lj}");
+        assert!(lr < lj * 0.5, "rock kick should be muffled vs jazz: rock {lr} jazz {lj}");
+    }
+
+    /// Round-3 rock snare authority: the 400–1500 Hz crack band holds within
+    /// 8 dB of the 40–150 Hz band over the first 30 ms of an ff backbeat.
+    #[test]
+    fn rock_snare_has_crack_band() {
+        let sr = 48_000.0f32;
+        let out = render_kit(38, 0.95, sr, KitStyle::Rock, 0.4);
+        let lf = band_mag(&out, sr, 40.0, 150.0, 0.0, 0.030);
+        let crack = band_mag(&out, sr, 400.0, 1500.0, 0.0, 0.030);
+        let rel = 20.0 * (crack / lf.max(1e-9)).log10();
+        // regression tripwire: the round-2 white-hiss snare measured ~-20 dB
+        // on this scale; the round-3 fit sits around -10
+        assert!(rel > -12.0, "rock snare crack band too weak: {rel:.1} dB rel LF");
+    }
+
+    /// Round-3 jazz brush: GM 38 on the jazz kit peaks late (bristle arrival,
+    /// >8 ms) and darker than the stick snare on GM 40 (which stays fast).
+    #[test]
+    fn jazz_gm38_is_a_brush() {
+        let sr = 48_000.0f32;
+        let brush = render_kit(38, 0.8, sr, KitStyle::Jazz, 0.5);
+        let stick = render_kit(40, 0.8, sr, KitStyle::Jazz, 0.5);
+        let (tb, ts) = (env_peak_ms(&brush, sr), env_peak_ms(&stick, sr));
+        assert!(tb >= 8.0, "brush attack too fast: peak at {tb} ms");
+        assert!(ts <= 6.0, "stick snare attack too slow: peak at {ts} ms");
+        let hf_b = band_mag(&brush, sr, 6_000.0, 12_000.0, 0.0, 0.05);
+        let mid_b = band_mag(&brush, sr, 500.0, 3_000.0, 0.0, 0.05);
+        assert!(mid_b > hf_b, "brush should be mid-forward, not hissy");
+    }
+
+    /// Round-3 toms: kit-voiced tuning (jazz higher than rock on the same GM
+    /// note) and kit-voiced length (rock rings longer). Both rates.
+    #[test]
+    fn toms_are_kit_voiced() {
+        for &sr in &[44_100.0f32, 48_000.0] {
+            let rock = render_kit(45, 0.85, sr, KitStyle::Rock, 1.2);
+            let jazz = render_kit(45, 0.85, sr, KitStyle::Jazz, 1.2);
+            let fr = peak_hz(&rock, sr, 50.0, 260.0, 0.05, 0.30);
+            let fj = peak_hz(&jazz, sr, 50.0, 260.0, 0.05, 0.30);
+            assert!(
+                fj > fr * 1.15,
+                "sr {sr}: jazz tom ({fj:.1} Hz) should sit well above rock ({fr:.1} Hz)"
+            );
+            let late = |x: &[f32]| {
+                let (i0, i1) = ((0.35 * sr) as usize, (0.45 * sr) as usize);
+                if x.len() < i1 {
+                    return 0.0;
+                }
+                (x[i0..i1].iter().map(|s| s * s).sum::<f32>() / (i1 - i0) as f32).sqrt()
+            };
+            assert!(
+                late(&rock) > late(&jazz),
+                "sr {sr}: rock tom should ring longer than jazz"
+            );
+        }
     }
 }
 
