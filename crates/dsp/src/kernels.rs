@@ -747,7 +747,9 @@ impl PianoVoice {
             rng,
             sr,
             key,
-            life: ((t60 * 1.4 + 0.1) * sr) as u64,
+            // cap: the long mid-register aftersound params would otherwise hold
+            // voices ~36 s (pool exhaustion under pedal); inaudible past ~18 s
+            life: (((t60 * 1.4 + 0.1).min(18.0)) * sr) as u64,
             age: 0,
         };
         // Knock/thump are a subtle PRECURSOR in real recordings (Askenfelt &
