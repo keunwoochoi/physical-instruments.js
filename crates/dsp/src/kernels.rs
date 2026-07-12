@@ -1002,6 +1002,10 @@ pub struct PianoVoice {
     thump_env: f32,
     thump_decay: f32,
     thump_amp: f32,
+    // noise coloring: 1.0 = white (attack key thump); dropped at release so
+    // the damper-felt landing reads dark (one-pole LP on the noise source)
+    noise_lp: f32,
+    noise_lp_c: f32,
     // soundboard radiation buildup: the board is a driven resonant radiator whose
     // low-frequency output rises over several string periods (Suzuki, JASA 1986
     // soundboard mobility; driven-resonator transient). NSynth refs peak 5–9
@@ -1035,6 +1039,7 @@ pub struct PianoVoice {
     rng: Lcg,
     sr: f32,
     key: f32,
+    vel: f32,
     life: u64,
     age: u64,
 }
@@ -1072,7 +1077,7 @@ impl PianoVoice {
         // everywhere, dipping at the bass break (key≈0.17) and rising toward
         // the treble where prompt and aftersound converge.
         let dk = (key - 0.17) / 0.06;
-        let r_prompt = 0.32 - 0.12 * (-dk * dk).exp() + 0.25 * ((key - 0.35).max(0.0) / 0.65);
+        let r_prompt = 0.28 - 0.10 * (-dk * dk).exp() + 0.27 * ((key - 0.35).max(0.0) / 0.65);
         let t_attack = (r_prompt * t60).min(11.0) * (1.05 - 0.15 * vel);
         let n_strings = if midi < 32 { 2 } else { 3 };
         let detune_spread = if midi < 32 { 0.35 } else { 1.5 - 0.7 * key };
@@ -1115,7 +1120,15 @@ impl PianoVoice {
         // does its real job — harder hits compress more → shorter contact → brighter.
         // (Normalizing at the actual velocity pins contact time and kills the
         // velocity→timbre physics — measured mistake, see decision log.)
-        let contact_ms = 1.7 - 1.1 * key; // contact target AT the reference velocity
+        // Contact target AT the reference velocity. Piecewise: the round-1
+        // linear law is right through the bass/low-mid (a full-key exponential
+        // overshot G1-ff centroid 341 vs 261), but linear left C5-ff contact
+        // ≈0.7 ms, whose force-pulse null at ~2.1 kHz sat exactly on p4 — the
+        // ref's SECOND-loudest attack peak (−12.4 dB; we rendered −24). Real
+        // treble contacts run 0.3–0.5 ms at ff (Hall & Askenfelt), so above
+        // key 0.35 the target falls exponentially to ~0.15 ms at C8.
+        let contact_ms =
+            if key < 0.35 { 1.7 - 1.1 * key } else { 1.315 * (-2.8 * (key - 0.35)).exp() };
         let v_ref = 0.010 + 0.115 * 0.6;
         let omega = core::f32::consts::PI / (contact_ms * 1e-3 * sr);
         let comp_ref = (v_ref / omega).max(1e-6);
@@ -1140,8 +1153,8 @@ impl PianoVoice {
             // beat null in the 0.8–1.8 s window (C3 t60_late read 4.8 vs 12).
             out_w: {
                 let a_db = -13.0
-                    + 4.0 * ((key - 0.17).max(0.0) / 0.14).min(1.0)
-                    + 3.0 * ((key - 0.45).max(0.0) / 0.35).min(1.0);
+                    + 6.0 * ((key - 0.17).max(0.0) / 0.14).min(1.0)
+                    + 2.0 * ((key - 0.45).max(0.0) / 0.35).min(1.0);
                 if n_strings == 2 {
                     let a = 1.8 * 10f32.powf(a_db / 20.0);
                     [1.8, a, 0.0]
@@ -1178,6 +1191,8 @@ impl PianoVoice {
             thump_env: 1.0,
             thump_decay: t60_gain(0.010, sr),
             thump_amp: 0.02 * vel,
+            noise_lp: 0.0,
+            noise_lp_c: 1.0,
             bloom: 0.0,
             bloom_c: 1.0 - (-f0.max(50.0) / (2.5 * sr)).exp(),
             rad_c: 1.0 - (-core::f32::consts::TAU * 0.35 * f0 / sr).exp(),
@@ -1196,6 +1211,7 @@ impl PianoVoice {
             rng,
             sr,
             key,
+            vel,
             // cap: the long mid-register aftersound params would otherwise hold
             // voices ~36 s (pool exhaustion under pedal); inaudible past ~18 s
             life: (((t60 * 1.4 + 0.1).min(18.0)) * sr) as u64,
@@ -1307,7 +1323,9 @@ impl PianoVoice {
                 s += y;
             }
             if self.thump_amp > 1e-5 && self.thump_env > 1e-4 {
-                s += self.thump_amp * self.thump_env * self.rng.next();
+                let nw = self.rng.next();
+                self.noise_lp += self.noise_lp_c * (nw - self.noise_lp);
+                s += self.thump_amp * self.thump_env * self.noise_lp;
                 self.thump_env *= self.thump_decay;
             }
             *o += s * self.level;
@@ -1333,12 +1351,34 @@ impl PianoVoice {
     /// compared against digital silence (measured −240 dB vs the ref's −27…−60 dB).
     pub fn damp(&mut self) {
         let key = self.key;
-        let t_damp = 0.32 - 0.20 * key; // s: bass 0.32 → treble 0.12
+        // Dampers settle, they don't clamp: felt compresses for 100–300 ms
+        // before the string stills (Askenfelt & Jansson 1990). Ref post-off
+        // slopes read t60 ≈ 0.5 s bass → ~0.3 s treble.
+        let t_damp = 0.50 - 0.30 * key;
         for st in self.strings.iter_mut().take(self.n_strings) {
             // per-pass (round-trip) loss, same bookkeeping as StringLoop::new
             st.loss = (-6.907_755 * st.len as f32 / (t_damp * self.sr)).exp();
         }
-        self.life = self.age + (1.2 * self.sr) as u64;
+        // Damper-felt landing + key-action release (Askenfelt & Jansson 1990):
+        // in the refs the release transient sits ~−28 dB below the note's peak
+        // at f/ff (mostly masked by the still-ringing string) but reaches
+        // −5 dB at pp — the mechanical thud doesn't shrink with a soft touch,
+        // so its RELATIVE level explodes as velocity falls. (1−vel)³ base +
+        // divide out the velocity-compensated voice level. Dark noise (felt,
+        // not click) + a softer, longer re-knock of the board mode cloud.
+        let soft = 1.0 - self.vel;
+        let base = 0.0035 + 0.087 * soft * soft * soft;
+        let rel = (base * (1.0 - 0.55 * key)) / self.level.max(1e-3);
+        self.thump_amp = rel;
+        self.thump_env = 1.0;
+        self.thump_decay = t60_gain(0.09 - 0.05 * key, self.sr);
+        self.noise_lp_c = 0.12; // ≈ 1 kHz one-pole: felt, not click
+        self.body_pulse_pos = 0;
+        self.body_pulse_len = ((0.006 * self.sr) as u32).max(2);
+        for g in self.body_g.iter_mut() {
+            *g *= 0.5;
+        }
+        self.life = self.age + (1.5 * self.sr) as u64;
     }
 }
 
