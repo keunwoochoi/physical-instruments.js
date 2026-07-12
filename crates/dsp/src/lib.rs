@@ -169,24 +169,39 @@ impl Room {
 
     /// Adds the wet signal for `input` (mono send bus) into out_l/out_r.
     fn process(&mut self, input: &[f32], out_l: &mut [f32], out_r: &mut [f32], frames: usize) {
+        // branch-wraps instead of `%` throughout: the modulo version measured
+        // ~3.8 budget points on the full demo; positions only ever step by 1
+        // and tap offsets are < buffer length, so a single conditional subtract
+        // is exact
         let el = self.early.len();
+        let pl = self.pre.len();
         for i in 0..frames {
             // pre-delay
             let x = self.pre[self.pre_pos];
             self.pre[self.pre_pos] = input[i];
-            self.pre_pos = (self.pre_pos + 1) % self.pre.len();
+            self.pre_pos += 1;
+            if self.pre_pos >= pl {
+                self.pre_pos = 0;
+            }
             // early reflections from a shared tapped line
             self.early[self.early_pos] = x;
             let (mut e_l, mut e_r) = (0.0f32, 0.0f32);
             for (k, (d, g)) in self.taps.iter().enumerate() {
-                let s = self.early[(self.early_pos + el - d) % el] * g;
+                let mut idx = self.early_pos + el - d;
+                if idx >= el {
+                    idx -= el;
+                }
+                let s = self.early[idx] * g;
                 if k & 1 == 0 {
                     e_l += s;
                 } else {
                     e_r += s;
                 }
             }
-            self.early_pos = (self.early_pos + 1) % el;
+            self.early_pos += 1;
+            if self.early_pos >= el {
+                self.early_pos = 0;
+            }
             // FDN tail: read heads, orthogonal butterfly, damped feedback
             let mut r = [0.0f32; 4];
             for k in 0..4 {
@@ -199,7 +214,10 @@ impl Room {
                 self.damp[k] += self.damp_c * (mixed[k] - self.damp[k]);
                 let w = flush_denormal((self.damp[k] * self.fdn_g[k]) + 0.25 * x);
                 self.fdn[k][self.fdn_pos[k]] = w;
-                self.fdn_pos[k] = (self.fdn_pos[k] + 1) % self.fdn[k].len();
+                self.fdn_pos[k] += 1;
+                if self.fdn_pos[k] >= self.fdn[k].len() {
+                    self.fdn_pos[k] = 0;
+                }
             }
             out_l[i] += e_l + 0.7 * (r[0] - r[2]);
             out_r[i] += e_r + 0.7 * (r[1] - r[3]);
