@@ -59,7 +59,8 @@
             "status": { "enum": ["applied", "rejected", "not_evaluated"] },
             "lag_samples": { "type": "integer" },
             "lag_ms": { "type": "number" },
-            "max_lag_ms": { "type": "number", "minimum": 0 }
+            "max_lag_ms": { "type": "number", "minimum": 0 },
+            "reason": { "type": "string" }
           }
         }
       }

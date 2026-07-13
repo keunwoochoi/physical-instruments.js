@@ -7,6 +7,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -43,7 +44,7 @@ def case(case_id, role, reference="references/test/reference.wav", required_axes
 
 def manifest():
     return {
-        "schema_version": "1.0.0",
+        "schema_version": "1.1.0",
         "family": "test",
         "description": "Equation-fixture runner test.",
         "cases": [case("tune-a", "tune"), case("hold-b", "held_out")],
@@ -53,7 +54,7 @@ def manifest():
 class ManifestTests(unittest.TestCase):
     def write_manifest(self, directory, value):
         path = Path(directory) / "cases.json"
-        path.write_text(json.dumps(value))
+        path.write_text(json.dumps(value), encoding="utf-8")
         return path
 
     def test_all_committed_family_manifests_validate(self):
@@ -81,6 +82,32 @@ class ManifestTests(unittest.TestCase):
         value["cases"][0]["reference"] = "../secret.wav"
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaisesRegex(ValueError, "safe path"):
+                loop_campaign.validate_manifest(self.write_manifest(d, value))
+
+    def test_partials_axis_requires_explicit_pairing_model(self):
+        value = manifest()
+        value["cases"][0]["analysis"]["required_axes"].append("partials")
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaisesRegex(ValueError, "partial_model"):
+                loop_campaign.validate_manifest(self.write_manifest(d, value))
+
+    def test_partial_model_without_axis_is_rejected(self):
+        value = manifest()
+        value["cases"][0]["analysis"]["partial_model"] = {
+            "type": "proximity_harmonic", "search_cents": 90.0,
+        }
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaisesRegex(ValueError, "not required"):
+                loop_campaign.validate_manifest(self.write_manifest(d, value))
+
+    def test_invalid_partial_model_is_rejected_by_schema(self):
+        value = manifest()
+        value["cases"][0]["analysis"]["required_axes"].append("partials")
+        value["cases"][0]["analysis"]["partial_model"] = {
+            "type": "stiff_string", "inharmonicity_b": -1.0, "search_cents": 90.0,
+        }
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(loop_campaign.jsonschema.ValidationError):
                 loop_campaign.validate_manifest(self.write_manifest(d, value))
 
     def test_corpus_contract_contradiction_fails_before_render(self):
@@ -121,6 +148,43 @@ class BaselineTests(unittest.TestCase):
         b = {"metric_version": "old"}
         with self.assertRaisesRegex(ValueError, "metric_version"):
             loop_campaign.compare_baseline(a, b)
+
+
+class RunnerFailureTests(unittest.TestCase):
+    def test_json_helpers_round_trip_non_ascii_as_utf8(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "evidence.json"
+            value = {"hypothesis": "diffuse snare — écoute"}
+            loop_campaign.write_json(path, value)
+            self.assertEqual(loop_campaign.read_json(path), value)
+            self.assertIn("écoute".encode("utf-8"), path.read_bytes())
+
+    def test_renderer_failure_surfaces_stderr(self):
+        failure = subprocess.CalledProcessError(3, ["node"], output="", stderr="WASM rejected the note")
+        with mock.patch.object(loop_campaign.subprocess, "run", side_effect=failure):
+            with self.assertRaisesRegex(RuntimeError, "WASM rejected the note"):
+                loop_campaign.render_case(case("broken", "tune"), Path("render.wav"))
+
+    def test_renderer_invalid_metadata_surfaces_both_streams(self):
+        completed = subprocess.CompletedProcess(["node"], 0, stdout="not-json\n", stderr="renderer warning\n")
+        with mock.patch.object(loop_campaign.subprocess, "run", return_value=completed):
+            with self.assertRaisesRegex(RuntimeError, "not-json"):
+                loop_campaign.render_case(case("broken", "tune"), Path("render.wav"))
+
+    def test_output_file_is_rejected_cleanly(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "iteration"
+            out.write_text("not a directory", encoding="utf-8")
+            with self.assertRaisesRegex(FileExistsError, "not an empty directory"):
+                loop_campaign.prepare_output_dir(out)
+
+    def test_nonempty_output_directory_is_rejected_cleanly(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "iteration"
+            out.mkdir()
+            (out / "existing").write_text("evidence", encoding="utf-8")
+            with self.assertRaisesRegex(FileExistsError, "not an empty directory"):
+                loop_campaign.prepare_output_dir(out)
 
 
 class EndToEndTests(unittest.TestCase):
@@ -164,7 +228,9 @@ class EndToEndTests(unittest.TestCase):
                 self.assertEqual(report["metric_version"], loop_campaign.loop_metrics.METRIC_VERSION)
                 self.assertEqual(report["inputs"]["render"]["sha256"], item["render_sha256"])
                 self.assertEqual(report["configuration"]["expected_onset_s"], 0.05)
-            with self.assertRaisesRegex(FileExistsError, "not empty"):
+                self.assertIsNone(report["configuration"]["expected_f0"])
+                self.assertIsNone(report["harmonic_partials"])
+            with self.assertRaisesRegex(FileExistsError, "not an empty directory"):
                 with contextlib.redirect_stdout(io.StringIO()):
                     loop_campaign.run_campaign(args)
 
