@@ -26,15 +26,34 @@ fi
 
 gz() { gzip -9c "$1" | wc -c | tr -d ' '; }
 
+# The published surface is every workspace dist a consumer can pull in, not just core.
+# packages/midi is on the path for every SMF/GM user, and the string/horn campaign (#50)
+# grows it further - so it must be counted, or "all-in" is a lie by omission.
+JS_PARTS=(
+  packages/core/dist/index.js
+  packages/core/worklet/instruments-processor.js
+  packages/midi/dist/index.js
+)
+
+for f in "$SHIPPED" "${JS_PARTS[@]}"; do
+  if [ ! -f "$f" ]; then
+    echo "BUNDLE AUDIT FAIL: $f is missing."
+    echo "  This audit measures BUILT output. Run 'npm run build --workspaces' first."
+    exit 1
+  fi
+done
+
 wasm_gz=$(gz "$SHIPPED")
 core_gz=$(gz packages/core/dist/index.js)
 worklet_gz=$(gz packages/core/worklet/instruments-processor.js)
-total=$((wasm_gz + core_gz + worklet_gz))
+midi_gz=$(gz packages/midi/dist/index.js)
+total=$((wasm_gz + core_gz + worklet_gz + midi_gz))
 instruments=$(grep -cE '^\s+[A-Z][A-Za-z0-9]* = [0-9]+,' crates/dsp/src/kernels.rs)
 
 printf 'wasm     %6s B gz\n' "$wasm_gz"
 printf 'core JS  %6s B gz\n' "$core_gz"
 printf 'worklet  %6s B gz\n' "$worklet_gz"
+printf 'midi JS  %6s B gz\n' "$midi_gz"
 printf 'TOTAL    %6s B gz  (%s KB) — %s instruments, budget %s B\n' \
   "$total" "$((total / 1024))" "$instruments" "$BUDGET_GZ"
 

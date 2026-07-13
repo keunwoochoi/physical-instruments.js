@@ -37,12 +37,16 @@ jobs:
       - run: npm ci || npm install
       - run: python3 -m pip install -r scripts/dev/requirements-loop.txt
       - run: npm run audit:loop
-      - run: npm run audit:bundle   # public bundle-size contract + shipped-WASM freshness (#46)
       - run: npm run typecheck --workspaces --if-present
       - run: npm run build --workspaces --if-present
       - run: node scripts/dev/test-midi.mjs
       - run: node scripts/dev/render-demo.mjs   # numeric render gates (peak/NaN/budget)
       - run: node scripts/dev/render-demo.mjs --bench
+      # bundle contract needs BUILT dist + a wasm toolchain; it must run after build.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - run: npm run audit:bundle   # public bundle-size contract + shipped-WASM freshness (#46)
       - run: npm run test:transport-baseline
   e2e:
     runs-on: ubuntu-latest
