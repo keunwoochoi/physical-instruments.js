@@ -153,6 +153,34 @@ per-string alternative is dead: projecting each of 32 voices onto 400 modes is *
 (≈800 µs at 32 voices — 30% of budget for the coupling term alone), while **6 ports × 200 modes is
 257 µs total, whether one note sounds or sixty-four.**
 
+### Mobile: the exit gate is **already violated**, before this campaign
+
+The architecture doc's exit gate is *"32 voices across ≥4 tracks ≤ 50% of budget **on M1 and mid-tier
+Android**."* Every number in this doc is desktop, and a mid-tier phone is roughly 3–4× slower. Applying
+3.5× to the measured figures:
+
+| config | 16 piano voices | 32 piano voices |
+|---|---|---|
+| **baseline piano, no board** | 890 µs (33%) | **1,481 µs (56%) — OVER GATE** |
+| + open-loop board (200 modes) | 890 µs (33%) | 1,630 µs (61%) — over |
+| + closed loop, mobile ladder (4×96) | 1,121 µs (42%) | 1,861 µs (70%) — over |
+| + closed loop, desktop config (6×200) | **1,709 µs (64%) — over** | 2,449 µs (92%) — over |
+
+Two things follow, and the second is uncomfortable:
+
+1. **The closed-loop board is not shippable on mobile at the desktop config.** It must degrade to
+   ~4 ports × 96 modes, and even then piano polyphony has to be capped (~16–24 voices) on the floor
+   device. That is a legitimate degradation ladder — we shed voices and modes, never glitch — but it must
+   be designed in, not discovered.
+2. **The piano we ship *today* already misses the mobile exit gate at 32 voices** (56%), with no
+   soundboard at all. This campaign did not create that; it inherits it. Nobody has caught it because
+   **there is still no real device evidence** — issue #5 has been open since the day-1 panel.
+
+Therefore **#5 (physical iOS Safari / mid-tier Android measurement) is a hard precondition of P4**, and
+the 3.5× multiplier above is an *estimate standing in for a measurement*. It is doing load-bearing work
+in a budget, which is exactly the sin this doc is trying to stop committing. Treat these rows as a
+falsifiable prediction, not a result.
+
 ### Named residuals (each mechanism must cite one)
 
 Verified against `crates/dsp/src/kernels.rs` at the baseline. This branch contains that file.

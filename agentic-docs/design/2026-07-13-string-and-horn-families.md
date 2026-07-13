@@ -132,15 +132,40 @@ extra CC carries `drive`. The honest statement: **MPE's three per-note dimension
 sufficient for a bowed string.** That does not weaken the case for implementing them — it means the
 headline was wrong.
 
-**Articulation is discrete, not continuous.** Tonguing (brass/reed) and bow re-attack are *events*, not
-scalars. `note_on` carries an articulation enum — `{ attack, tongued, slurred, legato }` — and a sounding
-note can be **re-articulated without being retriggered**.
+**Articulation is discrete, not continuous — and it must not triple-book one concept.** r2's first enum
+(`{attack, tongued, slurred, legato}`) had *three* mechanisms for "do not re-attack" (`slurred`, `legato`,
+and `tie_from`) with no way to disambiguate, no member for any *string* articulation the S2 gate actually
+demands, and — fatally — **no bow direction**, so a note-list cello line rendered every note on the same
+bow. That is verbatim the defect r2 charges r1 with: *"every long note was one infinite bow."*
 
-**Legato / note continuation.** r1's ABI made every `note_on` a fresh voice with a fresh waveguide, so a
-slur was a **re-attack** — while r1's own S2/S3 gates demanded legato transitions and brass slotting (a
-slur between slots is precisely a continued note across a lip-tension change). **The doc named an
-acceptance criterion its own ABI could not meet.** Fixed: `note_on` may carry `tie_from: note_id`
-("continue this excitation and retune"), with an explicit monophonic-legato continuation rule.
+**One mechanism per concept:**
+
+- **Continuation is `tie_from` and nothing else.** `slurred` / `legato` are removed from the enum.
+- **`onset`** describes how *this* note starts: `{ normal, tongued, martelé, spiccato, détaché }`.
+- **`bow_dir`** ∈ `{ down, up }` on `note_on`, for bowed instruments. **Bow direction is not solely a CC.**
+  It has to be reachable from a bare note-list, because that is the majority case, and because S2's
+  bow-change gate is otherwise unreachable from the corpus driver. The default gesture **alternates bow
+  direction per note** unless the caller specifies one; `drive`'s sign follows `bow_dir` and a CC lane may
+  override it continuously.
+
+**`tie_from` semantics — spelled out, because r2 promised "an explicit continuation rule" and never gave
+one:**
+
+- `note_on(id_B, …, tie_from: id_A)` **transfers** voice A to id B. **No `note_off` for A is expected or
+  required**; sending one is a no-op, not a double-decay.
+- Subsequent `note_expr` for the tied note is addressed to **id B**. Expression addressed to a retired id
+  is dropped **and reported** (never silent).
+- Continuation has two physically distinct forms and **the ABI must distinguish them**, because they sound
+  different: `tie_from` + `onset: normal` = a **portamento** (the delay length glides); `tie_from` +
+  `onset: détaché`/`slurred-finger` = a **discontinuous length change under a continuous bow** (a slurred
+  finger change on a stopped string). r2's single `tie_from` could not express the difference.
+
+**Brass has two pitch dimensions and needs a rule relating them.** Sounding pitch is a function of `midi`,
+`pitch` (slide / lip bend) *and* `position` (lip tension, which selects the harmonic slot). That is a
+many-to-one inverse — a given pitch is playable in several slot/slide combinations — and r2 never resolved
+it, which makes the S3 slotting gate untestable and the default gesture unwritable. **S0 must specify the
+`midi → (slot, slide)` mapping** (with the conventional preferred-position table), and a lip slur *within*
+a slot must be distinguishable from a slurred interval *across* slots.
 
 **The ABI — and the mistake r1 made about it.** r1 specified `ij_note_on(...) -> u32 note_id`: a WASM
 return value produced on the audio thread. **That cannot work.** The public API is fire-and-forget across
@@ -152,10 +177,18 @@ for the phase it itself called highest-blast-radius and put first.
 **Ids are caller-minted on the main thread:**
 
 ```
-ij_note_on   (track, note_id, midi, vel, articulation, tie_from, frame_offset)
+ij_note_on   (track, note_id, midi, vel, onset, bow_dir, tie_from, frame_offset)
 ij_note_expr (track, note_id, dim, value, frame_offset)    // dim ∈ {pitch, position, force, drive}
 ij_note_off  (track, note_id, release_vel, frame_offset)
+ij_pedal     (track, depth, frame_offset)                  // CONTINUOUS 0..1, not a boolean
 ```
+
+**`ij_pedal` is widened to a continuous depth in S0, and this is not optional.** Today it is
+`ij_pedal(track, on: u32)` — a **boolean**. The piano doc routes **half-pedal** into its P4, but the four
+continuous dims above are **per-note** and do not include the pedal, so as r2 stood, continuous damper
+depth would have required a **second ABI break landing after S0** — which is exactly the fault r2 charges
+r1 with over `release_vel`. S0 is *"the cheapest possible moment to break the ABI"*; widening the pedal
+costs one `f32` and it happens now, or half-pedal is still orphaned with a phase label stuck on it.
 
 - **Frame offsets on every event.** Without them "sample-accurate" is a lie — events land on quantum
   boundaries, i.e. **2.67 ms granularity on the sustain control of a self-oscillating instrument**. And a
@@ -165,12 +198,23 @@ ij_note_off  (track, note_id, release_vel, frame_offset)
   and #12 names release velocity as in-scope. It costs one `f32`.
 - Per-note identity also fixes the existing latent `(track, midi)` ambiguity for repeated same-key strikes.
 
-**Transport policy — r1's was a stuck-note hazard.** r1 said continuous-control events are
-"dropped-newest under saturation." That is exactly backwards. For a continuous scalar only the *latest*
-value matters, so the correct policy is **coalesce per (note_id, dim)**, overwriting the stale value.
-Dropping the newest **freezes** bow force or breath pressure at a stale value — and on a
-**self-oscillating** instrument that is a note **stuck at full sustain**. Worse, **note lifecycle events
-must be undroppable**: a dropped `note_off` on a blown voice never decays. It rings forever.
+**Transport policy.** r1 said continuous-control events are "dropped-newest under saturation." That is
+backwards: dropping the newest **freezes** bow force or breath pressure at a stale value, and on a
+**self-oscillating** instrument that is a note **stuck at full sustain**. And **note lifecycle events
+must be undroppable** — a dropped `note_off` on a blown voice never decays; it rings forever.
+
+But **coalescing is a saturation fallback, not the policy** — r2 initially made it unconditional, which
+contradicted the frame offsets it had just added. *"Only the latest value matters"* is **false for a
+continuous scalar**: the martelé force spike, the force dip at a bow change, and the tongue's reed
+damping are **sub-quantum spikes**. Collapsing a spike to its endpoint erases the articulation — i.e.
+unconditional coalescing silently deletes the expressivity this entire campaign exists for.
+
+The policy is therefore:
+1. **Apply every event at its frame offset.** This is the normal path.
+2. **Coalesce per (note_id, dim) only when the ring saturates** — degrade to the latest value rather than
+   freezing at a stale one.
+3. **Never drop a note lifecycle event** (`note_on`, `note_off`, `tie_from`), and report any coalescing
+   that occurred. No silent fallbacks.
 
 **Voice stealing must change, and r1 asserted it wouldn't.** Existing stealing was designed for struck and
 plucked voices, whose tails are low-amplitude and duck out. **A self-oscillating bowed or blown voice is
@@ -182,9 +226,18 @@ on steal, with a click gate.
 producer drops a cello on a track and plays the keyboard with no CC lane drawn. **That is the majority
 case**, and the engine's actual driver is a note-list / SMF scheduler. If `force`/`drive` default to 0, a
 bowed or blown note is **silent**, and S2/S3's dynamics and articulation gates have nothing to render.
-Every continuously-excited instrument therefore ships a **default velocity→gesture envelope** (attack /
-sustain / release of the drive control, per-preset shape), and there is a standing gate: **it must sound
-professional from bare MIDI notes.**
+
+Every continuously-excited instrument ships a **default velocity→gesture envelope** (attack / sustain /
+release of the drive control, per-preset shape). Two rules the envelope must carry, or it produces a
+canned, lifeless result:
+
+- **Bow direction alternates by default** across successive notes (see `bow_dir`). Without this, a bare
+  note-list line is one infinite bow — the very defect this design set out to fix.
+- **Per-note jitter applies to solo voices, not only to sections.** r2 specified jitter only for the
+  ensemble layer (S4), so a fast détaché or double-tongued line would give every note an *identical*
+  envelope — the machine-gun artifact. Onset, force and β get small per-note variation on every voice.
+
+Standing gate: **it must sound professional from bare MIDI notes**, including a fast repeated passage.
 
 ### Layer 1 — The MSW core (shared)
 
@@ -263,8 +316,10 @@ This is cheap, and it is the difference between "we modeled a cello" and "a prod
 lock-free, denormal-safe; **sounds professional from bare MIDI notes** (the default gesture envelope).
 
 **S0 — The gesture set.** Caller-minted note ids; four continuous per-note dims with frame offsets and
-per-sample ramps; articulation + `tie_from` legato; release velocity; **coalescing** transport with
-undroppable note lifecycle; release-ramp voice stealing; MPE + CC (breath CC2, CC74) input in
+per-sample ramps; `onset` + `bow_dir` + `tie_from` (with the semantics above); release velocity; a
+**continuous `ij_pedal` depth**; the `midi → (slot, slide)` brass mapping; frame-offset transport that
+coalesces **only on saturation** and never drops a lifecycle event; release-ramp voice stealing; the
+default gesture envelope (with bow alternation and per-note jitter); MPE + CC (breath CC2, CC74) input in
 `packages/midi`; a playground control surface. **Ships no new instrument and is independently valuable.**
 
 This is the **highest-blast-radius phase and it is first** — and it is also the **cheapest possible moment
@@ -326,7 +381,8 @@ Requirements, not measurements. **Scalar engine — no SIMD exists.**
 | WASM | **≤ +25 KB raw / ≤ +10 KB gz** for the whole family. r1 gave **no gz ceiling** for the single largest WASM addition proposed anywhere in the repo — and **gz is the only unit the public contract is written in** |
 | core JS + worklet | **S0 carries an explicit gz ceiling.** r1 budgeted zero JS bytes for the phase that grows the JS half of the contract |
 | Init | **≤ 20 ms on the floor device** (iPhone 8), inside the gesture-unlock path |
-| Degradation | voice stealing **with a release ramp** for self-oscillating voices; expression **coalesces**, never drops; **note lifecycle undroppable**; drops reported, never silent |
+| **Live input latency + jitter** | **≤ 1 quantum end-to-end, jitter ≤ 1 ms p99.** Neither r1 nor r2 had a timing budget at all — the words "latency" and "jitter" did not appear. Frame offsets fix *scheduled* events and do **nothing** for live MPE, which crosses main-thread → `postMessage` → worklet. On a struck piano, main-thread jank is a slightly late note. **On a self-oscillating bowed string it is an audible wobble in the bow force of a note already sounding** — it modulates the timbre of a note you are holding. This gets a gate, or S0 ships an expression path that cannot be performed on. |
+| Degradation | voice stealing **with a release ramp** (time constant and click-gate threshold declared; a voice currently receiving expression is stolen last); expression applied at frame offsets, **coalescing only on ring saturation**; **note lifecycle undroppable**; every coalesce or drop **reported**, never silent |
 
 **Bundle — the composed number.** All-in today is **74,119 B gz** against the 102,400 B contract →
 **~26 KB gz of headroom for the project's entire remaining life**, now enforced by
@@ -347,6 +403,33 @@ obviously all fit.** #46 is a **precondition of S1**, the way #52 is a precondit
 4. **Shared dependency on the piano campaign** (the modal-body / bridge-port primitive). If the piano's A2
    slips, S2 waits or duplicates. Prefer waiting.
 5. **The MSW leverage is partial** (see Thesis). Do not budget as though four instruments share one core.
+
+## What revision 2 got wrong
+
+The panel blocked r2 as well. Corrected above:
+
+1. **Bare MIDI still could not change bow.** Bow direction lived *only* in the sign of `drive`, settable
+   only via a CC lane that a note-list does not emit — so an SMF cello line rendered **every note on the
+   same bow**, which is r2's own indictment of r1, relocated into the default path. `bow_dir` is now a
+   `note_on` field, and the default gesture **alternates**.
+2. **Unconditional coalescing contradicted the frame offsets r2 had just added.** "Only the latest value
+   matters" is false for a continuous scalar — the martelé spike, the bow-change force dip, and the tongue's
+   reed damping are **sub-quantum spikes**, and collapsing them to an endpoint erases the articulation.
+   Coalescing is now a **saturation fallback only**.
+3. **No latency or jitter budget existed** — the words did not appear. Frame offsets fix *scheduled* events
+   and do nothing for live MPE; on a self-oscillating string, main-thread jitter is an audible wobble in the
+   bow force of a note **already sounding**. Now budgeted and gated.
+4. **`tie_from` promised "an explicit continuation rule" and never gave one.** Now specified — including the
+   distinction between a portamento and a slurred finger change under a continuous bow, which r2's single
+   `tie_from` could not express.
+5. **The articulation enum triple-booked "do not re-attack"** (`slurred`, `legato`, `tie_from`), had no
+   string articulation the S2 gate demanded, and no bow direction. Split into `tie_from` (continuation) and
+   `onset` (attack type).
+6. **Brass had two pitch dimensions and no rule relating them to the note** — making the S3 slotting gate
+   untestable and the default gesture unwritable. S0 now owns the `midi → (slot, slide)` mapping.
+7. **Half-pedal was "routed to P4" while `ij_pedal` stayed a boolean** — forcing a *second* ABI break after
+   S0, precisely the sin r2 charges r1 with. `ij_pedal` is widened to a continuous depth in S0.
+8. **Per-note jitter was specified only for sections**, so fast repeated solo notes would machine-gun.
 
 ## What revision 1 got wrong
 
@@ -377,6 +460,20 @@ The panel blocked r1 **7/7**.
 15. **Budgets assumed a SoA/SIMD voice bank that does not exist**, gave no gz ceiling, budgeted zero JS, and
     had no mobile, SSR, or bundler gate.
 16. **Cello was placed "on the familiarity ladder's upper half."** The ladder is piano, guitar, drums.
+
+## Known gaps, accepted for now
+
+- **No string-selection dimension.** Four dims are enough to *sound* a cello, not to *voice* one: the same
+  pitch on the C string and the G string is a different colour, and a cellist chooses deliberately. An open
+  string also cannot vibrato and decays differently. Bare MIDI will pick for us. Accepted for S2; revisit
+  once the core is real.
+- **`drive` is unused for brass/reed** but the dim enum is shared, so a generic controller will send it to a
+  trombone and get nothing. Either define it (breath noise is the obvious candidate) or make the
+  per-instrument dim set explicit in the ABI. To be settled in S0.
+- **Tonguing is a discrete `onset` only.** Legato tonguing, hard tongue and doodle tonguing are a
+  *continuum*, and the reed junction table (pressure × embouchure) has no axis for tongue-on-reed damping.
+- **Note-id reuse policy** must be stated in S0: coalescing is keyed on `(note_id, dim)`, so a scheduler that
+  recycles ids could inject expression into a live voice.
 
 ## Deferred until demanded
 
