@@ -74,6 +74,11 @@ def validate_manifest(path):
         unknown = set(case["analysis"]["required_axes"]) - KNOWN_AXES
         if unknown:
             raise ValueError(f"{case['id']}: unknown required axes: {sorted(unknown)}")
+        requires_partials = "partials" in case["analysis"]["required_axes"]
+        if requires_partials and "partial_model" not in case["analysis"]:
+            raise ValueError(f"{case['id']}: the partials axis requires an explicit partial_model")
+        if not requires_partials and "partial_model" in case["analysis"]:
+            raise ValueError(f"{case['id']}: partial_model is invalid when the partials axis is not required")
     return manifest
 
 
@@ -284,7 +289,9 @@ def run_campaign(args):
             expected_onset_s=r["lead_seconds"],
             note_off_s=None if is_drum else r["lead_seconds"] + r["note_seconds"],
             max_post_note_off_db=case["analysis"].get("max_post_note_off_db"),
-            expected_f0=440.0 * (2.0 ** ((r["midi"] - 69) / 12.0)),
+            expected_f0=(440.0 * (2.0 ** ((r["midi"] - 69) / 12.0))
+                         if "partials" in case["analysis"]["required_axes"] else None),
+            partial_model=case["analysis"].get("partial_model"),
         )
         report_path = out / "reports" / f"{case['id']}.json"
         write_json(report_path, report)

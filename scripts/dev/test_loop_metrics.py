@@ -178,6 +178,51 @@ class TrajectoryAndStructureTests(unittest.TestCase):
         self.assertEqual(identity["mean_abs_cents"], 0.0)
         self.assertGreater(detuned["mean_abs_cents"], 2.0)
 
+    def test_stiff_string_targets_move_upper_partials_without_moving_fundamental(self):
+        harmonic = compare.partial_targets(110.0, count=4)
+        stiff = compare.partial_targets(110.0, count=4, model={
+            "type": "stiff_string", "inharmonicity_b": 0.001, "search_cents": 90.0,
+        })
+        self.assertAlmostEqual(stiff[0]["frequency_hz"], harmonic[0]["frequency_hz"])
+        self.assertGreater(stiff[3]["frequency_hz"], harmonic[3]["frequency_hz"])
+
+    def test_modal_ratio_targets_do_not_assume_integer_harmonics(self):
+        targets = compare.partial_targets(100.0, model={
+            "type": "modal_ratios", "ratios": [1.0, 1.59, 2.14], "search_cents": 60.0,
+        })
+        self.assertEqual([round(item["frequency_hz"], 1) for item in targets], [100.0, 159.0, 214.0])
+
+    def test_silent_partial_analysis_is_empty_not_exceptional(self):
+        silent = np.zeros(SR, dtype=np.float64)
+        self.assertEqual(compare.harmonic_partials(silent, SR, 440.0), [])
+
+    def test_stronger_beating_moves_envelope_axis_monotonically(self):
+        t = np.arange(SR) / SR
+        carrier = np.sin(2 * np.pi * 440 * t) * np.exp(-1.5 * t)
+        mild = carrier * (1.0 + 0.08 * np.sin(2 * np.pi * 4 * t))
+        strong = carrier * (1.0 + 0.30 * np.sin(2 * np.pi * 4 * t))
+        identity = compare.trajectory_diagnostics(carrier, carrier, SR, 30)["envelope_db"]["distance"]["cost"]
+        mild_cost = compare.trajectory_diagnostics(mild, carrier, SR, 30)["envelope_db"]["distance"]["cost"]
+        strong_cost = compare.trajectory_diagnostics(strong, carrier, SR, 30)["envelope_db"]["distance"]["cost"]
+        self.assertEqual(identity, 0.0)
+        self.assertGreater(mild_cost, identity)
+        self.assertGreater(strong_cost, mild_cost)
+
+    def test_stronger_transient_moves_centroid_axis_monotonically(self):
+        t = np.arange(SR) / SR
+        base = np.sin(2 * np.pi * 440 * t) * np.exp(-2.0 * t)
+        click = np.zeros_like(base)
+        burst_frames = int(0.01 * SR)
+        click[:burst_frames] = np.sin(2 * np.pi * 8000 * t[:burst_frames]) * np.hanning(burst_frames)
+        mild = base + 0.05 * click
+        strong = base + 0.30 * click
+        identity = compare.trajectory_diagnostics(base, base, SR, 30)["centroid_hz"]["regions_semitones"]["attack"]["cost"]
+        mild_cost = compare.trajectory_diagnostics(mild, base, SR, 30)["centroid_hz"]["regions_semitones"]["attack"]["cost"]
+        strong_cost = compare.trajectory_diagnostics(strong, base, SR, 30)["centroid_hz"]["regions_semitones"]["attack"]["cost"]
+        self.assertEqual(identity, 0.0)
+        self.assertGreater(mild_cost, identity)
+        self.assertGreater(strong_cost, mild_cost)
+
     def test_stereo_collapse_moves_width_and_correlation_axes(self):
         t = np.arange(SR) / SR
         left = np.sin(2 * np.pi * 440 * t)
@@ -186,6 +231,11 @@ class TrajectoryAndStructureTests(unittest.TestCase):
         collapsed = compare.stereo_stats(np.column_stack([left, left]))
         self.assertGreater(wide["width_db"], collapsed["width_db"])
         self.assertLess(wide["correlation"], collapsed["correlation"])
+
+    def test_silent_stereo_diagnostics_are_explicitly_unavailable(self):
+        stats = compare.stereo_stats(np.zeros((SR, 2), dtype=np.float64))
+        self.assertIsNone(stats["width_db"])
+        self.assertIsNone(stats["correlation"])
 
     def test_profiles_own_thresholds(self):
         self.assertEqual(compare.PROFILES["kick"]["thresholds"]["max_warp_ms"], 10.0)

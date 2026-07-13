@@ -27,7 +27,7 @@ import soundfile as sf
 
 
 REPORT_SCHEMA_VERSION = "1.1.0"
-METRIC_VERSION = "2026.07.12-l3.1"
+METRIC_VERSION = "2026.07.12-l3.2"
 SCHEMA_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "evals", "metrics", "report-schema-v1.json"))
 _REPORT_SCHEMA = None
 
@@ -91,11 +91,11 @@ def lufs(x, sr):
 # bins 1-2 of the default 1024-pt STFT and its beater attack is smeared by 21 ms
 # windows — so the kick profile analyzes TWICE: a fine-time view for the attack
 # and a long-window low-frequency view for the fundamental/tail.
-COMMON_THRESHOLDS = {"max_sample_jump": 1.6, "max_clipping_occupancy": 1e-4, "max_peak": 1.05, "max_ultrasonic_ratio": 0.05, "max_dc_ratio": 0.01, "max_release_jump": 0.6, "max_warp_ms": 30.0}
+COMMON_THRESHOLDS = {"max_sample_jump": 1.6, "max_clipping_occupancy": 1e-4, "max_peak": 1.05, "max_ultrasonic_ratio": 0.05, "max_dc_ratio": 0.01, "max_release_jump": 0.6, "max_warp_ms": 30.0, "trajectory_attack_end_ms": 50.0, "trajectory_body_end_ms": 500.0}
 PROFILES = {
     "default": {"n": 1024, "hop": 256, "mels": 64, "fmin": 30.0, "thresholds": COMMON_THRESHOLDS},
     "kick":    {"n": 256,  "hop": 64,  "mels": 48, "fmin": 25.0,
-                "thresholds": {**COMMON_THRESHOLDS, "max_warp_ms": 10.0},
+                "thresholds": {**COMMON_THRESHOLDS, "max_warp_ms": 10.0, "trajectory_attack_end_ms": 30.0, "trajectory_body_end_ms": 300.0},
                 "lf": {"n": 4096, "hop": 512, "mels": 40, "fmin": 20.0, "fmax": 400.0}},
     "cymbal":  {"n": 2048, "hop": 512, "mels": 72, "fmin": 100.0, "thresholds": {**COMMON_THRESHOLDS, "max_ultrasonic_ratio": 0.12}},
     "pitched": {"n": 1024, "hop": 256, "mels": 64, "fmin": 30.0, "thresholds": COMMON_THRESHOLDS},
@@ -476,7 +476,33 @@ def bounded_dtw(a, b, max_warp_frames):
             "max_displacement_frames": int(displacement), "path_length": length}
 
 
-def harmonic_decay_trajectories(x, sr, f0, count=6, window_s=0.08, hop_s=0.05):
+def partial_targets(f0, count=16, model=None):
+    """Return declared modal targets without assuming every source is harmonic.
+
+    `proximity_harmonic` finds a local peak around integer multiples, `stiff_string`
+    applies the standard inharmonic string coefficient B, and `modal_ratios`
+    accepts measured/profile-owned ratios for membranes or bars.
+    """
+    if not f0 or f0 <= 0:
+        return []
+    model = model or {"type": "proximity_harmonic", "search_cents": 70.0}
+    kind = model.get("type", "proximity_harmonic")
+    if kind == "modal_ratios":
+        ratios = [float(value) for value in model.get("ratios", [])]
+    elif kind == "stiff_string":
+        coefficient = float(model.get("inharmonicity_b", 0.0))
+        ratios = [n * np.sqrt((1.0 + coefficient * n * n) / (1.0 + coefficient))
+                  for n in range(1, count + 1)]
+    elif kind == "proximity_harmonic":
+        ratios = [float(n) for n in range(1, count + 1)]
+    else:
+        raise ValueError(f"unknown partial model: {kind}")
+    return [{"partial": index, "ratio": ratio, "frequency_hz": float(f0 * ratio)}
+            for index, ratio in enumerate(ratios[:count], start=1)]
+
+
+def harmonic_decay_trajectories(x, sr, f0, count=6, window_s=0.08, hop_s=0.05,
+                                partial_model=None):
     if not f0 or f0 <= 0:
         return {}
     window = max(32, int(window_s * sr))
@@ -484,8 +510,9 @@ def harmonic_decay_trajectories(x, sr, f0, count=6, window_s=0.08, hop_s=0.05):
     starts = range(0, max(1, len(x) - window + 1), hop)
     local_t = np.arange(window) / sr
     result = {}
-    for harmonic in range(1, count + 1):
-        freq = harmonic * f0
+    for target in partial_targets(f0, count, partial_model):
+        partial = target["partial"]
+        freq = target["frequency_hz"]
         if freq >= 0.47 * sr:
             break
         osc = np.exp(-2j * np.pi * freq * local_t) * np.hanning(window)
@@ -497,27 +524,43 @@ def harmonic_decay_trajectories(x, sr, f0, count=6, window_s=0.08, hop_s=0.05):
             values.append(abs(np.dot(segment, osc)))
         values = np.asarray(values)
         db = 20 * np.log10(values / (values.max() + 1e-18) + 1e-9)
-        result[str(harmonic)] = [round(float(v), 3) for v in np.clip(db, -80, 0)]
+        result[str(partial)] = [round(float(v), 3) for v in np.clip(db, -80, 0)]
     return result
 
 
-def trajectory_diagnostics(xr, xf, sr, max_warp_ms, expected_f0=None):
+def trajectory_region_distances(render, reference, width, attack_end_ms, body_end_ms, hop_ms=10.0):
+    attack_end = max(1, int(round(attack_end_ms / hop_ms)))
+    body_end = max(attack_end + 1, int(round(body_end_ms / hop_ms)))
+    regions = {
+        "attack": (0, attack_end),
+        "body": (attack_end, body_end),
+        "tail": (body_end, max(len(render), len(reference))),
+    }
+    return {name: bounded_dtw(render[start:end], reference[start:end], width)
+            for name, (start, end) in regions.items()}
+
+
+def trajectory_diagnostics(xr, xf, sr, max_warp_ms, expected_f0=None, partial_model=None,
+                           attack_end_ms=50.0, body_end_ms=500.0):
     hop_ms = 10.0
     width = max(0, int(round(max_warp_ms / hop_ms)))
     er, ef = rms_trajectory(xr, sr), rms_trajectory(xf, sr)
     cr, cf = centroid_trajectory(xr, sr), centroid_trajectory(xf, sr)
     # Centroid error is perceptually closer to pitch intervals than raw Hz.
-    log_centroid = lambda values: [12 * np.log2(max(v, 20.0) / 20.0) for v in values]
+    def log_centroid(values):
+        return [12 * np.log2(max(v, 20.0) / 20.0) for v in values]
     result = {
         "hop_ms": hop_ms,
         "max_warp_ms": max_warp_ms,
-        "envelope_db": {"render": er, "reference": ef, "distance": bounded_dtw(er, ef, width)},
+        "envelope_db": {"render": er, "reference": ef, "distance": bounded_dtw(er, ef, width),
+                        "regions": trajectory_region_distances(er, ef, width, attack_end_ms, body_end_ms)},
         "centroid_hz": {"render": cr, "reference": cf,
-                         "distance_semitones": bounded_dtw(log_centroid(cr), log_centroid(cf), width)},
+                         "distance_semitones": bounded_dtw(log_centroid(cr), log_centroid(cf), width),
+                         "regions_semitones": trajectory_region_distances(log_centroid(cr), log_centroid(cf), width, attack_end_ms, body_end_ms)},
     }
     if expected_f0:
-        pr = harmonic_decay_trajectories(xr, sr, expected_f0)
-        pf = harmonic_decay_trajectories(xf, sr, expected_f0)
+        pr = harmonic_decay_trajectories(xr, sr, expected_f0, partial_model=partial_model)
+        pf = harmonic_decay_trajectories(xf, sr, expected_f0, partial_model=partial_model)
         partial_width = max(0, int(round(max_warp_ms / 50.0)))
         result["partial_decay_db"] = {
             "hop_ms": 50.0,
@@ -531,7 +574,7 @@ def trajectory_diagnostics(xr, xf, sr, max_warp_ms, expected_f0=None):
     return result
 
 
-def harmonic_partials(x, sr, f0, t0=0.08, dur=0.5, count=16):
+def harmonic_partials(x, sr, f0, t0=0.08, dur=0.5, count=16, partial_model=None):
     if not f0 or f0 <= 0:
         return []
     seg = x[int(t0 * sr):int((t0 + dur) * sr)]
@@ -541,25 +584,32 @@ def harmonic_partials(x, sr, f0, t0=0.08, dur=0.5, count=16):
     spec = np.abs(np.fft.rfft(seg * np.hanning(len(seg)), n=n))
     freqs = np.fft.rfftfreq(n, 1 / sr)
     out = []
-    for harmonic in range(1, count + 1):
-        target = harmonic * f0
+    model = partial_model or {"type": "proximity_harmonic", "search_cents": 70.0}
+    search_cents = float(model.get("search_cents", 70.0))
+    ratio = 2.0 ** (search_cents / 1200.0)
+    for target_info in partial_targets(f0, count, model):
+        partial = target_info["partial"]
+        target = target_info["frequency_hz"]
         if target >= 0.47 * sr:
             break
-        lo, hi = target * 0.965, target * 1.04
+        lo, hi = target / ratio, target * ratio
         idx = np.flatnonzero((freqs >= lo) & (freqs <= hi))
         if not len(idx):
             continue
         peak = int(idx[np.argmax(spec[idx])])
-        out.append({"harmonic": harmonic, "frequency_hz": round(float(freqs[peak]), 2), "magnitude": float(spec[peak])})
-    ref = max((item["magnitude"] for item in out), default=1.0)
+        out.append({"harmonic": partial, "target_hz": round(target, 3),
+                    "target_ratio": round(target_info["ratio"], 8),
+                    "frequency_hz": round(float(freqs[peak]), 2), "magnitude": float(spec[peak])})
+    ref = max((item["magnitude"] for item in out), default=1.0) or 1.0
     for item in out:
         item["level_db"] = round(float(20 * np.log10(item.pop("magnitude") / ref + 1e-12)), 2)
     return [item for item in out if item["level_db"] >= -80.0]
 
 
-def match_harmonic_partials(xr, xf, sr, f0):
-    render = harmonic_partials(xr, sr, f0)
-    reference = harmonic_partials(xf, sr, f0)
+def match_harmonic_partials(xr, xf, sr, f0, partial_model=None):
+    model = partial_model or {"type": "proximity_harmonic", "search_cents": 70.0}
+    render = harmonic_partials(xr, sr, f0, partial_model=model)
+    reference = harmonic_partials(xf, sr, f0, partial_model=model)
     rr = {item["harmonic"]: item for item in render}
     rf = {item["harmonic"]: item for item in reference}
     pairs = []
@@ -568,7 +618,7 @@ def match_harmonic_partials(xr, xf, sr, f0):
         pairs.append({"harmonic": harmonic, "render_hz": a["frequency_hz"], "reference_hz": b["frequency_hz"],
                       "cents_delta": round(float(1200 * np.log2(a["frequency_hz"] / b["frequency_hz"])), 2),
                       "level_delta_db": round(a["level_db"] - b["level_db"], 2)})
-    return {"expected_f0_hz": f0, "render": render, "reference": reference, "pairs": pairs,
+    return {"expected_f0_hz": f0, "partial_model": model, "render": render, "reference": reference, "pairs": pairs,
             "mean_abs_cents": round(float(np.mean([abs(p["cents_delta"]) for p in pairs])), 2) if pairs else None,
             "mean_abs_level_db": round(float(np.mean([abs(p["level_delta_db"]) for p in pairs])), 2) if pairs else None}
 
@@ -577,6 +627,8 @@ def stereo_stats(audio):
     if audio.shape[1] < 2:
         return {"channels": 1, "width_db": None, "correlation": None}
     left, right = audio[:, 0], audio[:, 1]
+    if float(np.max(np.abs(audio))) <= 1e-9:
+        return {"channels": audio.shape[1], "width_db": None, "correlation": None}
     mid = (left + right) * 0.5
     side = (left - right) * 0.5
     width = 20 * np.log10((np.sqrt(np.mean(side ** 2)) + 1e-12) / (np.sqrt(np.mean(mid ** 2)) + 1e-12))
@@ -681,7 +733,7 @@ def disable_invalid_axes(report, invalid_axes):
 
 def compare_files(render_path, ref_path, profile="default", flat=False,
                   expected_onset_s=None, note_off_s=None,
-                  max_post_note_off_db=None, expected_f0=None):
+                  max_post_note_off_db=None, expected_f0=None, partial_model=None):
     prof = PROFILES.get(profile, PROFILES["default"])
     audio_r, sr_r = load_audio(render_path)
     audio_f, sr_f = load_audio(ref_path)
@@ -727,6 +779,9 @@ def compare_files(render_path, ref_path, profile="default", flat=False,
                  if isinstance(v, dict) and v.get("pass") is not None]
     gates["all_pass"] = bool(all(evaluated))
     gates["trusted"] = gates["all_pass"]
+    trajectory_start = int((expected_onset_s or 0.0) * sr)
+    trajectory_r = ar[min(len(ar), trajectory_start):]
+    trajectory_f = af[min(len(af), trajectory_start):]
     report = {
         "schema_version": REPORT_SCHEMA_VERSION,
         "metric_version": METRIC_VERSION,
@@ -752,6 +807,7 @@ def compare_files(render_path, ref_path, profile="default", flat=False,
             "note_off_s": note_off_s,
             "max_post_note_off_db": max_post_note_off_db,
             "expected_f0": expected_f0,
+            "partial_model": partial_model,
             "thresholds": prof["thresholds"],
         },
         "operations": operations,
@@ -775,8 +831,11 @@ def compare_files(render_path, ref_path, profile="default", flat=False,
         "partials": {"render": partials(xr, sr), "reference": partials(xf, sr)},
         "crest": {"render": crest_factor(xr), "reference": crest_factor(xf)},
         "mr_stft": mr_stft_dist(ar, af, sr, perceptual=not flat, alignment=alignment),
-        "trajectories": trajectory_diagnostics(xr, xf, sr, prof["thresholds"]["max_warp_ms"], expected_f0),
-        "harmonic_partials": match_harmonic_partials(xr, xf, sr, expected_f0) if expected_f0 else None,
+        "trajectories": trajectory_diagnostics(
+            trajectory_r, trajectory_f, sr, prof["thresholds"]["max_warp_ms"], expected_f0, partial_model,
+            prof["thresholds"]["trajectory_attack_end_ms"], prof["thresholds"]["trajectory_body_end_ms"],
+        ),
+        "harmonic_partials": match_harmonic_partials(xr, xf, sr, expected_f0, partial_model) if expected_f0 else None,
         "stereo": {"render": stereo_stats(audio_r), "reference": stereo_stats(audio_f)},
         "gates": gates,
     }

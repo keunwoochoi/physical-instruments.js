@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "family": "piano",
   "description": "Salamander full-band anchors spanning register and velocity; C-sharp 5 is held out.",
   "cases": [
@@ -8,28 +8,28 @@
       "role": "tune",
       "reference": "references/piano-salamander/canonical/A1-mf.wav",
       "render": { "family": "piano", "midi": 33, "velocity": 90, "note_seconds": 6.0, "total_seconds": 10.0, "sample_rate": 48000, "lead_seconds": 0.03 },
-      "analysis": { "profile": "pitched", "required_axes": ["mr_stft", "attack", "decay", "partials", "lufs"] }
+      "analysis": { "profile": "pitched", "required_axes": ["mr_stft", "attack", "decay", "partials", "lufs"], "partial_model": { "type": "proximity_harmonic", "search_cents": 90.0 } }
     },
     {
       "id": "c4-pp",
       "role": "tune",
       "reference": "references/piano-salamander/canonical/C4-pp.wav",
       "render": { "family": "piano", "midi": 60, "velocity": 30, "note_seconds": 5.0, "total_seconds": 8.0, "sample_rate": 48000, "lead_seconds": 0.03 },
-      "analysis": { "profile": "pitched", "required_axes": ["mr_stft", "attack", "decay", "partials", "lufs"] }
+      "analysis": { "profile": "pitched", "required_axes": ["mr_stft", "attack", "decay", "partials", "lufs"], "partial_model": { "type": "proximity_harmonic", "search_cents": 90.0 } }
     },
     {
       "id": "c4-ff",
       "role": "tune",
       "reference": "references/piano-salamander/canonical/C4-ff.wav",
       "render": { "family": "piano", "midi": 60, "velocity": 122, "note_seconds": 5.0, "total_seconds": 8.0, "sample_rate": 48000, "lead_seconds": 0.03 },
-      "analysis": { "profile": "pitched", "required_axes": ["mr_stft", "attack", "decay", "partials", "lufs"] }
+      "analysis": { "profile": "pitched", "required_axes": ["mr_stft", "attack", "decay", "partials", "lufs"], "partial_model": { "type": "proximity_harmonic", "search_cents": 90.0 } }
     },
     {
       "id": "cs5-mf",
       "role": "held_out",
       "reference": "references/piano-salamander/canonical/Cs5-mf.wav",
       "render": { "family": "piano", "midi": 73, "velocity": 90, "note_seconds": 4.0, "total_seconds": 7.0, "sample_rate": 48000, "lead_seconds": 0.03 },
-      "analysis": { "profile": "pitched", "required_axes": ["mr_stft", "attack", "decay", "partials", "lufs"] }
+      "analysis": { "profile": "pitched", "required_axes": ["mr_stft", "attack", "decay", "partials", "lufs"], "partial_model": { "type": "proximity_harmonic", "search_cents": 90.0 } }
     }
   ]
 }
