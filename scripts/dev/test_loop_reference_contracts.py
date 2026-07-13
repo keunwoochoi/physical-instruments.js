@@ -5,6 +5,7 @@ import copy
 import json
 import os
 import shutil
+import struct
 import tempfile
 import unittest
 from pathlib import Path
@@ -71,6 +72,22 @@ class RegistryTests(unittest.TestCase):
             with self.subTest(receipt=filename):
                 receipt = canonicalize_reference_receipt.load_receipt(ROOT / "evals" / "reference-receipts" / filename)
                 self.assertEqual({entry["contract_id"]: entry["canonical_sha256"] for entry in receipt["entries"]}, identities)
+
+    def test_canonicalizer_pins_toolchain_and_peak_identity(self):
+        canonicalize_reference_receipt.verify_toolchain()
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "fixture.wav"
+            payload = b"\x00" * 4
+            path.write_bytes(
+                b"RIFF" + struct.pack("<I", 52 + len(payload)) + b"WAVE"
+                + b"fmt " + struct.pack("<IHHIIHH", 16, 3, 1, 48000, 192000, 4, 32)
+                + b"PEAK" + struct.pack("<IIIfI", 16, 1, 123, 0.0, 0)
+                + b"data" + struct.pack("<I", len(payload)) + payload
+            )
+            canonicalize_reference_receipt.pin_peak_timestamp(path, 1783887255)
+            data = path.read_bytes()
+            offset = data.index(b"PEAK")
+            self.assertEqual(struct.unpack_from("<I", data, offset + 12)[0], 1783887255)
 
     def test_a43_contract_table_matches_owner_evidence(self):
         expected = {
