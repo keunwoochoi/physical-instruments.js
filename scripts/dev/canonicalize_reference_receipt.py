@@ -100,6 +100,12 @@ def safe_join(root, relative):
     return path
 
 
+def verify_license(source, source_root):
+    path = safe_join(source_root, source["license_path"])
+    if not path.is_file() or sha256(path) != source["license_sha256"]:
+        raise ValueError(f"source license identity mismatch: {path}")
+
+
 def pin_peak_timestamp(path, timestamp):
     data = bytearray(Path(path).read_bytes())
     if data[:4] != b"RIFF" or data[8:12] != b"WAVE":
@@ -166,6 +172,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     receipt = load_receipt(args.receipt)
     verify_toolchain(receipt["canonical_format"]["libsndfile_version"])
+    verify_license(receipt["source"], args.source_root)
     results = [rebuild_entry(entry, args.source_root, args.output_root, receipt["canonical_format"]) for entry in receipt["entries"]]
     print(json.dumps({"receipt": receipt["id"], "entries": results}, sort_keys=True))
 
