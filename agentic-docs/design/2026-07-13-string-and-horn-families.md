@@ -167,14 +167,51 @@ it, which makes the S3 slotting gate untestable and the default gesture unwritab
 `midi → (slot, slide)` mapping** (with the conventional preferred-position table), and a lip slur *within*
 a slot must be distinguishable from a slurred interval *across* slots.
 
-**The ABI — and the mistake r1 made about it.** r1 specified `ij_note_on(...) -> u32 note_id`: a WASM
-return value produced on the audio thread. **That cannot work.** The public API is fire-and-forget across
-`postMessage`; notes are **scheduled in the future** (`timeSeconds`) and **batched**. At call time the
-voice does not exist and has no id to return — and a `Promise<id>` would break both the three-line path
-and every pre-scheduled note list from `packages/midi`. r1 chose the one shape the architecture forbids,
-for the phase it itself called highest-blast-radius and put first.
+### S0 is a **delta** against an accepted doc that already owns this surface
 
-**Ids are caller-minted on the main thread:**
+**`agentic-docs/design/2026-07-12-instrument-controls.md` is accepted (7/7 panel) and it owns the event
+transport.** Revisions 1 and 2 of this document cited it **zero times** and reinvented its surface — a
+constitution #1 violation (*truth has owners, not echoes*). What it already owns, and what S0 must
+therefore **extend rather than redesign**:
+
+- a **preallocated fixed-capacity Rust/WASM event ring**, `ij_queue_event`, and **`ij_process` performing
+  sample-offset segmentation** — so "frame offsets" are **not a novel r2 correction**; they exist, are
+  specified, and are tested at offsets 0/1/63/127.
+- an **equal-frame priority order**: `track` → `control` → `pedal/off` → `on`, then insertion sequence.
+- an **overflow policy**: ingress **atomically rejects an over-dense batch** with `event-overflow`; it
+  *"never defers events, admits deadline-breaking work, or partially schedules a batch."*
+- a **reserved additive seam `ij_set_voice_control(handle, id, value)`** with an **engine-minted,
+  generation-safe voice handle**, where *"a stolen/stale handle must fail instead of retargeting another
+  voice"* — explicitly named as *"the compatible future target for pressure, bend, timbre, or deliberate
+  active-voice modulation."* That is **this campaign's seam.** It was reserved for us.
+- a live-input lead of `max(20 ms, measured device postMessage p99 + two render quanta)`, and a
+  `lateEvents` diagnostic.
+
+**Reconciling identity.** The accepted doc wants an **engine-minted generation-safe handle** (so a stolen
+voice fails loudly instead of being retargeted). But an engine-minted handle **cannot be returned across
+`postMessage`** — the API is fire-and-forget and notes are scheduled in the future and batched, so at call
+time the voice does not exist. Both constraints are real, and they are satisfiable together:
+
+> **The caller mints the `note_id`; the engine binds it to a voice slot with a generation counter.**
+> Expression addressed to a `note_id` whose voice was stolen or never started **fails loudly and is
+> reported** — it never retargets another voice. That preserves the accepted doc's *safety property*
+> while respecting the transport's *ownership* reality.
+
+Id reuse, lifetime, and the unknown-id policy are the whole contract of a caller-minted scheme, and **S0
+owns writing them down.**
+
+**Reconciling overflow — and dropping my "coalesce" policy.** The accepted doc's ingress policy is
+**reject-the-batch atomically**, and it is *better* than the coalescing I proposed: it is bounded, atomic,
+reported, and it never silently mutates a gesture. Coalescing belongs **on the main thread**, as a
+rate-limiter that decimates redundant CC values *before* `postMessage` — not in the ring. So:
+
+- **ingress keeps the accepted reject-batch policy**, and S0 re-sizes `MAX_EVENTS_PER_QUANTUM` for
+  four-dimensional expression density (the accepted doc already specifies committing that constant at the
+  largest value whose p99 stays under 50% of budget **on target mobile**);
+- **main-thread decimation** keeps the stream inside that bound;
+- **note lifecycle events are never dropped.**
+
+**The ABI, as a delta:**
 
 ```
 ij_note_on   (track, note_id, midi, vel, onset, bow_dir, tie_from, frame_offset)
@@ -198,23 +235,30 @@ costs one `f32` and it happens now, or half-pedal is still orphaned with a phase
   and #12 names release velocity as in-scope. It costs one `f32`.
 - Per-note identity also fixes the existing latent `(track, midi)` ambiguity for repeated same-key strikes.
 
-**Transport policy.** r1 said continuous-control events are "dropped-newest under saturation." That is
-backwards: dropping the newest **freezes** bow force or breath pressure at a stale value, and on a
-**self-oscillating** instrument that is a note **stuck at full sustain**. And **note lifecycle events
-must be undroppable** — a dropped `note_off` on a blown voice never decays; it rings forever.
+**Why the gesture must not be collapsed to its latest value.** r1's "drop-newest under saturation" was a
+stuck-note hazard — it **freezes** bow force at a stale value, and on a self-oscillating instrument that is
+a note **stuck at full sustain**. But r2's fix (unconditional coalescing) was also wrong, and it
+contradicted the very sample-accuracy it was arguing for. *"Only the latest value matters"* is **false for
+a continuous scalar**: the martelé force spike, the force dip at a bow change, and the tongue's reed
+damping are **sub-quantum spikes**, and collapsing a spike to its endpoint **erases the articulation** —
+deleting exactly the expressivity this campaign exists to add.
 
-But **coalescing is a saturation fallback, not the policy** — r2 initially made it unconditional, which
-contradicted the frame offsets it had just added. *"Only the latest value matters"* is **false for a
-continuous scalar**: the martelé force spike, the force dip at a bow change, and the tongue's reed
-damping are **sub-quantum spikes**. Collapsing a spike to its endpoint erases the articulation — i.e.
-unconditional coalescing silently deletes the expressivity this entire campaign exists for.
+The accepted reject-batch ingress (above) resolves this correctly: **the trajectory is preserved
+event-by-event at its frame offset**, over-dense batches are rejected atomically and *reported*, and the
+main thread decimates redundant values before they are ever sent.
 
-The policy is therefore:
-1. **Apply every event at its frame offset.** This is the normal path.
-2. **Coalesce per (note_id, dim) only when the ring saturates** — degrade to the latest value rather than
-   freezing at a stale one.
-3. **Never drop a note lifecycle event** (`note_on`, `note_off`, `tie_from`), and report any coalescing
-   that occurred. No silent fallbacks.
+**Live input latency is bounded by the transport, not by the ABI — and PRINCIPLES #6 forbids the only
+real fix.** Frame offsets give sample accuracy for **scheduled** events. For a player bowing **live**,
+input crosses `postMessage` and lands at the next quantum boundary — **up to 2.67 ms, and no ABI parameter
+can change that.** The only fix is a `SharedArrayBuffer` control ring, and PRINCIPLES #6 bans it
+("*single-threaded by design: no COOP/COEP demands*"). So:
+
+- the S0 sample-accuracy gate is **scoped to scheduled events**, explicitly;
+- **live** expression is bounded by the accepted doc's lead — `max(20 ms, device postMessage p99 + two
+  render quanta)` — and gated on **jitter**, since on a self-oscillating string main-thread jitter is an
+  audible wobble in the bow force of a note **already sounding**;
+- if that is not good enough for live bowing, **retiring PRINCIPLES #6 is an owner decision**, and this
+  doc surfaces it rather than quietly gating on something unachievable.
 
 **Voice stealing must change, and r1 asserted it wouldn't.** Existing stealing was designed for struck and
 plucked voices, whose tails are low-amplitude and duck out. **A self-oscillating bowed or blown voice is
@@ -274,13 +318,33 @@ The honest method, per junction:
 
 Bounded work per sample is preserved. "Branch-free" is not, and was never required.
 
-**Oversampling is not optional.** Both headline features are broadband nonlinearities **inside feedback
-loops**, so aliased energy **recirculates and detunes the loop** rather than merely adding a noise floor:
-the bow's Helmholtz corner is a near-discontinuity *by design*, and brass shock formation synthesizes
-energy above Nyquist *by construction*. `wdf.rs` already states this repo's rule — *"a Newton-root
-nonlinearity aliases at 48 kHz … oversampling is the sanctioned fallback."* **The word "aliasing" does not
-appear anywhere in r1.** Budget **2× oversampling** on the junction and on the nonlinear bore section, and
-gate on it.
+**Anti-aliasing — and "2× on the junction" is not a realizable topology.** Both headline features are
+broadband nonlinearities **inside feedback loops**, so aliased energy **recirculates and detunes the loop**
+rather than merely adding a noise floor: the bow's Helmholtz corner is a near-discontinuity *by design*,
+and brass shock formation synthesizes energy above Nyquist *by construction*.
+
+r2 said "2× oversampling on the junction", leaning on `wdf.rs` as precedent. **That does not transfer.**
+`wdf.rs` wraps a 31-tap half-band FIR pair around a **memoryless feedforward** triode. You cannot drop that
+around a junction sitting **inside a delay-line feedback loop**: the up/down-sample filters inject ~15
+samples of **group delay into the loop**, retuning and lowpassing the instrument. There are only two sound
+options, and the doc must name one per junction:
+
+| | approach | cost |
+|---|---|---|
+| **bow** | **delay-free band-limiting** — ADAA, or a BLAMP on the stick–slip transition. The Helmholtz corner is a *ramp discontinuity*, which is exactly what BLAMP is for. | ~free; no loop delay |
+| **brass bore** | **run the whole waveguide at 2×** — delay lengths doubled, termination/dispersion filters redesigned at 96 kHz. Shock formation is a *distributed* bore nonlinearity; nothing local band-limits it. | **doubles the entire string/bore cost, not the junction's** |
+
+And **2× is asserted, not derived** — for shock formation it is very likely **not enough**. The bench
+scaffold now exists (`npm run bench:soundboard` pattern); **S1 measures the alias floor vs oversampling
+ratio** rather than guessing, which is precisely how the piano doc fixed its own unmeasured multiplier.
+
+**Stability torture test — the most dangerous instruments in the repo have none.** The bow, reed and lip
+are **self-oscillating nonlinear feedback loops driven by four user-reachable continuous controls with
+per-sample ramps**. r2's only stability gate was "self-oscillation starts and stops with the force
+control", plus the sax apex. The piano doc has an init-time |R(ω)| ≤ 1 assertion *and* a 10-minute
+64-voice soak; this doc had neither. **S1 gate:** sweep the reachable (force × β × drive × pitch × ramp
+rate) space — including the **Schelleng-diagram boundaries the design deliberately exposes to the
+player** — for NaN, blow-up, and dropout, at **both rates**, with a 10-minute soak.
 
 ### Layer 2 — Bores and bodies
 
@@ -379,16 +443,22 @@ Requirements, not measurements. **Scalar engine — no SIMD exists.**
 | Per-voice state | **≤ 20 KB** — must not become the size-setting `Kernel` variant (paid ×64 across the bank) |
 | Shared state | junction tables synthesized at init, **≤ 64 KB total** — *and each junction's table rank must be declared*, because a 2-D bow table is not a 1-D one |
 | WASM | **≤ +25 KB raw / ≤ +10 KB gz** for the whole family. r1 gave **no gz ceiling** for the single largest WASM addition proposed anywhere in the repo — and **gz is the only unit the public contract is written in** |
-| core JS + worklet | **S0 carries an explicit gz ceiling.** r1 budgeted zero JS bytes for the phase that grows the JS half of the contract |
+| core JS + worklet + **midi** | **≤ 12,500 B gz combined** (today: core 4,715 + worklet 2,682 + **midi 2,684** = 10,081 B gz; S0 gets **≤ ~2.4 KB gz** of growth). r2 wrote "S0 carries an explicit gz ceiling" — *a promise to have a number is not a number.* Note S0's largest JS growth lands in **`packages/midi`** (MPE + CC parsing), which #61's audit was **not even counting**; repaired in #63. |
 | Init | **≤ 20 ms on the floor device** (iPhone 8), inside the gesture-unlock path |
 | **Live input latency + jitter** | **≤ 1 quantum end-to-end, jitter ≤ 1 ms p99.** Neither r1 nor r2 had a timing budget at all — the words "latency" and "jitter" did not appear. Frame offsets fix *scheduled* events and do **nothing** for live MPE, which crosses main-thread → `postMessage` → worklet. On a struck piano, main-thread jank is a slightly late note. **On a self-oscillating bowed string it is an audible wobble in the bow force of a note already sounding** — it modulates the timbre of a note you are holding. This gets a gate, or S0 ships an expression path that cannot be performed on. |
 | Degradation | voice stealing **with a release ramp** (time constant and click-gate threshold declared; a voice currently receiving expression is stolen last); expression applied at frame offsets, **coalescing only on ring saturation**; **note lifecycle undroppable**; every coalesce or drop **reported**, never silent |
 
-**Bundle — the composed number.** All-in today is **74,119 B gz** against the 102,400 B contract →
-**~26 KB gz of headroom for the project's entire remaining life**, now enforced by
-`scripts/audit/bundle-size-audit.sh` (#46). Claimants: this campaign (≤ +10 KB gz), the piano (≤ +5), the
-808 kit (~+2), and the deferred shared room stage that both docs want and neither budgets. **These do not
-obviously all fit.** #46 is a **precondition of S1**, the way #52 is a precondition of the DSP phases.
+**Bundle — the composed number.** All-in is **76,803 B gz** (wasm 66,722 + core 4,715 + worklet 2,682 +
+midi 2,684) against the 102,400 B contract → **25.0 KB gz of headroom for the project's entire remaining
+life.** Owned by `scripts/audit/bundle-size-audit.sh` (#46; repaired in #63 — it had omitted `packages/midi`
+entirely and was red-by-construction in CI). **Cite the script; never restate these from memory.**
+
+Claimants: this campaign (≤ +10 KB gz), the piano (≤ +5), the 808 kit (~+2), S0's JS (≤ ~2.4), and the
+deferred shared room stage that both docs want and neither budgets. **These do not fit.**
+
+**The allocation decision is itself the precondition of S1** — *not* "#46 is a precondition", which is now
+satisfied and would let the first new byte of WASM land with the ceiling still unallocated. It is an owner
+decision and nothing currently forces it.
 
 ## Risks
 

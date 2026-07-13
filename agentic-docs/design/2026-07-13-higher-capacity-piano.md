@@ -166,20 +166,36 @@ Android**."* Every number in this doc is desktop, and a mid-tier phone is roughl
 | + closed loop, mobile ladder (4×96) | 1,121 µs (42%) | 1,861 µs (70%) — over |
 | + closed loop, desktop config (6×200) | **1,709 µs (64%) — over** | 2,449 µs (92%) — over |
 
-Two things follow, and the second is uncomfortable:
+Three things follow, and they are worse than "we need a smaller board":
 
-1. **The closed-loop board is not shippable on mobile at the desktop config.** It must degrade to
-   ~4 ports × 96 modes, and even then piano polyphony has to be capped (~16–24 voices) on the floor
-   device. That is a legitimate degradation ladder — we shed voices and modes, never glitch — but it must
-   be designed in, not discovered.
-2. **The piano we ship *today* already misses the mobile exit gate at 32 voices** (56%), with no
-   soundboard at all. This campaign did not create that; it inherits it. Nobody has caught it because
-   **there is still no real device evidence** — issue #5 has been open since the day-1 panel.
+1. **The frozen comparator already fails the exit gate on a phone.** Baseline piano ×32 = 438.5 µs
+   desktop → **~1,535 µs ≈ 58%** at 3.5×, against a 50% gate. ×64 → ~3,045 µs = **114%: dropouts.**
+   This campaign did not cause that. It **inherits** it, and nobody caught it because **there is still no
+   device measurement at all** — #5 has been open since the day-1 panel.
+2. **The degradation ladder does not save mobile, because the board was never the binding constraint
+   there.** Dropping 6×200 → 4×96 buys back ~590 µs on a phone (≈900 → ≈311 µs). But **32 piano voices
+   alone are ~1,481 µs ≈ 56%.** The 13.22 µs/voice string is what breaks the phone, and raising the
+   per-voice ceiling to 20 µs makes it worse, not better.
+3. **Therefore A3 — and plausibly A2 — is desktop-only unless piano polyphony on mobile is capped well
+   below 32 voices.** That cap is a **product decision, not an implementer's**, and it needs to be made
+   explicitly rather than discovered at P4.
 
-Therefore **#5 (physical iOS Safari / mid-tier Android measurement) is a hard precondition of P4**, and
-the 3.5× multiplier above is an *estimate standing in for a measurement*. It is doing load-bearing work
-in a budget, which is exactly the sin this doc is trying to stop committing. Treat these rows as a
-falsifiable prediction, not a result.
+Consequences for the plan:
+
+- **#5 is a hard precondition of P0**, not of P4. P0 must produce a **measured mobile baseline** (iPhone 8
+  and Pixel 6a, both rates) before any ceiling in the budget table means anything.
+- **Every budget row needs a mobile column.** A desktop number sitting under a two-device gate is exactly
+  the error this revision exists to stop.
+- The **3.5× multiplier above is an estimate standing in for a measurement**, and it is doing load-bearing
+  work in a budget — the same sin as r1's unmeasured "3×" for Architecture B. Treat this table as a
+  **falsifiable prediction, not a result.**
+
+**The degradation ladder needs a selector, and it cannot be a runtime one.** Truncating a bank of ringing
+high-Q modes, or changing P, is a **discontinuity in resonating state** — you cannot drop 104 sounding
+modes mid-arrangement without an audible step. The rung must be chosen **at init**, from a device tier
+established by a **startup micro-bench inside the gesture-unlock path** (a user-agent string is not a CPU
+measurement), and that bench has to fit inside the 20 ms init budget. What happens on a mid-session
+thermal throttle — which *will* happen on a phone — must also be stated. None of this exists yet.
 
 ### Named residuals (each mechanism must cite one)
 
@@ -276,15 +292,50 @@ So the board carries mode shapes φ_k(x) sampled at **P bridge ports** spanning 
 - injection: `F_k += Σ_j φ_k(port_j) · f_j`
 - readback: `v(port_j) = Σ_k φ_k(port_j) · v_k`
 
-Both run **once per sample regardless of polyphony**. Each voice maps to its port by linear
-interpolation between the two nearest, so adjacent semitones do not get audibly different bridges —
-a port **seam** is a real hazard and it is gated.
+Both run **once per sample regardless of polyphony**.
 
-**Modal density and the crossover.** A grand board runs roughly 0.04–0.06 modes/Hz, so a few hundred
-modes reaches only a few kHz — and **above the modal-overlap crossover (~1 kHz) a modal bank is the
-wrong estimator anyway.** The board is therefore **hybrid**: modal below the crossover, and a
-statistical (FDN / velvet-noise) tail above it. The crossover frequency is a P3 design decision,
-measured against the corpus. → **R1**, **R4**.
+**Where φ_k comes from — and r2 did not say.** A modal-density law gives ω_k; a damping law gives Q_k.
+**Neither gives mode *shapes*** — yet every physical claim in A2 and A3 rests on φ_k(x_n). (The bench
+scaffold fills φ with an arbitrary lattice, which is correct for a MAC count and is *not* a model.)
+The board is an **orthotropic rectangular plate**: φ_k are separable sin·sin products, with the ribs and
+the bridge bar entering as perturbations, and **x_n comes from real bridge geometry** (the speaking-length
+termination point of each note along the bridge). That is the cheap, defensible answer, and it is what
+P3 must implement — not a lattice.
+
+**How many ports — and r2 chose P from the CPU table, not from physics.** That is a physical parameter
+derived from a budget, which is exactly the failure mode this document keeps catching. Two constraints:
+
+- **Spatial Nyquist.** To resolve φ_k along a ~1.3 m bridge for modes up to the crossover, port spacing
+  must be below half the modal wavelength — that is **~20 ports, not 6.**
+- **Physics, not smoothness.** Measured grand bridge mobility varies **erratically note-to-note** — that
+  erratic structure is the *origin* of dead notes, double decays, and note-to-note timbre variation
+  (Giordano; Weinreich). Six ports blended linearly give a **monotone, piecewise-linear** bridge across
+  the keyboard: R1's key-independence defect is downgraded from rank-1 to rank-6, **not fixed.**
+
+Because cost scales as **P × M**, ports can be bought with modes at constant CPU. Measured
+(`npm run bench:soundboard`):
+
+| ports × modes | P×M | µs/quantum | % budget |
+|---|---|---|---|
+| 6 × 200 (r2 — fails spatial Nyquist) | 1200 | 256.4 | 9.6% |
+| 12 × 100 | 1200 | 212.1 | 8.0% |
+| **20 × 64** | 1280 | **216.5** | **8.1%** |
+| 24 × 48 | 1152 | 189.8 | 7.1% |
+
+**20 ports × 64 modes costs *less* than 6 × 200 (216 µs vs 256 µs) and satisfies spatial Nyquist.** And
+64 modes is the *right* number, not a sacrifice — see the crossover below. The r2 configuration was worse
+on both axes.
+
+**Modal density and the crossover.** A grand board runs ~0.04–0.06 modes/Hz, and **above the
+modal-overlap crossover (~1 kHz) a modal bank is the wrong estimator.** Below the crossover there are only
+**~40–60 modes** — so a 200-mode bank was over-provisioning the modal half ~4× while under-provisioning
+the ports. The board is **hybrid**: modal below the crossover, statistical above.
+
+**The statistical tail goes *outside* the coupling loop, as a radiation-only stage.** Inside the loop it
+would have to be a P-port MIMO system with its own passivity proof — an FDN inside a 64-string feedback
+loop is a materially harder argument than a parallel sum of passive second-order resonators, and r2
+costed and proved neither. Outside the loop it is cheap, and the passivity argument stays tractable.
+→ **R1**, **R4**.
 
 **A3 — Close the loop.** Board port velocity returns into each string's termination as a two-port
 wave-scattering junction (WDF-style, passive by construction, unit delay in the loop). The board
@@ -376,10 +427,24 @@ reproduce from the frozen WASM digest; R4 restated against the actual comparator
 **P1 — Sample-interleaved render loop (no new DSP). The cheap failure.**
 Restructure the piano track's rendering into a sample-synchronous inner loop over its voices; every
 other instrument stays block-serial. **Nothing else changes.**
-*Gate:* **output is byte-identical to the baseline** — there is no coupling yet, so it must be — and
-the CPU delta is measured and reported. **If the interleaved loop costs more than ~1.5× on the string
-kernels, A3 is dead**, and the campaign falls back to A1 + A2 open-loop, which is still worth shipping
-on its own. This phase exists to kill the architecture cheaply, before anything is built on top of it.
+*Gate:* **output is byte-identical to the baseline** — there is no coupling yet, so it must be.
+
+**The kill criterion must name a configuration, or it is unfalsifiable.** The interleave penalty *is* the
+polyphony: it is a function of (voice count × per-voice hot footprint) against L1/L2. Measured on a
+desktop with a 128 KB L1d: **8 voices 1.07× · 16 voices 1.12× · 32 voices 1.14× · 64 voices 1.45×.** So a
+P1 run at 8 voices on an M-series reports 1.07× and "A3 lives", while the same restructure at 64 voices
+sits on the kill line — and the **floor devices have 32–64 KB L1d, a half to a quarter of that**, so the
+mobile ratio is strictly worse and it is the one that decides shippability.
+
+P1 is therefore measured at **16 / 32 / 64 held voices, at 44.1 *and* 48 kHz, on M1 *and* the mobile
+floor**, and **the kill decision is the mobile ratio at 32 voices.** If it exceeds ~1.5×, A3 is dead and
+the campaign falls back to A1 + A2 open-loop — which is still worth shipping on its own.
+
+**And P1 needs a degrade branch, not just a verdict.** Pass/fail throws the architecture away on a result
+it could instead degrade past: **sub-block interleaving** — run voices in K-sample chunks (K = 8 or 16),
+update the board every K samples, delay the coupling by K — keeps most of the coupling bandwidth (a K=8
+delay notches near 3 kHz, well above where board coupling matters) while preserving block-serial cache and
+dispatch behaviour. P1 measures K ∈ {1, 8, 16} and reports the frontier.
 
 **P2 — Positive-real bridge admittance (open loop).** A1.
 *Gate:* the init-time |R(ω)| ≤ 1 assertion passes across the 88-key × velocity grid; bass 20–60 Hz
@@ -388,11 +453,20 @@ against the *reference corpus's* per-partial t60, not the baseline's** — the b
 themselves solved to hit t60 targets, so gating on them could only be passed by degrading A1 back into
 an output EQ. (r1's gate had exactly that flaw.)
 
-**P3 — Port-coupled shared soundboard (open loop).** A2; string energy finally passes through a board.
+**P3 — Port-coupled shared soundboard (open loop).** A2 at **20 ports × 64 modes**, with φ_k from the
+orthotropic-plate model and x_n from real bridge geometry; statistical tail outside the loop.
 *Gate:* spectral envelope and decay-tail match improve against the P0 corpus; **shared cost ≤ 60
-µs/quantum, flat in polyphony** (open-loop measures 22.9 µs at 200 modes, so this is generous);
-per-voice cost unchanged; init ≤ 20 ms **on the floor device**; allocation-free after init; **no port
-seam** — adjacent semitones must not present audibly different bridges.
+µs/quantum, flat in polyphony**; per-voice cost unchanged; init ≤ 20 ms **on the floor device**;
+allocation-free after init.
+
+**The seam gate must be split in two, because r2's version rewarded the very loss it was meant to catch.**
+r2 gated on "no port seam — adjacent semitones must not present audibly different bridges", i.e. it gated
+*for* cross-note smoothness. But a **seam** (a discontinuity at a port boundary) is an artifact, whereas
+**note-to-note variation is physics** — it is where dead notes and double decays come from. A gate that
+rewards smoothness is passed most easily by a bridge that has no per-note structure at all, which is R1.
+So:
+- **artifact check:** the interpolant is continuous across a port boundary (no step);
+- **physics check:** the note-to-note mobility **spread** matches the reference corpus. Too *smooth* fails.
 
 **P4 — Close the loop.** A3; retire `SympBank`.
 *Gate:* an offline energy test **proves passivity**; a 10-minute stability soak at 64 voices with the
@@ -409,25 +483,37 @@ estimate that currently justifies rejecting it.
 
 Binding. Exceeding any of these is an owner decision, not an implementer's.
 
-| Budget | Baseline | Ceiling |
-|---|---|---|
-| Per-voice CPU @48 kHz | 13.22 µs | **≤ 20 µs** |
-| Shared board, open loop (P3) | 0 | **≤ 60 µs/quantum**, flat in polyphony |
-| Shared board, closed loop (P4) | 0 | **≤ 270 µs/quantum**, flat in polyphony; **mobile ladder ≤ 90 µs** |
-| Idle engine | 19.9 µs | **rises, and this is a real cost** — a closed-loop board cannot early-out when nothing sounds. Budget ~40–90 µs idle once a piano track exists. |
-| Piano-led arrangement | ~16% | **≤ 50% of budget, on M1 *and* mid-tier Android** — the exit gate with its device clause intact |
-| Per-voice state | 25,760 B | **≤ 28 KB** (remember: ×64) |
-| Shared board state | 0 | **≤ 32 KB per piano track**; +792 KB freed by retiring `SympBank` |
-| Init | — | **≤ 20 ms on the floor device** (iPhone 8), inside the gesture-unlock path |
-| Degradation | voice stealing | unchanged; the board degrades by **ports and modes**, never by glitching |
+**Every CPU row is desktop-measured and carries a mobile column, because a desktop number under a
+two-device gate is how this campaign nearly shipped an impossible budget.** Mobile figures are the
+desktop figure × 3.5 — **an estimate standing in for the measurement #5 owes us**, and they are
+predictions, not results.
 
-**Bundle — one owned, composed number.** `scripts/audit/bundle-size-audit.sh` owns it (#46) and now
-fails CI on breach. All-in today is **74,119 B gz** against the 102,400 B contract → **~26 KB gz of
-headroom for the project's entire remaining life.** The claimants are: this campaign (**≤ +5 KB gz**),
-strings/horns (**≤ +10 KB gz**), the 808 kit (~+2 KB gz), and the deferred shared room stage — which
-*both* design docs call the biggest cross-family gap and *neither* budgets. **These do not obviously
-all fit.** The audit makes a breach loud rather than silent, but the composed ceiling is an owner
-decision that has not yet been made, and this doc does not pretend otherwise.
+| Budget | Baseline | Ceiling (desktop) | Mobile (est. ×3.5) |
+|---|---|---|---|
+| Per-voice CPU @48 kHz | 13.22 µs | ≤ 20 µs | ~70 µs — **this, not the board, is what breaks the phone** |
+| Shared board, open loop (P3) | 0 | ≤ 60 µs/q, flat in polyphony | ~210 µs |
+| Shared board, closed loop (P4) | 0 | **≤ 230 µs/q** at 20×64 (measured 216.5) | ~760 µs — **ladder to 4×96 → ~311 µs** |
+| **Board instances** | — | **per piano track.** MAX_TRACKS = 16 → the ceiling is **× the number of piano tracks**. Two piano parts = two boards. **Hard-cap at 1 board**, or state what track #2 gets. | — |
+| Idle engine | 19.9 µs | rises — a closed-loop board **cannot early-out**. ~40–90 µs once a piano track exists. | ~140–315 µs **with nothing sounding** |
+| Piano-led arrangement | ~16% desktop | ≤ 50% | **the frozen baseline is already ~58% at 32 voices. It fails the gate today.** |
+| Mobile polyphony cap | none | — | **required, and it is a product decision.** ~16–24 voices. |
+| Per-voice state | 25,760 B | ≤ 28 KB (×64) | same |
+| Shared board state | 0 | ≤ 32 KB **per piano track**; +792 KB freed by retiring `SympBank` | same |
+| Init | — | ≤ 20 ms **measured on the floor device**, inside gesture-unlock — and it must now also cover the **device-tier micro-bench** that selects the ladder rung | — |
+| Degradation | voice stealing | the board degrades by ports and modes, **selected at init**, never mid-arrangement (truncating ringing high-Q modes is an audible step) | — |
+
+**Bundle — one owned, composed number.** `scripts/audit/bundle-size-audit.sh` owns it (#46; repaired in
+#63 — it had been omitting `packages/midi` *and* was red-by-construction in CI). Cite the script; do not
+restate these from memory.
+
+All-in is **76,803 B gz** (66,722 wasm + 4,715 core JS + 2,682 worklet + 2,684 midi) against the 102,400 B
+contract → **25.0 KB gz of headroom for the project's entire remaining life.** Claimants: this campaign
+(**≤ +5 KB gz**), strings/horns (**≤ +10 KB gz**), the 808 kit (~+2 KB gz), plus S0's unbudgeted JS and the
+deferred shared room stage — which *both* docs call the biggest cross-family gap and *neither* budgets.
+
+**These do not fit, and no gate currently forces the choice.** The allocation is an owner decision.
+**Making it is a precondition of P2** (the first WASM-touching phase) — not "#46 is a precondition",
+which is now satisfied and would let the first new byte land with the ceiling still unallocated.
 
 The audio-thread constitution is unchanged: no allocation, no locks, no denormals, bounded work per
 sample. #49 authorizes more *cost*, not an exemption.
