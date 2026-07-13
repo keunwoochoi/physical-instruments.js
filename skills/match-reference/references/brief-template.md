@@ -11,7 +11,7 @@ spec; do not paraphrase it away>"
 
 READ FIRST: skills/match-reference/SKILL.md + references/loop-protocol.md;
 <the family's kernel struct/impl + preset arm> in crates/dsp/src/kernels.rs;
-the family's decision-log history in .claude/TODO-<date>.md.
+the family's source GitHub issue and linked PR evidence.
 METRIC: compare.py — mr_stft.mean headline (K-weighted), gates must pass,
 manifest masks apply (evals/reference-manifest.json). Check your corpus's
 blind spots there before fitting.

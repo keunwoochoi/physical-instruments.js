@@ -1,0 +1,50 @@
+name: Bug
+description: Report incorrect behavior with enough evidence to reproduce, fix, and verify it.
+title: "fix(scope): "
+body:
+  - type: markdown
+    attributes:
+      value: "Keep the `fix(scope): imperative summary` title shape and replace `scope` with the smallest owning area."
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Explain who is affected, why the bug matters, and why it should be addressed now.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence and reproduction
+      description: Give the smallest reproduction, actual behavior, expected behavior, environment, and links to relevant logs or artifacts.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: State what should be observably different when the bug is fixed.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and constraints
+      description: Name in-scope paths or behavior, explicit non-goals, authority limits, and compatibility or performance constraints.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Use checkboxes for concrete conditions that make the issue complete.
+      placeholder: "- [ ] The reproduction fails before the fix and passes afterward."
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation
+      description: List the commands, listening tests, benchmarks, browsers, or real behavior that must verify the fix.
+    validations:
+      required: true

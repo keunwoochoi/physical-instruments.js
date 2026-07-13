@@ -1,0 +1,50 @@
+name: Feature
+description: Propose a user-visible or developer-visible capability with a measurable outcome.
+title: "feat(scope): "
+body:
+  - type: markdown
+    attributes:
+      value: "Keep the `feat(scope): imperative summary` title shape and replace `scope` with the smallest owning area."
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Explain the user or developer need, who benefits, and why this is the right problem to solve now.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Link examples, listening results, measurements, prior issues, research, or current behavior that supports the request.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: State the observable capability or experience that should exist when the work is complete.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and constraints
+      description: Separate in-scope work from non-goals and name memory, latency, compute, compatibility, licensing, or authority constraints.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Use checkboxes for measurable product, sound-quality, performance, API, and compatibility conditions.
+      placeholder: "- [ ] A web developer can use the capability through the documented public API."
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation
+      description: List the tests, evals, benchmarks, listening gates, browsers, or real workflows that must provide evidence.
+    validations:
+      required: true

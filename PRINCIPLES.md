@@ -4,8 +4,9 @@
 
 ## Mission
 
-Every developer who needs instrument sounds on the web should reach for instruments.js by default.
-`npm install` → a beautiful piano, guitar, and marimba in tens of kilobytes — no samples, works offline, one `noteOn()` call.
+instruments.js democratizes high-quality virtual instruments for every web developer and internet user. We pursue the best sounds practical with minimal memory, latency, and compute by deeply understanding acoustics, DSP, audio, physics, music, and music-making.
+
+Every developer who needs instrument sounds on the web should reach for instruments.js by default: `npm install` → a beautiful piano, guitar, and marimba in tens of kilobytes — no samples, works offline, one `noteOn()` call.
 
 ## Product principles (ordered)
 

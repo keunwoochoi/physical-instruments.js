@@ -1,0 +1,50 @@
+name: Maintenance
+description: Track harness, documentation, CI, dependency, cleanup, or other bounded repository work.
+title: "chore(scope): "
+body:
+  - type: markdown
+    attributes:
+      value: "Keep the `chore(scope): imperative summary` title shape and replace `scope` with the smallest owning area."
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Explain the repository pain, risk, drift, or maintenance burden and why it should be handled now.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Point to the concrete files, failures, duplication, stale surfaces, or prior work that demonstrate the need.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: State the simpler or safer repository state expected after completion.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and constraints
+      description: Name touched surfaces, explicit non-goals, and authority or migration constraints.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Use checkboxes for concrete repository-state and enforcement conditions.
+      placeholder: "- [ ] The executable guard fails before the repair and passes afterward."
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation
+      description: List the audit, CI, tests, or manual inspections that must pass.
+    validations:
+      required: true

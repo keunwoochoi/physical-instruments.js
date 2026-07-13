@@ -36,7 +36,7 @@ Owns: instrument façades and presets (GM program map), exciter↔resonator↔bo
 
 ## Phased plan
 
-Materialized as issues #3–#10 (see `.claude/TODO-2026-07-11.md` backlog). Q1 exit gate: modal mallets pass AB vs Tone.js/smplr (n≥5 humans) AND 32 voices across ≥4 simultaneous tracks ≤50% of the 2.67 ms budget on M1 and mid-tier Android.
+Materialized as GitHub issues #3–#10 under roadmap tracker #1. Q1 exit gate: modal mallets pass AB vs Tone.js/smplr (n≥5 humans) AND 32 voices across ≥4 simultaneous tracks ≤50% of the 2.67 ms budget on M1 and mid-tier Android.
 
 ## Deferred until demanded
 
