@@ -42,6 +42,8 @@ pub enum Instrument {
     DrumsJazz = 14,
     /// Bowed cello - the first continuously-excited instrument (#50 spike).
     Cello = 15,
+    /// Trombone - lip valve + bore + bell + nonlinear propagation (#50 spike).
+    Trombone = 16,
 }
 
 impl Instrument {
@@ -62,6 +64,7 @@ impl Instrument {
             13 => Self::DrumsRock,
             14 => Self::DrumsJazz,
             15 => Self::Cello,
+            16 => Self::Trombone,
             _ => Self::Marimba,
         }
     }
@@ -314,6 +317,7 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
     match inst {
         // cello: provisional, NOT a measured LUFS bake (spike). Re-run measure-loudness.
         Instrument::Cello => 1.0,
+        Instrument::Trombone => 1.0,
         Instrument::Marimba => 2.1,       // reference
         Instrument::Vibraphone => 4.9,    // was -30.5 LUFS
         Instrument::Glockenspiel => 30.6, // reverb pre-delay re-bake 2026-07-13 (x1.11)
@@ -339,6 +343,7 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
 pub fn room_send(inst: Instrument) -> f32 {
     match inst {
         Instrument::Cello => 0.12,
+        Instrument::Trombone => 0.13,
         Instrument::Drums | Instrument::DrumsRock => 0.16,
         Instrument::DrumsJazz => 0.18, // brushes/jazz kits are recorded roomier
         Instrument::Piano => 0.09,
@@ -5833,6 +5838,7 @@ impl DrumVoice {
 pub enum Kernel {
     Off,
     Bowed(BowedVoice),
+    Brass(BrassVoice),
     Modal(ModalVoice),
     Pluck(PluckVoice),
     EPluck(ElectricVoice),
@@ -6194,6 +6200,7 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
         Instrument::SynthPad => Kernel::Synth(SynthVoice::start(f0, vel, sr)),
         Instrument::Piano => Kernel::Piano(PianoVoice::start(midi, f0, vel, sr, seed)),
         Instrument::Cello => Kernel::Bowed(BowedVoice::start(f0, vel, sr)),
+        Instrument::Trombone => Kernel::Brass(BrassVoice::start(f0, vel, sr)),
         Instrument::GuitarSteel => {
             // steel: darker loop than nylon in RELATIVE terms (h12/h1 t60 ratio
             // ~1/3 in ref 015) but a much brighter pick excitation near the
@@ -7988,5 +7995,333 @@ impl BowedVoice {
         self.releasing = true;
         self.env_target = 0.0;
         self.env_rate = 1.0 - (-1.0 / (0.060 * sr)).exp();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Trombone (spike for #50 / #59).
+//
+// The DAFx/CCRMA survey (#66) says this should have been the first instrument, not
+// the cello, and it is right: one waveguide, one excitation termination, one bell,
+// one variable length. No valves, no toneholes, no interior junction, no cone. And
+// it is the one place a physical model beats a sampler OUTRIGHT - "brassiness" is a
+// dynamics-dependent spectral cascade, and sample libraries fake it with crossfaded
+// layers that always sound like crossfaded layers.
+//
+// Three pieces, each chosen against the literature rather than by intuition:
+//
+// 1. LIP: an OUTWARD-STRIKING mass-spring-damper (Adachi & Sato; Elliott & Bowsher).
+//    NOT an inward-striking reed. This matters more than anything else here: an
+//    inward-striking valve can only oscillate BELOW an air-column resonance, so it
+//    cannot be lipped up, cannot bend, and slots one way. SLOTTING IS THE
+//    INSTRUMENT. The lip's own resonance is what selects which bore mode sounds.
+//
+// 2. FLOW: the pressure-flow relation is one-to-one, so it has a CLOSED-FORM
+//    QUADRATIC SOLVE (Bilbao, DAFx-08). No table, no Newton. The survey was explicit
+//    that a bounded 2-iteration Newton with no convergence check inside a
+//    self-oscillating loop is a silent instability generator. We don't need one.
+//
+// 3. BRASSINESS: amplitude-dependent propagation speed (Cooper & Abel, DAFx-10) -
+//    the wave travels faster where the pressure is high, so the waveform steepens as
+//    it goes. Implemented as a fractional delay modulated by the TOTAL pressure
+//    (p+ + p-), both rails, per their Fig. 5. We do NOT claim to simulate shock
+//    formation: a real shock has unbounded bandwidth, oversampling has no fixed
+//    point, and Cooper & Abel deliberately discard the shock logic and prefer the
+//    result. Without shock the mechanism is phase modulation - which is exactly why
+//    FM was always good at brass.
+pub const BORE_BUF: usize = 2048;
+
+#[derive(Clone, Copy)]
+pub struct BrassVoice {
+    // bore: bidirectional pressure waveguide, mouthpiece <-> bell
+    fwd: [f32; BORE_BUF], // mouthpiece -> bell
+    bwd: [f32; BORE_BUF], // bell -> mouthpiece
+    pos: usize,
+    len: f32, // one-way bore length in samples (fractional)
+
+    // bell: a flared bell is a HIGH-PASS in transmission - low modes reflect back and
+    // sustain the oscillation, highs radiate out. That split is the whole reason a
+    // brass instrument both plays and projects.
+    bell_lp: f32,
+    bell_c: f32,
+    bell_loss: f32,
+
+    // lip valve
+    y: f32,      // opening (m, normalized). y <= 0 == lips closed (beating)
+    yv: f32,     // opening velocity
+    y0: f32,     // rest opening
+    lip_w: f32,  // resonance (rad/sample) - THIS selects the harmonic
+    lip_damp: f32,
+    lip_area: f32,
+    lip_gain: f32,
+
+    // breath
+    pm: f32, // mouth pressure
+    env: f32,
+    env_target: f32,
+    env_rate: f32,
+
+    // nonlinear propagation
+    beta: f32,
+
+    rdc_x1: f32,
+    rdc_y1: f32,
+    dc_x1: f32,
+    dc_y1: f32,
+    level: f32,
+    releasing: bool,
+    age: u64,
+    dbg_u: f32,
+    dbg_pmp: f32,
+    dbg_fbore: f32,
+    dbg_n: f32,
+    rms: f32,
+}
+
+impl BrassVoice {
+    /// Pick the harmonic and the slide position, the way a player does.
+    ///
+    /// A trombone does not have one length per note. The bore fundamental runs from
+    /// ~58 Hz (1st position, Bb) down to ~44 Hz (7th position, E), and the player
+    /// chooses a HARMONIC n of that fundamental with the lips. So for a target pitch
+    /// we search for the (n, slide) pair a player would actually use.
+    fn slot(f0: f32) -> (f32, f32) {
+        let mut best = (2.0f32, 58.0f32);
+        let mut best_err = f32::INFINITY;
+        for n in 2..=10 {
+            let fb = f0 / n as f32;
+            if !(43.0..=59.0).contains(&fb) {
+                continue;
+            }
+            // prefer the LOWEST harmonic that reaches the note - that is what a player
+            // does, because low slots are stabler and louder
+            let err = n as f32;
+            if err < best_err {
+                best_err = err;
+                best = (n as f32, fb);
+            }
+        }
+        best
+    }
+
+    pub fn start(f0: f32, vel: f32, sr: f32) -> Self {
+        let (n_sel, f_bore) = Self::slot(f0.max(60.0));
+
+        let mut v = Self {
+            fwd: [0.0; BORE_BUF],
+            bwd: [0.0; BORE_BUF],
+            pos: 0,
+            len: 1.0,
+            bell_lp: 0.0,
+            bell_c: 0.0,
+            bell_loss: 0.0,
+            y: 0.0,
+            yv: 0.0,
+            y0: 0.0,
+            lip_w: 0.0,
+            lip_damp: 0.0,
+            lip_area: 0.0,
+            lip_gain: 0.0,
+            pm: 0.0,
+            env: 0.0,
+            env_target: 1.0,
+            env_rate: 0.0,
+            beta: 0.0,
+            rdc_x1: 0.0,
+            rdc_y1: 0.0,
+            dc_x1: 0.0,
+            dc_y1: 0.0,
+            level: 0.0,
+            releasing: false,
+            age: 0,
+            dbg_u: 0.0,
+            dbg_pmp: 0.0,
+            dbg_fbore: 0.0,
+            dbg_n: 0.0,
+            rms: 0.0,
+        };
+
+        // Round-trip = one period of the BORE fundamental. Modes are then the full
+        // harmonic series, which is what a brass instrument plays (the mouthpiece and
+        // the bell together stretch a cylinder's odd-only series into a near-harmonic
+        // one; we get that series by construction instead of modelling the profile).
+        let period = sr / f_bore.max(30.0);
+        v.len = (period * 0.5).clamp(8.0, (BORE_BUF - 4) as f32);
+
+        // bell: reflect the lows, radiate the highs
+        v.bell_c = 0.28;
+        v.bell_loss = 0.985;
+
+        // Lip resonance sits AT the target pitch. Blowing harder does not change it -
+        // the player's embouchure does. Because the lip is outward-striking, it locks
+        // onto whichever bore mode is nearest, which is exactly slotting.
+        // Fletcher's valve classification: an OUTWARD-STRIKING valve oscillates when the
+        // air-column mode is ABOVE the lip resonance. Put the lip exactly ON the bore mode
+        // (as the first version did) and the loop is a positive resistance - it damps, and
+        // the instrument sits silent at equilibrium. Sit it slightly below and the phase
+        // rotates, the effective resistance goes negative, and it speaks.
+        v.lip_w = core::f32::consts::TAU * (f0 * 0.80) / sr;
+        v.lip_damp = 0.05;
+        v.y0 = 0.06;
+        v.lip_area = 0.20;
+        v.lip_gain = 0.20; // pressure -> lip displacement at equilibrium
+
+        // breath: harder = more pressure = a brighter, brassier note, not just louder
+        let vv = vel.clamp(0.05, 1.0);
+        v.pm = 0.55 + 0.95 * vv;
+        v.env_rate = 1.0 - (-1.0 / (0.030 * sr)).exp();
+
+        // brassiness: how much the local pressure speeds the wave up
+        v.beta = 2.4;
+
+        v.dbg_fbore = f_bore;
+        v.dbg_n = n_sel;
+        v.level = 4.0; // provisional; NOT a measured LUFS bake (spike)
+        v
+    }
+
+    #[inline(always)]
+    fn read(buf: &[f32; BORE_BUF], pos: usize, d: f32) -> f32 {
+        let di = d.floor();
+        let fr = d - di;
+        let i = (pos + BORE_BUF - di as usize - 1) % BORE_BUF;
+        let j = (i + BORE_BUF - 1) % BORE_BUF;
+        buf[i] * (1.0 - fr) + buf[j] * fr
+    }
+
+    pub fn render(&mut self, out: &mut [f32]) -> bool {
+        for s in out.iter_mut() {
+            self.env += (self.env_target - self.env) * self.env_rate;
+            let pm = self.pm * self.env;
+
+            // ---- read the bore, with the delay modulated by pressure ----
+            // Cooper & Abel: v(x,t) = c0 + beta * p. High pressure travels faster, so it
+            // catches up with the trough ahead of it and the wave STEEPENS. This is
+            // brassiness, and it is why a loud brass note is a different timbre and not
+            // just a louder one.
+            let p_at_bell_lin = Self::read(&self.fwd, self.pos, self.len);
+            let p_at_lip_lin = Self::read(&self.bwd, self.pos, self.len);
+            let p_total = p_at_bell_lin + p_at_lip_lin;
+            let d = (self.len - self.beta * p_total).clamp(4.0, self.len + 8.0);
+
+            let p_bell = Self::read(&self.fwd, self.pos, d);
+            let p_minus = Self::read(&self.bwd, self.pos, d);
+
+            // ---- lip valve: outward-striking, so mouth pressure PUSHES IT OPEN ----
+            // (An inward-striking reed would close here, and could then only oscillate
+            // below resonance - it could not be lipped up and would not slot.)
+            let p_mouthpiece = 2.0 * p_minus; // before the lip injects
+            let dp = pm - p_mouthpiece;
+
+            // The lips CLOSE as the breath stops. Without this, mouth pressure collapses while
+            // the bore is still pressurised, the lip slams shut against it, and the backflow
+            // dumps a ~10 dB transient at note-off - an audible pop.
+            //
+            // Only on RELEASE. Gating the aperture by the envelope during the ATTACK closes the
+            // lips before the instrument has spoken, so the oscillation never starts and it
+            // settles into a weak regime instead (it did: the tone dropped 40x and the
+            // brassiness vanished). A player's lips are already on the mouthpiece before the
+            // breath arrives.
+            let close = if self.releasing { self.env } else { 1.0 };
+            let a2 = self.lip_area * close * self.y.max(0.0);
+            // closed-form quadratic solve of  u = A*sqrt(|dp - Zc*u|)*sgn(...)
+            // (Bilbao DAFx-08). One-to-one, so no table and no Newton.
+            let u = if a2 > 1.0e-6 {
+                let a = a2 * 0.9;
+                let b = dp;
+                let disc = (a * a * a * a + 4.0 * a * a * b.abs()).max(0.0);
+                let mag = 0.5 * (-a * a + disc.sqrt());
+                mag.max(0.0) * b.signum()
+            } else {
+                0.0
+            };
+
+            let p_plus = p_minus + u;
+            let p_mp = p_plus + p_minus;
+
+            // Lip dynamics: a damped oscillator driven by the pressure across it.
+            // Outward-striking, so (pm - p_mp) OPENS the lips - that sign is the whole
+            // reason the instrument can be lipped up and can slot.
+            //
+            // The forcing has to be scaled by w^2, not applied raw: the equation is
+            // y'' = w^2 * (G*dp - (y - y0)) - 2*zeta*w*y', so at equilibrium a pressure
+            // dp displaces the lip by G*dp. Forcing it raw made the pressure term ~1000x
+            // the spring term and the lip was simply slammed - which is why every note
+            // came out at the same 905 Hz.
+            let w = self.lip_w;
+            let acc = w * w * (self.lip_gain * (pm - p_mp) - (self.y - self.y0 * close))
+                - 2.0 * self.lip_damp * w * self.yv;
+            self.yv += acc;
+            self.y += self.yv;
+            // the lips beat against each other - they cannot open negative
+            if self.y < 0.0 {
+                self.y = 0.0;
+                if self.yv < 0.0 {
+                    self.yv *= -0.35; // inelastic collision
+                }
+            }
+            self.y = flush_denormal(self.y);
+            self.yv = flush_denormal(self.yv);
+
+            // ---- bell: reflect the lows, radiate the highs ----
+            //
+            // Sign matters and I got it wrong first: an ideal open end inverts pressure,
+            // which makes the loop inverting and yields a closed-open pipe - odd harmonics
+            // of f/2. That is a CLARINET. A trombone plays the FULL harmonic series,
+            // because the mouthpiece and the flaring bell together stretch a cylinder's
+            // odd-only modes into a near-harmonic set. We get that series directly by
+            // making the round trip non-inverting, rather than modelling the bore profile.
+            // It is a simplification, and it is the one the waveguide literature uses.
+            // The bore needs a high Q to SLOT (the mode must dominate the lip), but a high-Q
+            // tube also rings for ~8 seconds after you stop blowing, which is not what a
+            // trombone does. A real player's lips stay on the mouthpiece and damp the tube.
+            // So the loop loss is lifted while the breath is on and restored when it stops:
+            // the lips let go of the note.
+            let loss = self.bell_loss * (0.86 + 0.14 * self.env);
+            self.bell_lp += self.bell_c * (p_bell - self.bell_lp);
+            let refl_raw = loss * flush_denormal(self.bell_lp);
+            // The bell RADIATES the static blowing pressure, it does not store it. Without
+            // this, DC accumulates around the loop (gain 0.94 -> ~16x), the bore saturates,
+            // the lip settles at equilibrium and the instrument never speaks. It did exactly
+            // that: p_mouthpiece parked at 1.295 and y at 0.3635, forever.
+            let refl = refl_raw - self.rdc_x1 + DC_POLE * self.rdc_y1;
+            self.rdc_x1 = refl_raw;
+            self.rdc_y1 = flush_denormal(refl);
+            let radiated = p_bell - refl_raw; // the bell is a HIGH-PASS in transmission
+
+            // ---- write and advance ----
+            self.fwd[self.pos] = p_plus;
+            self.bwd[self.pos] = refl;
+            self.pos = (self.pos + 1) % BORE_BUF;
+
+            let y = radiated;
+            let hp = y - self.dc_x1 + DC_POLE * self.dc_y1;
+            self.dc_x1 = y;
+            self.dc_y1 = flush_denormal(hp);
+
+            self.dbg_u = u;
+            self.dbg_pmp = p_mp;
+            self.rms = 0.999 * self.rms + 0.001 * hp.abs();
+            *s = hp * self.level;
+            self.age += 1;
+        }
+        // A blown voice ends when the BORE is quiet, not when the breath envelope is - cutting
+        // at the envelope would chop the ring-down, and "a note that stops dead is as fake as
+        // one that never brassens".
+        !(self.releasing && self.env < 1.0e-3 && self.rms < 2.0e-4)
+    }
+
+    pub fn damp(&mut self, sr: f32) {
+        self.releasing = true;
+        self.env_target = 0.0;
+        self.env_rate = 1.0 - (-1.0 / (0.045 * sr)).exp();
+    }
+
+    pub fn bore_info(&self) -> (f32, f32, f32) {
+        (self.len, self.dbg_fbore, self.dbg_n)
+    }
+
+    pub fn probe(&self) -> (f32, f32, f32, f32) {
+        (self.y, self.yv, self.dbg_u, self.dbg_pmp)
     }
 }

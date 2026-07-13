@@ -694,8 +694,11 @@ impl Engine {
             | Instrument::EPiano
             | Instrument::SynthPad
             | Instrument::Piano
-            // A bowed string is the one instrument where a missed note-off is fatal.
-            | Instrument::Cello => true,
+            // A bowed string and a blown horn are the instruments where a missed note-off
+            // is fatal: they are self-oscillating and would sustain at full amplitude
+            // forever, not merely over-ring.
+            | Instrument::Cello
+            | Instrument::Trombone => true,
         };
         if !damps {
             return;
@@ -715,7 +718,9 @@ impl Engine {
                         Kernel::Synth(s) => s.release(),
                         Kernel::Piano(p) => p.damp(),
                     Kernel::Bowed(b) => b.damp(sr),
+                    Kernel::Brass(b) => b.damp(sr),
                         Kernel::Bowed(b) => b.damp(sr),
+                    Kernel::Brass(b) => b.damp(sr),
                         _ => {}
                     }
                 }
@@ -757,6 +762,7 @@ impl Engine {
                     Kernel::Synth(s) => s.release(),
                     Kernel::Piano(p) => p.damp(),
                     Kernel::Bowed(b) => b.damp(sr),
+                    Kernel::Brass(b) => b.damp(sr),
                     _ => {}
                 }
             }
@@ -775,6 +781,7 @@ impl Engine {
                     Kernel::Synth(s) => s.release(),
                     Kernel::Piano(p) => p.damp(),
                     Kernel::Bowed(b) => b.damp(sr),
+                    Kernel::Brass(b) => b.damp(sr),
                     Kernel::Drum(_) => {} // short one-shots; let them ring out
                     Kernel::Off => {}
                 }
@@ -814,6 +821,7 @@ impl Engine {
                     Kernel::Synth(s) => s.render(&mut self.voice_buf[..frames]),
                     Kernel::Piano(pn) => pn.render(&mut self.voice_buf[..frames]),
                     Kernel::Bowed(b) => b.render(&mut self.voice_buf[..frames]),
+                    Kernel::Brass(b) => b.render(&mut self.voice_buf[..frames]),
                     Kernel::Off => false,
                 };
                 let th = (v.pan.clamp(-1.0, 1.0) + 1.0) * core::f32::consts::FRAC_PI_4;

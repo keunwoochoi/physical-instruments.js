@@ -91,6 +91,8 @@
           <option value="musicbox">Music box</option>
         </optgroup>
         <optgroup label="Synth">
+          <option value="cello">Cello (bowed) [spike]</option>
+          <option value="trombone">Trombone [spike]</option>
           <option value="synthpad">Synth pad</option>
         </optgroup>
       </select>
@@ -202,6 +204,8 @@
     // the engine plays is in the instrument's real register.
     const PREVIEW_TRANSPOSE = {
       bass: -24, // C3-C5 -> C1-C3: the register a bass guitar actually occupies
+      cello: -12, // cello sits an octave below the keyboard as drawn
+      trombone: -12, // tenor trombone: Bb2-Bb4 territory
     };
     const xpose = (inst) => PREVIEW_TRANSPOSE[inst] ?? 0;
 
