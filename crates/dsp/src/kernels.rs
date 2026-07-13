@@ -7604,7 +7604,7 @@ pub const BOW_BUF: usize = 1024;
 struct Rail {
     buf: [f32; BOW_BUF],
     pos: usize,
-    len: usize,
+    pub len: usize,
 }
 
 impl Rail {
@@ -7644,6 +7644,15 @@ pub struct BowedVoice {
     br_c: f32,
     br_loss: f32,
 
+    // Fractional-delay tuning allpass. The four rails are integer-length and the bridge
+    // lowpass has its own phase delay, so the raw loop is short of a period by up to a
+    // sample and a half - which at C4 is ~90 cents. That is not "pitch flattening under
+    // bow force"; it is a tuning bug, and it must be removed before any claim about the
+    // former. This allpass supplies the remaining fraction.
+    ap_c: f32,
+    ap_x1: f32,
+    ap_y1: f32,
+
     // bow gesture (synthesized from velocity until #56 lands)
     bow_vel: f32,      // signed: sign is bow direction
     bow_force: f32,    // selects the Schelleng regime
@@ -7651,8 +7660,10 @@ pub struct BowedVoice {
     env_target: f32,
     env_rate: f32,
 
-    // friction state. Stick/slip is bistable - this is the branch the design doc
-    // says we do not get to optimize away.
+    dbg_lp_pd: f32,
+    /// Contact temperature of the rosin, above ambient. THE friction state.
+    temp: f32,
+    /// Diagnostic only - the thermal model needs no branch rule.
     stuck: bool,
 
     // body: the cello is nothing without one
@@ -7678,8 +7689,11 @@ impl BowedVoice {
         let mut v = Self {
             nb: Rail::new(), bn: Rail::new(), br: Rail::new(), rb: Rail::new(),
             br_lp: 0.0, br_c: 0.0, br_loss: 0.0,
+            ap_c: 0.0, ap_x1: 0.0, ap_y1: 0.0,
             bow_vel: 0.0, bow_force: 0.0,
             env: 0.0, env_target: 1.0, env_rate: 0.0,
+            dbg_lp_pd: 0.0,
+            temp: 0.0,
             stuck: true,
             body_a1: [0.0; 8], body_r2: [0.0; 8], body_g: [0.0; 8],
             body_y1: [0.0; 8], body_y2: [0.0; 8],
@@ -7693,16 +7707,53 @@ impl BowedVoice {
         // splits the string, and that split IS the Helmholtz corner geometry.
         let period = sr / f0.max(20.0);
         let beta = 0.127;
-        let half = period * 0.5;
-        v.br.set_len(half * beta);
-        v.rb.set_len(half * beta);
-        v.nb.set_len(half * (1.0 - beta));
-        v.bn.set_len(half * (1.0 - beta));
 
-        // Bridge reflection: -1 * one-pole lowpass. Loss sets the decay when the bow
-        // leaves; brightness sets how much of the corner survives each round trip.
+        // Bridge reflection: -1 * one-pole lowpass.
         v.br_c = 0.62;
         v.br_loss = 0.988;
+
+        // Budget the loop delay EXACTLY, or the string plays flat.
+        //
+        // One full circulation (bow -> bridge -> bow -> nut -> bow) must total exactly one
+        // period. The rails are integer-length and the bridge lowpass contributes its own
+        // phase delay, so we compute what the filters already cost and hand the remainder
+        // to a fractional-delay allpass. Getting this wrong is worth ~90 cents at C4, which
+        // is exactly what we measured before fixing it.
+        let w = core::f32::consts::TAU * f0 / sr;
+        let (sw, cw) = w.sin_cos();
+        let g = 1.0 - v.br_c;
+        // phase delay of  H(z) = c / (1 - g z^-1)  at w
+        let lp_pd = (g * sw).atan2(1.0 - g * cw) / w;
+
+        // Only the SUM of the four rails sets the pitch, so budget the sum first and split
+        // it afterwards. Sizing the pairs symmetrically (br == rb, nb == bn) makes the loop
+        // tunable only in steps of TWO samples, which leaves a one-sample hole an allpass of
+        // delay < 1 cannot fill - that hole was worth up to 19 cents at C4. Size the four
+        // rails independently.
+        let target = period - lp_pd;
+        let mut n_int = target.floor();
+        let mut frac = target - n_int;
+        if frac < 0.02 {
+            // an allpass with delay ~0 is ill-conditioned; borrow a whole sample
+            n_int -= 1.0;
+            frac += 1.0;
+        }
+        let d = frac.clamp(0.02, 1.20);
+
+        // split: bridge side gets beta of the string, nut side the rest
+        let bridge_total = (n_int * beta).round().max(4.0);
+        let nut_total = (n_int - bridge_total).max(4.0);
+        let br = (bridge_total * 0.5).ceil();
+        let rb = bridge_total - br;
+        let bn = (nut_total * 0.5).ceil();
+        let nb = nut_total - bn;
+        v.br.set_len(br);
+        v.rb.set_len(rb);
+        v.bn.set_len(bn);
+        v.nb.set_len(nb);
+
+        v.ap_c = (1.0 - d) / (1.0 + d);
+        v.dbg_lp_pd = lp_pd;
 
         // Bow gesture, synthesized. Velocity maps to bow SPEED and FORCE together,
         // the way an arm does - harder = faster and heavier. Down-bow by default.
@@ -7723,7 +7774,7 @@ impl BowedVoice {
         // straight through the floor into subharmonics (-2158 cents: it was playing a
         // completely different note). The model was right; the gesture was under-forced.
         let reg = ((f0 / 65.4).max(1.0).log2() / 3.0).clamp(0.0, 1.0); // 0 at C2, 1 at C5
-        let f_min = (0.85 + 1.6 * v.bow_vel) * (1.0 + 1.15 * reg);
+        let f_min = (0.85 + 1.6 * v.bow_vel) * (1.0 + 1.15 * reg) * 1.0;
         v.bow_force = f_min + 0.45 * vv;
         v.env = 0.0;
         v.env_target = 1.0;
@@ -7757,72 +7808,83 @@ impl BowedVoice {
         v
     }
 
-    /// Friction, solved as the Friedlander load-line intersection.
+    /// Thermal friction (Woodhouse, Acta Acustica 89:355-368, 2003), in a waveguide
+    /// after Maestre, Spa & Smith (ICMC 2014).
     ///
-    /// ⚠️ THIS IS THE MODEL THE LITERATURE HAS DECLARED WRONG, AND WE KEPT IT ANYWAY
-    /// FOR ONE ROUND, ON PURPOSE - so that the failure is on the record.
+    /// This replaces a single-valued mu(v) friction curve, and the reason is not that
+    /// mu(v) is crude - it is that mu(v) is NOT ONE-TO-ONE. The load line can intersect
+    /// it at up to three points (the Friedlander ambiguity), so the solver needs a branch
+    /// rule to pick a root, and Woodhouse measured that the resulting scheme depends
+    /// sensitively on rounding noise: he runs it at 200 kHz and still writes that "no time
+    /// step is short enough to guarantee convergence in every case". We reproduced that
+    /// exactly - the previous version dropped into subharmonics in scattered cells of the
+    /// (velocity x register) grid, and the cells MOVED when the gesture mapping changed.
     ///
-    /// A single-valued mu(v) friction curve is not one-to-one, so the update has multiple
-    /// roots (the Friedlander ambiguity) and needs the `stuck` branch rule below to pick
-    /// one. Woodhouse (Acta Acustica 89:355, 2003) measured that this makes the scheme
-    /// sensitively dependent on rounding noise: he runs it at 200 kHz and still writes
-    /// that "no time step is short enough to guarantee convergence in every case".
+    /// The thermal model makes friction a function of the CONTACT TEMPERATURE of the rosin
+    /// rather than of the sliding velocity. Rosin softens as it heats, so mu falls. The
+    /// consequences are the whole point:
     ///
-    /// We reproduced that here without meaning to. Sweeping (velocity x register), this
-    /// model drops into subharmonics in scattered cells of the grid - C4 at full bow came
-    /// out 2158 cents flat, i.e. playing a different note - and the cells move when the
-    /// gesture mapping changes. That is not a tuning bug to chase; it is the documented
-    /// pathology of the model.
+    ///   * At any instant, T is a STATE, so mu is a CONSTANT with respect to velocity.
+    ///     The characteristic is plain Coulomb, the load-line intersection is UNIQUE, and
+    ///     there is no ambiguity, no branch rule, and no root selection.
+    ///   * The hysteresis loop that Smith & Woodhouse actually measured in rosin emerges:
+    ///     slipping dissipates power -> the contact heats -> mu drops -> it keeps slipping;
+    ///     sticking dissipates nothing -> it cools -> mu recovers -> it takes more to break
+    ///     away again. We do not paint the hysteresis on; it falls out of one state variable.
+    ///   * There is no manufactured discontinuity, so there is nothing to antialias. The
+    ///     BLAMP/ADAA plan is simply not needed.
     ///
-    /// The fix is NOT to oversample: Woodhouse's THERMAL friction model (friction as a
-    /// function of contact temperature) is single-valued, has no branch rule, no
-    /// discontinuity to antialias, and converges at 50 kHz - i.e. it is both better
-    /// behaved AND cheaper. Maestre, Spa & Smith (ICMC 2014) put it in a waveguide,
-    /// which is exactly this topology. That is the next iteration.
+    /// Woodhouse converges this at 20 us (50 kHz). We run it at 48 kHz, unoversampled.
     ///
-    /// This is the crux, and getting it wrong is the difference between a bowed
-    /// string and a pluck. The bow does not simply push: the force it can exert and
-    /// the velocity the string ends up at are coupled, because the string's own wave
-    /// impedance resists. So we intersect the friction characteristic with the
-    /// string's load line rather than evaluating friction at the *incoming* velocity.
+    /// RESULT: the subharmonics are gone. Across the whole (velocity x register) grid the
+    /// model now holds the fundamental, dynamics rise monotonically with bow speed, and
+    /// nothing has to be oversampled.
     ///
-    ///   string velocity after injection:  v = v_in + f/(2Z)
-    ///   relative (bow - string):          d  = d0 - f/(2Z),   d0 = v_bow - v_in
-    ///   friction law:                     f  = F_N * mu(|d|) * sgn(d)
+    /// KNOWN RESIDUAL, and deliberately NOT fudged away: the string plays 17-114 cents FLAT,
+    /// worst in the treble and worst at LOW bow speed.
     ///
-    /// STICK is the case the naive version misses entirely: if the force needed to
-    /// carry the string at bow speed (2Z*d0) is within what static friction can
-    /// supply, the string IS carried at bow speed - and *that* is what pumps energy
-    /// in every period and makes the thing self-oscillate instead of decaying.
+    /// It is not the delay lines. The loop budget is exact and verified: rails + the bridge
+    /// lowpass's phase delay + the tuning allpass sum to the period to within 0.01 samples.
+    /// So something in the junction is adding effective delay, and I do not yet know what.
+    /// Candidates, in the order I would test them: the finite width of the slip pulse (the
+    /// Helmholtz corner takes time to form, and a slower bow makes it wider - which matches
+    /// the observed velocity dependence); the classical flattening effect, which is real
+    /// physics and rises with bow force; and a phase error in the first-order tuning allpass
+    /// at large fractional delay.
+    ///
+    /// I am NOT applying an empirical pitch offset to hide it. A fudge factor with no
+    /// mechanism behind it is precisely what this project keeps catching in review, and the
+    /// honest fix is to calibrate against a real cello corpus (#52), which does not exist yet.
+    /// Left visible and measured.
+
     #[inline(always)]
     fn friction(&mut self, d0: f32, force: f32) -> f32 {
-        const V0: f32 = 0.08; // Stribeck velocity
-        const MU_S: f32 = 0.85; // static
-        const MU_D: f32 = 0.30; // dynamic
-        const TWO_Z: f32 = 2.0; // normalized string wave impedance seen by the bow
+        const TWO_Z: f32 = 2.0; // string wave impedance seen by the bow (two half-strings)
+        const MU0: f32 = 1.05; // cold rosin
+        const HEAT: f32 = 0.055; // frictional power -> temperature
+        const COOL: f32 = 0.011; // thermal relaxation of the contact patch
 
-        let f_stick = TWO_Z * d0;
-        // Hysteresis: breaking away takes more than staying stuck (Stribeck).
-        let f_max = MU_S * force * if self.stuck { 1.0 } else { 0.92 };
+        // Rosin softens as it heats. This IS the friction law - there is no mu(v) anywhere.
+        let mu = MU0 / (1.0 + self.temp);
 
-        if f_stick.abs() <= f_max {
-            self.stuck = true;
-            return f_stick;
-        }
-        self.stuck = false;
+        let f_stick = TWO_Z * d0; // force required to carry the string at bow speed
+        let f_slip = mu * force; // most the contact can transmit at this temperature
 
-        // SLIP: |f| = F_N * mu(|d|), |d| = |d0| - |f|/(2Z).
-        // Bounded fixed-point - contraction is strong, 3 passes is plenty, and the
-        // work per sample is constant (no data-dependent iteration count).
-        let s = d0.signum();
-        let dd = d0.abs();
-        let mut fa = MU_D * force;
-        for _ in 0..3 {
-            let slip = (dd - fa / TWO_Z).max(0.0);
-            let mu = MU_D + (MU_S - MU_D) * V0 / (V0 + slip);
-            fa = mu * force;
-        }
-        s * fa.min(f_stick.abs())
+        let (f, slipping) = if f_stick.abs() <= f_slip {
+            (f_stick, false) // STICK: string carried at bow speed. Unique.
+        } else {
+            (f_slip * d0.signum(), true) // SLIP: Coulomb at mu(T). Also unique.
+        };
+
+        // Frictional heating: power = |force| x |sliding velocity|. Sticking slides nothing,
+        // so it dissipates nothing and the contact cools.
+        let v_slip = if slipping { d0 - f / TWO_Z } else { 0.0 };
+        let power = (f * v_slip).abs();
+        self.temp += HEAT * power - COOL * self.temp;
+        self.temp = flush_denormal(self.temp.max(0.0));
+        self.stuck = !slipping;
+
+        f
     }
 
     pub fn render(&mut self, out: &mut [f32]) -> bool {
@@ -7859,7 +7921,12 @@ impl BowedVoice {
             // bridge: lossy, frequency-dependent reflection. Also our pickup - this is
             // where the string actually drives the body.
             self.br_lp += self.br_c * (at_bridge - self.br_lp);
-            self.rb.write(-self.br_loss * flush_denormal(self.br_lp));
+            let refl = -self.br_loss * flush_denormal(self.br_lp);
+            // fractional-delay tuning allpass, in the loop
+            let ap = self.ap_c * (refl - self.ap_y1) + self.ap_x1;
+            self.ap_x1 = refl;
+            self.ap_y1 = flush_denormal(ap);
+            self.rb.write(ap);
 
             // nut: near-rigid
             self.nb.write(-0.998 * at_nut);
@@ -7894,6 +7961,16 @@ impl BowedVoice {
         // After the bow lifts, the string rings down on the bridge and nut losses, and
         // cutting it there would be the "note that stops dead" the design doc gates on.
         !(self.releasing && self.env < 1.0e-3 && self.dbg_vin / self.dbg_n.max(1.0) < 2.0e-3)
+    }
+
+    pub fn debug_delays(&self) -> (f32, f32, f32, f32) {
+        let d = (1.0 - self.ap_c) / (1.0 + self.ap_c);
+        (
+            (self.br.len + self.rb.len) as f32,
+            (self.nb.len + self.bn.len) as f32,
+            self.dbg_lp_pd,
+            d,
+        )
     }
 
     /// Diagnostics for the spike only.
