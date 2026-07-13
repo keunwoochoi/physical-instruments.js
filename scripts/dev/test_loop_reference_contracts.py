@@ -74,7 +74,7 @@ class RegistryTests(unittest.TestCase):
                 self.assertEqual({entry["contract_id"]: entry["canonical_sha256"] for entry in receipt["entries"]}, identities)
 
     def test_canonicalizer_pins_toolchain_and_peak_identity(self):
-        canonicalize_reference_receipt.verify_toolchain()
+        canonicalize_reference_receipt.verify_toolchain("1.0.31")
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "fixture.wav"
             payload = b"\x00" * 4

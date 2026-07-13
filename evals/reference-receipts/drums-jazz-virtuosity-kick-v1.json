@@ -15,7 +15,8 @@
     "container": "WAV",
     "encoding": "IEEE_FLOAT_32_LE",
     "channels": 1,
-    "sample_rate": 48000
+    "sample_rate": 48000,
+    "libsndfile_version": "1.0.31"
   },
   "entries": [
     {

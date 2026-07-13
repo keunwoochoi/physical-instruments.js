@@ -71,7 +71,8 @@
         "container",
         "encoding",
         "channels",
-        "sample_rate"
+        "sample_rate",
+        "libsndfile_version"
       ],
       "properties": {
         "container": {
@@ -85,6 +86,9 @@
         },
         "sample_rate": {
           "const": 48000
+        },
+        "libsndfile_version": {
+          "const": "1.0.31"
         }
       },
       "additionalProperties": false
