@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://instruments.js/evals/listening/experiment-schema-v1.json",
+  "title": "instruments.js participant-facing blind-listening experiment v1",
+  "type": "object",
+  "required": ["schema_version", "id", "title", "purpose", "instructions", "sample_rate", "level_matching", "randomization", "exclusion_policy", "trials"],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "title": { "type": "string", "minLength": 1 },
+    "purpose": { "enum": ["harness_validation", "iteration", "release_gate"] },
+    "instructions": { "type": "string", "minLength": 1 },
+    "sample_rate": { "enum": [44100, 48000] },
+    "level_matching": {
+      "type": "object",
+      "required": ["method", "target_lufs", "tolerance_lu", "window"],
+      "properties": {
+        "method": { "enum": ["bs1770_integrated", "declared_prematched"] },
+        "target_lufs": { "type": "number" },
+        "tolerance_lu": { "type": "number", "minimum": 0, "maximum": 2 },
+        "window": { "const": "full_file" }
+      },
+      "additionalProperties": false
+    },
+    "randomization": {
+      "type": "object",
+      "required": ["algorithm", "seed_policy"],
+      "properties": {
+        "algorithm": { "const": "xorshift32-fisher-yates-v1" },
+        "seed_policy": { "enum": ["per_listener", "fixed_pilot"] }
+      },
+      "additionalProperties": false
+    },
+    "exclusion_policy": {
+      "type": "object",
+      "required": ["min_completed_trials", "hidden_reference_min_score", "min_completed_plays_per_stimulus", "unique_listener_ids_required"],
+      "properties": {
+        "min_completed_trials": { "type": "integer", "minimum": 1 },
+        "hidden_reference_min_score": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "min_completed_plays_per_stimulus": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "unique_listener_ids_required": { "const": true }
+      },
+      "additionalProperties": false
+    },
+    "trials": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/trial" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "audio": {
+      "type": "object",
+      "required": ["id", "path"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "path": { "type": "string", "pattern": "^(?!/)(?!.*\\.\\.).+\\.wav$" }
+      },
+      "additionalProperties": false
+    },
+    "trial": {
+      "type": "object",
+      "required": ["id", "protocol", "prompt", "stimuli"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "protocol": { "enum": ["ab", "abx", "mushra"] },
+        "prompt": { "type": "string", "minLength": 1 },
+        "reference": { "$ref": "#/$defs/audio" },
+        "x": { "$ref": "#/$defs/audio" },
+        "stimuli": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/audio" } }
+      },
+      "additionalProperties": false
+    }
+  }
+}

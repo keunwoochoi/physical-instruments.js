@@ -1,0 +1,503 @@
+{
+  "abx": {
+    "accuracy_ci95_wilson": null,
+    "correct": 0,
+    "total": 0
+  },
+  "analysis_manifest_digest": "c4607bb07aadd6557b640fd0cc8b2df29ee8cd0f604f255d7c08b956406af9e9",
+  "evidence_kind_counts": {
+    "human": 0,
+    "synthetic_harness_pilot": 6
+  },
+  "exclusions": [
+    {
+      "reason": "hidden_reference_below_threshold:synthetic-tone-mushra",
+      "session_id": "synthetic-pilot-6"
+    }
+  ],
+  "experiment_digest": "ed890e7bdfc129cbbbb8b3447665cffb47846d2c9cddbd9dc069681aaa55656e",
+  "experiment_id": "hidden-reference-anchor-pilot",
+  "interpretation": "Listening evidence with uncertainty; a human owner applies the declared gate. Synthetic pilot sessions validate only the harness.",
+  "n_included": 5,
+  "n_submitted": 6,
+  "quality_verdict": null,
+  "raw_sessions": [
+    {
+      "evidence_kind": "synthetic_harness_pilot",
+      "experiment_digest": "ed890e7bdfc129cbbbb8b3447665cffb47846d2c9cddbd9dc069681aaa55656e",
+      "experiment_id": "hidden-reference-anchor-pilot",
+      "listener": {
+        "experience": "synthetic fixture",
+        "hearing_notes": "not a human listener",
+        "id": "simulated-1"
+      },
+      "randomization": {
+        "algorithm": "xorshift32-fisher-yates-v1",
+        "seed": 268500993
+      },
+      "schema_version": "1.0.0",
+      "session_id": "synthetic-pilot-1",
+      "setup": {
+        "device": "none",
+        "environment": "deterministic test fixture",
+        "transducer": "other",
+        "volume_check": true
+      },
+      "started_at": "2026-07-12T12:01:00Z",
+      "submitted_at": "2026-07-12T12:01:30Z",
+      "trial_order": [
+        "synthetic-tone-mushra"
+      ],
+      "trials": [
+        {
+          "play_counts": {
+            "condition-01": 2,
+            "condition-02": 2,
+            "condition-03": 2,
+            "reference": 2
+          },
+          "playback": {
+            "condition-01": {
+              "completed": 2,
+              "listened_ms": 1600,
+              "starts": 2
+            },
+            "condition-02": {
+              "completed": 2,
+              "listened_ms": 1600,
+              "starts": 2
+            },
+            "condition-03": {
+              "completed": 2,
+              "listened_ms": 1600,
+              "starts": 2
+            },
+            "reference": {
+              "completed": 2,
+              "listened_ms": 1600,
+              "starts": 2
+            }
+          },
+          "presentation": [
+            "condition-02",
+            "condition-03",
+            "condition-01"
+          ],
+          "protocol": "mushra",
+          "response": {
+            "ratings": {
+              "condition-01": 98,
+              "condition-02": 82,
+              "condition-03": 21
+            }
+          },
+          "trial_id": "synthetic-tone-mushra"
+        }
+      ]
+    },
+    {
+      "evidence_kind": "synthetic_harness_pilot",
+      "experiment_digest": "ed890e7bdfc129cbbbb8b3447665cffb47846d2c9cddbd9dc069681aaa55656e",
+      "experiment_id": "hidden-reference-anchor-pilot",
+      "listener": {
+        "experience": "synthetic fixture",
+        "hearing_notes": "not a human listener",
+        "id": "simulated-2"
+      },
+      "randomization": {
+        "algorithm": "xorshift32-fisher-yates-v1",
+        "seed": 537001986
+      },
+      "schema_version": "1.0.0",
+      "session_id": "synthetic-pilot-2",
+      "setup": {
+        "device": "none",
+        "environment": "deterministic test fixture",
+        "transducer": "other",
+        "volume_check": true
+      },
+      "started_at": "2026-07-12T12:02:00Z",
+      "submitted_at": "2026-07-12T12:02:30Z",
+      "trial_order": [
+        "synthetic-tone-mushra"
+      ],
+      "trials": [
+        {
+          "play_counts": {
+            "condition-01": 2,
+            "condition-02": 2,
+            "condition-03": 2,
+            "reference": 2
+          },
+          "playback": {
+            "condition-01": {
+              "completed": 2,
+              "listened_ms": 1600,
+              "starts": 2
+            },
+            "condition-02": {
+              "completed": 2,
+              "listened_ms": 1600,
+              "starts": 2
+            },
+            "condition-03": {
+              "completed": 2,
+              "listened_ms": 1600,
+              "starts": 2
+            },
+            "reference": {
+              "completed": 2,
+              "listened_ms": 1600,
+              "starts": 2
+            }
+          },
+          "presentation": [
+            "condition-03",
+            "condition-02",
+            "condition-01"
+          ],
+          "protocol": "mushra",
+          "response": {
+            "ratings": {
+              "condition-01": 96,
+              "condition-02": 79,
+              "condition-03": 18
+            }
+          },
+          "trial_id": "synthetic-tone-mushra"
+        }
+      ]
+    },
+    {
+      "evidence_kind": "synthetic_harness_pilot",
+      "experiment_digest": "ed890e7bdfc129cbbbb8b3447665cffb47846d2c9cddbd9dc069681aaa55656e",
+      "experiment_id": "hidden-reference-anchor-pilot",
+      "listener": {
+        "experience": "synthetic fixture",
+        "hearing_notes": "not a human listener",
+        "id": "simulated-3"
+      },
+      "randomization": {
+        "algorithm": "xorshift32-fisher-yates-v1",
+        "seed": 805502979
+      },
+      "schema_version": "1.0.0",
+      "session_id": "synthetic-pilot-3",
+      "setup": {
+        "device": "none",
+        "environment": "deterministic test fixture",
+        "transducer": "other",
+        "volume_check": true
+      },
+      "started_at": "2026-07-12T12:03:00Z",
+      "submitted_at": "2026-07-12T12:03:30Z",
+      "trial_order": [
+        "synthetic-tone-mushra"
+      ],
+      "trials": [
+        {
+          "play_counts": {
+            "condition-01": 2,
+            "condition-02": 2,
+            "condition-03": 2,
+            "reference": 2
+          },
+          "playback": {
+            "condition-01": {
+              "completed": 2,
+              "listened_ms": 1600,
+              "starts": 2
+            },
+            "condition-02": {
+              "completed": 2,
+              "listened_ms": 1600,
+              "starts": 2
+            },
+            "condition-03": {
+              "completed": 2,
+              "listened_ms": 1600,
+              "starts": 2
+            },
+            "reference": {
+              "completed": 2,
+              "listened_ms": 1600,
+              "starts": 2
+            }
+          },
+          "presentation": [
+            "condition-01",
+            "condition-02",
+            "condition-03"
+          ],
+          "protocol": "mushra",
+          "response": {
+            "ratings": {
+              "condition-01": 100,
+              "condition-02": 85,
+              "condition-03": 24
+            }
+          },
+          "trial_id": "synthetic-tone-mushra"
+        }
+      ]
+    },
+    {
+      "evidence_kind": "synthetic_harness_pilot",
+      "experiment_digest": "ed890e7bdfc129cbbbb8b3447665cffb47846d2c9cddbd9dc069681aaa55656e",
+      "experiment_id": "hidden-reference-anchor-pilot",
+      "listener": {
+        "experience": "synthetic fixture",
+        "hearing_notes": "not a human listener",
+        "id": "simulated-4"
+      },
+      "randomization": {
+        "algorithm": "xorshift32-fisher-yates-v1",
+        "seed": 1074003972
+      },
+      "schema_version": "1.0.0",
+      "session_id": "synthetic-pilot-4",
+      "setup": {
+        "device": "none",
+        "environment": "deterministic test fixture",
+        "transducer": "other",
+        "volume_check": true
+      },
+      "started_at": "2026-07-12T12:04:00Z",
+      "submitted_at": "2026-07-12T12:04:30Z",
+      "trial_order": [
+        "synthetic-tone-mushra"
+      ],
+      "trials": [
+        {
+          "play_counts": {
+            "condition-01": 2,
+            "condition-02": 2,
+            "condition-03": 2,
+            "reference": 2
+          },
+          "playback": {
+            "condition-01": {
+              "completed": 2,
+              "listened_ms": 1600,
+              "starts": 2
+            },
+            "condition-02": {
+              "completed": 2,
+              "listened_ms": 1600,
+              "starts": 2
+            },
+            "condition-03": {
+              "completed": 2,
+              "listened_ms": 1600,
+              "starts": 2
+            },
+            "reference": {
+              "completed": 2,
+              "listened_ms": 1600,
+              "starts": 2
+            }
+          },
+          "presentation": [
+            "condition-02",
+            "condition-01",
+            "condition-03"
+          ],
+          "protocol": "mushra",
+          "response": {
+            "ratings": {
+              "condition-01": 95,
+              "condition-02": 76,
+              "condition-03": 27
+            }
+          },
+          "trial_id": "synthetic-tone-mushra"
+        }
+      ]
+    },
+    {
+      "evidence_kind": "synthetic_harness_pilot",
+      "experiment_digest": "ed890e7bdfc129cbbbb8b3447665cffb47846d2c9cddbd9dc069681aaa55656e",
+      "experiment_id": "hidden-reference-anchor-pilot",
+      "listener": {
+        "experience": "synthetic fixture",
+        "hearing_notes": "not a human listener",
+        "id": "simulated-5"
+      },
+      "randomization": {
+        "algorithm": "xorshift32-fisher-yates-v1",
+        "seed": 1342504965
+      },
+      "schema_version": "1.0.0",
+      "session_id": "synthetic-pilot-5",
+      "setup": {
+        "device": "none",
+        "environment": "deterministic test fixture",
+        "transducer": "other",
+        "volume_check": true
+      },
+      "started_at": "2026-07-12T12:05:00Z",
+      "submitted_at": "2026-07-12T12:05:30Z",
+      "trial_order": [
+        "synthetic-tone-mushra"
+      ],
+      "trials": [
+        {
+          "play_counts": {
+            "condition-01": 2,
+            "condition-02": 2,
+            "condition-03": 2,
+            "reference": 2
+          },
+          "playback": {
+            "condition-01": {
+              "completed": 2,
+              "listened_ms": 1600,
+              "starts": 2
+            },
+            "condition-02": {
+              "completed": 2,
+              "listened_ms": 1600,
+              "starts": 2
+            },
+            "condition-03": {
+              "completed": 2,
+              "listened_ms": 1600,
+              "starts": 2
+            },
+            "reference": {
+              "completed": 2,
+              "listened_ms": 1600,
+              "starts": 2
+            }
+          },
+          "presentation": [
+            "condition-03",
+            "condition-01",
+            "condition-02"
+          ],
+          "protocol": "mushra",
+          "response": {
+            "ratings": {
+              "condition-01": 97,
+              "condition-02": 81,
+              "condition-03": 20
+            }
+          },
+          "trial_id": "synthetic-tone-mushra"
+        }
+      ]
+    },
+    {
+      "evidence_kind": "synthetic_harness_pilot",
+      "experiment_digest": "ed890e7bdfc129cbbbb8b3447665cffb47846d2c9cddbd9dc069681aaa55656e",
+      "experiment_id": "hidden-reference-anchor-pilot",
+      "listener": {
+        "experience": "synthetic fixture",
+        "hearing_notes": "not a human listener",
+        "id": "simulated-6"
+      },
+      "randomization": {
+        "algorithm": "xorshift32-fisher-yates-v1",
+        "seed": 1611005958
+      },
+      "schema_version": "1.0.0",
+      "session_id": "synthetic-pilot-6",
+      "setup": {
+        "device": "none",
+        "environment": "deterministic test fixture",
+        "transducer": "other",
+        "volume_check": true
+      },
+      "started_at": "2026-07-12T12:06:00Z",
+      "submitted_at": "2026-07-12T12:06:30Z",
+      "trial_order": [
+        "synthetic-tone-mushra"
+      ],
+      "trials": [
+        {
+          "play_counts": {
+            "condition-01": 2,
+            "condition-02": 2,
+            "condition-03": 2,
+            "reference": 2
+          },
+          "playback": {
+            "condition-01": {
+              "completed": 2,
+              "listened_ms": 1600,
+              "starts": 2
+            },
+            "condition-02": {
+              "completed": 2,
+              "listened_ms": 1600,
+              "starts": 2
+            },
+            "condition-03": {
+              "completed": 2,
+              "listened_ms": 1600,
+              "starts": 2
+            },
+            "reference": {
+              "completed": 2,
+              "listened_ms": 1600,
+              "starts": 2
+            }
+          },
+          "presentation": [
+            "condition-01",
+            "condition-03",
+            "condition-02"
+          ],
+          "protocol": "mushra",
+          "response": {
+            "ratings": {
+              "condition-01": 65,
+              "condition-02": 88,
+              "condition-03": 12
+            }
+          },
+          "trial_id": "synthetic-tone-mushra"
+        }
+      ]
+    }
+  ],
+  "schema_version": "1.0.0",
+  "stimuli": {
+    "condition-01": {
+      "case_id": "synthetic-tone",
+      "mean": 97.2,
+      "mean_ci95_bootstrap": [
+        95.8,
+        98.8
+      ],
+      "median": 97.0,
+      "n": 5,
+      "role": "hidden_reference",
+      "trial_id": "synthetic-tone-mushra"
+    },
+    "condition-02": {
+      "case_id": "synthetic-tone",
+      "mean": 80.6,
+      "mean_ci95_bootstrap": [
+        77.8,
+        83.2
+      ],
+      "median": 81.0,
+      "n": 5,
+      "role": "candidate",
+      "trial_id": "synthetic-tone-mushra"
+    },
+    "condition-03": {
+      "case_id": "synthetic-tone",
+      "mean": 22.0,
+      "mean_ci95_bootstrap": [
+        19.4,
+        24.6
+      ],
+      "median": 21.0,
+      "n": 5,
+      "role": "anchor",
+      "trial_id": "synthetic-tone-mushra"
+    }
+  }
+}

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import jsonschema
 
+import listening
 import loop_metrics
 import reference_contracts
 
@@ -329,6 +330,37 @@ def verify_iteration(out):
             raise ValueError(f"{case['id']}: metric version differs from iteration evidence")
         if case["trusted"] != report["gates"]["trusted"] or case["mr_stft_mean"] != report["mr_stft"]["mean"]:
             raise ValueError(f"{case['id']}: metric summary differs from report evidence")
+    if "listening" in iteration:
+        analysis_path = (out / iteration["listening"]["analysis_manifest"]).resolve()
+        try:
+            analysis_path.relative_to(out)
+        except ValueError as exc:
+            raise ValueError("unsafe listening analysis-manifest path") from exc
+        if sha256(analysis_path) != iteration["listening"]["analysis_manifest_sha256"]:
+            raise ValueError("listening analysis-manifest file digest mismatch")
+        experiment, analysis_manifest = listening.validate_analysis_manifest(analysis_path)
+        if listening.manifest_digest(experiment) != iteration["listening"]["experiment_digest"]:
+            raise ValueError("listening experiment digest mismatch")
+        provenance = analysis_manifest["provenance"]
+        expected_provenance = {
+            "generator": listening.CAMPAIGN_BUNDLE_VERSION,
+            "candidate_commit": iteration["source"]["commit"],
+            "metric_version": iteration["metric_version"],
+            "case_manifest_sha256": iteration["manifest"]["sha256"],
+            "case_schema_sha256": iteration["manifest"]["schema_sha256"],
+            "reference_registry_sha256": iteration["reference_registry"]["sha256"],
+            "reference_registry_schema_sha256": iteration["reference_registry"]["schema_sha256"],
+        }
+        if any(provenance.get(key) != value for key, value in expected_provenance.items()):
+            raise ValueError("listening analysis provenance differs from iteration evidence")
+        iteration_cases = {case["id"]: case for case in iteration["cases"]}
+        for trial in analysis_manifest["trials"]:
+            case = iteration_cases.get(trial["case_id"])
+            if case is None or trial.get("reference_contract") != case["reference_contract"] or trial.get("reference_sha256") != case["reference_sha256"]:
+                raise ValueError(f"{trial['id']}: listening reference contract differs from iteration evidence")
+        audition_path = (out / iteration["audition"]).resolve()
+        if not audition_path.is_file():
+            raise ValueError("listening audition entrypoint is missing")
     return iteration
 
 
@@ -451,10 +483,11 @@ def run_campaign(args):
 
     audition = None
     if baseline_dir and classification in {"candidate", "listening_required"} and (baseline_dir / "renders").is_dir():
-        audition = out / "audition.html"
-        subprocess.run(["node", str(ROOT / "scripts" / "dev" / "ab-page.mjs"), str(baseline_dir / "renders"), str(out / "renders"), str(audition)], cwd=ROOT, check=True, text=True, capture_output=True)
+        listening_evidence = listening.prepare_campaign_bundle(out, baseline_dir, out / "listening")
+        audition = out / "listening" / "index.html"
     if audition:
-        iteration["audition"] = "audition.html"
+        iteration["audition"] = "listening/index.html"
+        iteration["listening"] = listening_evidence
         validate_iteration(iteration)
         write_json(out / "iteration.json", iteration)
     seal_iteration(out)

@@ -50,8 +50,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - run: npm ci || npm install
+      - run: python3 -m pip install -r scripts/dev/requirements-loop.txt
       - run: npm run build --workspaces --if-present
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install --with-deps chromium webkit
       - run: python3 -m http.server 8173 &
       - run: node scripts/dev/e2e-check.mjs
+      - run: npm run audit:listening
+      - run: LISTENING_BROWSER=webkit node scripts/dev/listening-e2e.mjs
