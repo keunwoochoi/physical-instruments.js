@@ -3,8 +3,11 @@
 
 import argparse
 import hashlib
+import importlib.metadata
 import json
+import os
 import struct
+import tempfile
 from pathlib import Path
 
 import jsonschema
@@ -17,10 +20,25 @@ import reference_contracts
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = ROOT / "evals" / "reference-receipt-schema-v1.json"
+REQUIREMENTS = ROOT / "scripts" / "dev" / "requirements-loop.txt"
+CANONICAL_PACKAGES = ("numpy", "scipy", "soundfile")
 
 
 def sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def verify_toolchain():
+    pinned = {}
+    for line in REQUIREMENTS.read_text(encoding="utf-8").splitlines():
+        if "==" in line:
+            name, value = line.split("==", 1)
+            pinned[name.strip().lower()] = value.strip()
+    for name in CANONICAL_PACKAGES:
+        expected = pinned.get(name)
+        actual = importlib.metadata.version(name)
+        if expected is None or actual != expected:
+            raise ValueError(f"canonicalizer toolchain mismatch for {name}: expected {expected}, got {actual}")
 
 
 def reject_duplicate_keys(pairs):
@@ -121,11 +139,20 @@ def rebuild_entry(entry, source_root, output_root, canonical_format):
     mono = np.pad(mono[:frames], (0, max(0, frames - len(mono))))
     destination = safe_join(output_root, entry["reference_path"])
     destination.parent.mkdir(parents=True, exist_ok=True)
-    sf.write(destination, mono, canonical_format["sample_rate"], subtype="FLOAT")
-    pin_peak_timestamp(destination, entry["peak_timestamp"])
-    actual = sha256(destination)
-    if actual != entry["canonical_sha256"]:
-        raise ValueError(f"canonical digest mismatch for {entry['contract_id']}: expected {entry['canonical_sha256']}, got {actual}")
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix=f".{destination.name}.", suffix=".wav", dir=destination.parent, delete=False) as handle:
+            temporary = Path(handle.name)
+        sf.write(temporary, mono, canonical_format["sample_rate"], subtype="FLOAT", format="WAV")
+        pin_peak_timestamp(temporary, entry["peak_timestamp"])
+        actual = sha256(temporary)
+        if actual != entry["canonical_sha256"]:
+            raise ValueError(f"canonical digest mismatch for {entry['contract_id']}: expected {entry['canonical_sha256']}, got {actual}")
+        os.replace(temporary, destination)
+        temporary = None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
     return {"contract_id": entry["contract_id"], "path": str(destination), "sha256": actual}
 
 
@@ -135,6 +162,7 @@ def main(argv=None):
     parser.add_argument("--source-root", required=True)
     parser.add_argument("--output-root", required=True)
     args = parser.parse_args(argv)
+    verify_toolchain()
     receipt = load_receipt(args.receipt)
     results = [rebuild_entry(entry, args.source_root, args.output_root, receipt["canonical_format"]) for entry in receipt["entries"]]
     print(json.dumps({"receipt": receipt["id"], "entries": results}, sort_keys=True))
