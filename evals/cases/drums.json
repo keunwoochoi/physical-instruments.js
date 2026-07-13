@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.1.0",
+  "schema_version": "1.2.0",
   "family": "drums",
   "description": "Pop/rock/jazz kit anchors; jazz brush is held out from kick/snare fitting.",
   "cases": [
@@ -7,6 +7,8 @@
       "id": "pop-kick-ff",
       "role": "tune",
       "reference": "references/drumkit/canonical/pop-kick-ff.wav",
+      "reference_contract_id": "ref.legacy.drums.pop-kick-ff.v1",
+      "reference_sha256": null,
       "render": { "family": "drums", "midi": 36, "velocity": 120, "note_seconds": 0.3, "total_seconds": 4.0, "sample_rate": 48000, "lead_seconds": 0.03 },
       "analysis": { "profile": "kick", "required_axes": ["mr_stft", "attack", "decay", "lufs"] }
     },
@@ -14,6 +16,8 @@
       "id": "rock-kick-mf",
       "role": "tune",
       "reference": "references/drumkit/canonical/rock-kick-mf.wav",
+      "reference_contract_id": "ref.legacy.drums.rock-kick-mf.v1",
+      "reference_sha256": null,
       "render": { "family": "drums-rock", "midi": 36, "velocity": 75, "note_seconds": 0.3, "total_seconds": 4.0, "sample_rate": 48000, "lead_seconds": 0.03 },
       "analysis": { "profile": "kick", "required_axes": ["mr_stft", "attack", "decay", "lufs"] }
     },
@@ -21,6 +25,8 @@
       "id": "rock-snare-ff",
       "role": "tune",
       "reference": "references/drumkit/canonical/rock-snare-ff.wav",
+      "reference_contract_id": "ref.legacy.drums.rock-snare-ff.v1",
+      "reference_sha256": null,
       "render": { "family": "drums-rock", "midi": 38, "velocity": 120, "note_seconds": 0.3, "total_seconds": 4.0, "sample_rate": 48000, "lead_seconds": 0.03 },
       "analysis": { "profile": "default", "required_axes": ["mr_stft", "attack", "decay", "lufs"] }
     },
@@ -28,6 +34,8 @@
       "id": "jazz-brush-mf",
       "role": "held_out",
       "reference": "references/drumkit/canonical/jazz-brush-mf.wav",
+      "reference_contract_id": "ref.legacy.drums.jazz-brush-mf.v1",
+      "reference_sha256": null,
       "render": { "family": "drums-jazz", "midi": 38, "velocity": 75, "note_seconds": 0.3, "total_seconds": 4.0, "sample_rate": 48000, "lead_seconds": 0.03 },
       "analysis": { "profile": "default", "required_axes": ["mr_stft", "attack", "decay", "lufs"] }
     }

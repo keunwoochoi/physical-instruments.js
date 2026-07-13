@@ -329,7 +329,7 @@ class ReportContractTests(unittest.TestCase):
         self.assertFalse(report["lufs"]["valid"])
         self.assertIsNone(report["lufs"]["delta"])
 
-    def test_manifest_contract_disables_invalid_axis_in_full_report(self):
+    def test_explicit_contract_disables_invalid_axis_in_full_report(self):
         x = tone(seconds=0.7)
         with tempfile.TemporaryDirectory() as d:
             ref_dir = os.path.join(d, "references", "guitar-acoustic")
@@ -338,7 +338,14 @@ class ReportContractTests(unittest.TestCase):
             b = os.path.join(ref_dir, "reference.wav")
             sf.write(a, x, SR, subtype="FLOAT")
             sf.write(b, x, SR, subtype="FLOAT")
-            report = compare.compare_files(a, b)
+            evidence = {
+                "id": "ref.test", "corpus_id": "corpus.test", "status": "verified",
+                "declared_path": "references/test.wav", "reference_sha256": "0" * 64,
+                "contract_sha256": "1" * 64, "registry_sha256": "2" * 64,
+                "registry_schema_sha256": "3" * 64,
+            }
+            bound = {"contract": {"mask_after_s": 3.3, "invalid_axes": {"lufs": "normalized", "release": "hard gate"}}, "evidence": evidence}
+            report = compare.compare_files(a, b, reference_contract=bound)
         self.assertFalse(report["axis_validity"]["lufs"]["valid"])
         self.assertIsNone(report["lufs"]["delta"])
         self.assertIn("release", report["axis_validity"])

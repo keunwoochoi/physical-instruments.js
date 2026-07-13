@@ -27,7 +27,7 @@ Status: validation evidence for issue #22; this report evaluates metric behavior
 | Silent partial/stereo input | Partial list is empty and stereo fields are explicitly unavailable; no division-by-zero or NaN | Pass |
 | Profile selection | Kick warp and cymbal ultrasonic thresholds differ from default exactly as declared | Pass |
 
-The equation-owned artifact fixture under metric `2026.07.12-l3.2` remains untrusted on crest, sample jump, and ultrasonic energy. Its bounded envelope cost is 3.6441 dB, centroid cost is 52.6781 semitones, mean absolute partial-frequency residual is 8.31 cents, and mean absolute partial-level residual is 0.60 dB across three audible matched partials. Partial summaries exclude components below −80 dB relative to the strongest matched partial so numerical-noise peaks cannot dominate the residual. These values are expected from the deliberately adversarial fixture and are not acceptance thresholds.
+The equation-owned artifact fixture under metric `2026.07.12-l3.3` remains untrusted on crest, sample jump, and ultrasonic energy. Its bounded envelope cost is 3.6441 dB, centroid cost is 52.6781 semitones, mean absolute partial-frequency residual is 8.31 cents, and mean absolute partial-level residual is 0.60 dB across three audible matched partials. Partial summaries exclude components below −80 dB relative to the strongest matched partial so numerical-noise peaks cannot dominate the residual. These values are expected from the deliberately adversarial fixture and are not acceptance thresholds.
 
 ## Private-corpus owner-verdict replay
 
@@ -37,6 +37,8 @@ The jazz-kick replay (`e28615f4b2f4f9a032bb6e83bf0b15be06d1a85bb3aef0793f73feb60
 
 Reproduction uses `scripts/dev/compare.py` with the exact files identified by those digests, `--profile pitched --expected-f0 261.625565 --partial-model-json '{"type":"proximity_harmonic","search_cents":90}'` for piano, and `--profile kick` for jazz kick. These are diagnostic replays of owner feedback, not tuned or held-out acceptance runs.
 
-## Compatibility
+## Exact reference compatibility
 
-The metric report schema advances from `1.0.0` to `1.1.0`, the case schema advances to `1.1.0`, and the final metric version advances from `2026.07.12-l1.1` to `2026.07.12-l3.2`. L1/L2 numeric baselines must not be silently reused; the campaign runner already rejects metric-version mismatch. Profile thresholds and partial-model configuration are serialized in every report, so any future semantic change requires an intentional metric-version change and golden regeneration.
+The corrected L2 exact-reference contract is combined with every L3 surface. A runnable case must bind a verified asset ID, exact path, canonical digest, sample rate, valid axes, and sealed registry/schema identity before the runner reaches source checks, WASM, output creation, rendering, metrics, drift, or listening. Metric calls receive the bound reference contract alongside `expected_f0` and `partial_model`; invalid-axis clearing remains trajectory-aware. Verification binds the sealed case’s render request, partial model, profile-owned thresholds, required axes, renderer metadata, report configuration, and output identities.
+
+The combined metric report schema advances to `1.2.0`, the combined case schema advances to `1.2.0`, the iteration schema is `1.1.0`, and the final metric version advances to `2026.07.12-l3.3`. L1/L2/L3.2 numeric baselines must not be silently reused; the campaign runner rejects metric-version, manifest, schema, registry, contract, path, or reference-identity mismatch. Any future semantic change requires an intentional version change and golden regeneration.

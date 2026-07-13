@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.1.0",
+  "schema_version": "1.2.0",
   "family": "bass",
   "description": "Electric-bass anchors spanning register and velocity; D2 is held out.",
   "cases": [
@@ -7,6 +7,8 @@
       "id": "e1-mf",
       "role": "tune",
       "reference": "references/bass/canonical/E1-mf.wav",
+      "reference_contract_id": "ref.legacy.bass.e1-mf.v1",
+      "reference_sha256": null,
       "render": { "family": "bass", "midi": 28, "velocity": 88, "note_seconds": 4.0, "total_seconds": 7.0, "sample_rate": 48000, "lead_seconds": 0.03 },
       "analysis": { "profile": "pitched", "required_axes": ["mr_stft", "attack", "decay", "partials"], "partial_model": { "type": "proximity_harmonic", "search_cents": 90.0 } }
     },
@@ -14,6 +16,8 @@
       "id": "a1-pp",
       "role": "tune",
       "reference": "references/bass/canonical/A1-pp.wav",
+      "reference_contract_id": "ref.legacy.bass.a1-pp.v1",
+      "reference_sha256": null,
       "render": { "family": "bass", "midi": 33, "velocity": 38, "note_seconds": 4.0, "total_seconds": 7.0, "sample_rate": 48000, "lead_seconds": 0.03 },
       "analysis": { "profile": "pitched", "required_axes": ["mr_stft", "attack", "decay", "partials"], "partial_model": { "type": "proximity_harmonic", "search_cents": 90.0 } }
     },
@@ -21,6 +25,8 @@
       "id": "a1-ff",
       "role": "tune",
       "reference": "references/bass/canonical/A1-ff.wav",
+      "reference_contract_id": "ref.legacy.bass.a1-ff.v1",
+      "reference_sha256": null,
       "render": { "family": "bass", "midi": 33, "velocity": 122, "note_seconds": 4.0, "total_seconds": 7.0, "sample_rate": 48000, "lead_seconds": 0.03 },
       "analysis": { "profile": "pitched", "required_axes": ["mr_stft", "attack", "decay", "partials"], "partial_model": { "type": "proximity_harmonic", "search_cents": 90.0 } }
     },
@@ -28,6 +34,8 @@
       "id": "d2-mf",
       "role": "held_out",
       "reference": "references/bass/canonical/D2-mf.wav",
+      "reference_contract_id": "ref.legacy.bass.d2-mf.v1",
+      "reference_sha256": null,
       "render": { "family": "bass", "midi": 38, "velocity": 88, "note_seconds": 3.5, "total_seconds": 6.5, "sample_rate": 48000, "lead_seconds": 0.03 },
       "analysis": { "profile": "pitched", "required_axes": ["mr_stft", "attack", "decay", "partials"], "partial_model": { "type": "proximity_harmonic", "search_cents": 90.0 } }
     }

@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://instruments.js/evals/cases/iteration-schema-v1.json",
-  "title": "instruments.js loop iteration v1",
+  "$id": "https://instruments.js/evals/cases/iteration-schema-v1.1.json",
+  "title": "instruments.js loop iteration v1.1",
   "type": "object",
-  "required": ["schema_version", "created_utc", "family", "hypothesis", "changed_component", "classification", "source", "wasm", "manifest", "metric_version", "drift", "cases", "baseline_dir"],
+  "required": ["schema_version", "created_utc", "family", "hypothesis", "changed_component", "classification", "source", "wasm", "manifest", "reference_registry", "metric_version", "drift", "cases", "baseline_dir"],
   "properties": {
-    "schema_version": { "const": "1.0.0" },
+    "schema_version": { "const": "1.1.0" },
     "created_utc": { "type": "string", "format": "date-time" },
     "family": { "type": "string" },
     "hypothesis": { "type": "string", "minLength": 1 },
@@ -17,10 +17,32 @@
       "properties": {
         "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
         "dirty": { "type": "array", "items": { "type": "string" } }
-      }
+      },
+      "additionalProperties": false
     },
     "wasm": { "type": "object", "required": ["status", "shipped_sha256"] },
-    "manifest": { "type": "object", "required": ["path", "sha256", "schema_sha256"] },
+    "manifest": {
+      "type": "object",
+      "required": ["path", "sha256", "schema_path", "schema_sha256"],
+      "properties": {
+        "path": { "const": "case-manifest.json" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "schema_path": { "const": "case-schema.json" },
+        "schema_sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "reference_registry": {
+      "type": "object",
+      "required": ["path", "sha256", "schema_path", "schema_sha256"],
+      "properties": {
+        "path": { "const": "reference-registry.json" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "schema_path": { "const": "reference-registry-schema.json" },
+        "schema_sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
     "metric_version": { "type": "string" },
     "drift": { "type": "object", "required": ["status"] },
     "cases": {
@@ -28,22 +50,44 @@
       "minItems": 2,
       "items": {
         "type": "object",
-        "required": ["id", "role", "reference", "reference_sha256", "render_sha256", "render_metadata", "report", "trusted", "mr_stft_mean", "classification", "baseline", "corpus"],
+        "required": ["id", "role", "reference", "reference_sha256", "reference_contract", "render_sha256", "render_metadata", "report", "trusted", "mr_stft_mean", "classification", "baseline"],
         "properties": {
           "id": { "type": "string" },
           "role": { "enum": ["tune", "held_out", "listening_only", "artifact_anchor"] },
-          "reference_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-          "render_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "reference": { "type": "string" },
+          "reference_sha256": { "$ref": "#/$defs/sha256" },
+          "reference_contract": { "$ref": "#/$defs/reference_contract" },
+          "render_sha256": { "$ref": "#/$defs/sha256" },
+          "render_metadata": { "type": "object" },
           "report": { "type": "string", "pattern": "^reports/[a-z0-9-]+\\.json$" },
           "trusted": { "type": "boolean" },
           "mr_stft_mean": { "type": "number", "minimum": 0 },
           "classification": { "enum": ["untrusted", "regressed", "candidate", "listening_required"] },
-          "baseline": { "type": ["object", "null"] },
-          "corpus": { "type": ["string", "null"] }
-        }
+          "baseline": { "type": ["object", "null"] }
+        },
+        "additionalProperties": false
       }
     },
     "baseline_dir": { "type": ["string", "null"] },
     "audition": { "type": "string" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "reference_contract": {
+      "type": "object",
+      "required": ["id", "corpus_id", "status", "declared_path", "reference_sha256", "contract_sha256", "registry_sha256", "registry_schema_sha256"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$" },
+        "corpus_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$" },
+        "status": { "const": "verified" },
+        "declared_path": { "type": "string", "minLength": 1 },
+        "reference_sha256": { "$ref": "#/$defs/sha256" },
+        "contract_sha256": { "$ref": "#/$defs/sha256" },
+        "registry_sha256": { "$ref": "#/$defs/sha256" },
+        "registry_schema_sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    }
   }
 }

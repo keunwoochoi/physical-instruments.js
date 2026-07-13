@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.1.0",
+  "schema_version": "1.2.0",
   "family": "guitars",
   "description": "Acoustic and electric anchors; distorted A3 is held out.",
   "cases": [
@@ -7,6 +7,8 @@
       "id": "nylon-a3-mf",
       "role": "tune",
       "reference": "references/guitar-acoustic/canonical/nylon-A3-mf.wav",
+      "reference_contract_id": "ref.legacy.guitars.nylon-a3-mf.v1",
+      "reference_sha256": null,
       "render": { "family": "guitar", "midi": 57, "velocity": 84, "note_seconds": 3.5, "total_seconds": 6.5, "sample_rate": 48000, "lead_seconds": 0.03 },
       "analysis": { "profile": "pitched", "required_axes": ["mr_stft", "attack", "decay", "partials"], "partial_model": { "type": "proximity_harmonic", "search_cents": 90.0 } }
     },
@@ -14,6 +16,8 @@
       "id": "steel-e2-ff",
       "role": "tune",
       "reference": "references/guitar-acoustic/canonical/steel-E2-ff.wav",
+      "reference_contract_id": "ref.legacy.guitars.steel-e2-ff.v1",
+      "reference_sha256": null,
       "render": { "family": "guitar-steel", "midi": 40, "velocity": 120, "note_seconds": 4.0, "total_seconds": 7.0, "sample_rate": 48000, "lead_seconds": 0.03 },
       "analysis": { "profile": "pitched", "required_axes": ["mr_stft", "attack", "decay", "partials"], "partial_model": { "type": "proximity_harmonic", "search_cents": 90.0 } }
     },
@@ -21,6 +25,8 @@
       "id": "electric-e2-mf",
       "role": "tune",
       "reference": "references/guitar-electric/canonical/clean-E2-mf.wav",
+      "reference_contract_id": "ref.legacy.guitars.electric-e2-mf.v1",
+      "reference_sha256": null,
       "render": { "family": "guitar-electric", "midi": 40, "velocity": 84, "note_seconds": 5.0, "total_seconds": 8.0, "sample_rate": 48000, "lead_seconds": 0.03 },
       "analysis": { "profile": "pitched", "required_axes": ["mr_stft", "attack", "decay", "partials"], "partial_model": { "type": "proximity_harmonic", "search_cents": 90.0 } }
     },
@@ -28,6 +34,8 @@
       "id": "distorted-a3-ff",
       "role": "held_out",
       "reference": "references/guitar-electric/canonical/distorted-A3-ff.wav",
+      "reference_contract_id": "ref.legacy.guitars.distorted-a3-ff.v1",
+      "reference_sha256": null,
       "render": { "family": "guitar-distorted", "midi": 57, "velocity": 118, "note_seconds": 5.0, "total_seconds": 8.0, "sample_rate": 48000, "lead_seconds": 0.03 },
       "analysis": { "profile": "pitched", "required_axes": ["mr_stft", "attack", "decay", "partials"], "partial_model": { "type": "proximity_harmonic", "search_cents": 90.0 } }
     }
