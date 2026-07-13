@@ -2633,6 +2633,10 @@ fn solve_piano_loss(f: f32, sr: f32, t60_f0: f32, t60_hi: f32, f_hi: f32) -> (f3
 
 /// Per-voice soundboard-knock mode count (the init-synthesized "mode cloud").
 const PIANO_BOARD_MODES: usize = 12;
+/// Owner listening trim for the per-key action-noise burst. Chord strikes sum
+/// several independent mechanisms, so keep each voice 5 dB below the prior
+/// single-note calibration rather than adding a shared nonlinear bus here.
+const PIANO_ACTION_THUMP_GAIN: f32 = 0.006_748_095; // 0.012 * 10^(-5/20)
 
 #[derive(Clone, Copy)]
 pub struct PianoVoice {
@@ -3042,11 +3046,13 @@ impl PianoVoice {
             // prominent at pp) — with the linear law the pp top-octave
             // renders were void where Salamander's C8 v1 is nearly pure
             // action noise.
-            // 0.02 → 0.012 (−4.4 dB) per Keunwoo listening 2026-07-12: "the
-            // noise/stomping part is too strong" — level trimmed, the fitted
-            // per-key growth and √vel touch law kept. (The remaining bass
-            // "stomp" is the 20–60 Hz radiation excess, a P2 soundboard item.)
-            thump_amp: 0.012 * vel.max(0.0).sqrt() * (1.0 + 6.0 * key * key * key),
+            // A further 5 dB trim from 0.012 follows the owner's chord-balance
+            // pass on 2026-07-12: independent per-key action bursts otherwise
+            // add too prominently in polyphony. The fitted per-key growth and
+            // √vel touch law remain intact.
+            thump_amp: PIANO_ACTION_THUMP_GAIN
+                * vel.max(0.0).sqrt()
+                * (1.0 + 6.0 * key * key * key),
             noise_lp: 0.0,
             noise_lp_c: 0.10,
             bloom: 0.0,
@@ -6574,6 +6580,12 @@ mod tests {
             assert!(cs5.body_force_mix == 0.0, "C#5 force path leaked globally at {sr} Hz");
             assert!(a1.onset_c < c4_pp.onset_c, "bass radiation must build slower at {sr} Hz");
         }
+    }
+
+    #[test]
+    fn piano_action_thump_owner_trim_is_exactly_five_db() {
+        let trim_db = 20.0 * (PIANO_ACTION_THUMP_GAIN / 0.012).log10();
+        assert!((trim_db + 5.0).abs() < 0.001, "action thump trim drifted: {trim_db:.3} dB");
     }
 
     /// Output-level parity for the exact attack mechanism under review. The
