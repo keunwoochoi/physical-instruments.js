@@ -292,15 +292,15 @@ def verify_iteration(out):
                 or manifest_case["reference_sha256"] != contract_evidence["reference_sha256"]):
             raise ValueError(f"{case['id']}: iteration case binding differs from sealed case manifest")
         render = manifest_case["render"]
+        is_drum = render["family"].startswith("drums") or render["family"] == "percussion"
         expected_render_metadata = {
             "family": render["family"], "midi": render["midi"], "vel": render["velocity"],
             "seconds": render["total_seconds"], "onsetSeconds": render["lead_seconds"],
-            "noteOffSeconds": render["lead_seconds"] + render["note_seconds"],
+            "noteOffSeconds": None if is_drum else render["lead_seconds"] + render["note_seconds"],
             "sampleRate": render["sample_rate"], "float32": True,
         }
         if any(case["render_metadata"].get(key) != value for key, value in expected_render_metadata.items()):
             raise ValueError(f"{case['id']}: renderer metadata differs from sealed render request")
-        is_drum = render["family"].startswith("drums") or render["family"] == "percussion"
         expected_configuration = {
             "profile": manifest_case["analysis"]["profile"],
             "expected_onset_s": render["lead_seconds"],
