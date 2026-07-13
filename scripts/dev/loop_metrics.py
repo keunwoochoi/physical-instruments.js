@@ -27,7 +27,7 @@ import soundfile as sf
 
 
 REPORT_SCHEMA_VERSION = "1.0.0"
-METRIC_VERSION = "2026.07.12-l1"
+METRIC_VERSION = "2026.07.12-l1.1"
 SCHEMA_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "evals", "metrics", "report-schema-v1.json"))
 _REPORT_SCHEMA = None
 
@@ -52,6 +52,8 @@ def validate_report(report):
 
 def load_mono(path):
     x, sr = sf.read(path, always_2d=True)
+    if x.shape[0] == 0:
+        raise ValueError(f"audio file has zero frames: {path}")
     return x.mean(axis=1).astype(np.float64), sr
 
 
@@ -173,7 +175,7 @@ def logmel_dist(xr, xf, sr, perceptual=True, **kw):
     }
 
 
-def onset_align(xr, xf, sr, max_lag_s=0.012, search_s=0.05):
+def onset_align(xr, xf, sr, max_lag_s=0.012, search_s=0.1):
     """Bounded onset-envelope alignment; report rather than hide the shift.
 
     Alignment may remove capture latency, but it must not warp an attack. A lag
@@ -183,18 +185,28 @@ def onset_align(xr, xf, sr, max_lag_s=0.012, search_s=0.05):
     max_lag = max(1, int(max_lag_s * sr))
     if n <= 64:
         return xr, xf, {"status": "not_evaluated", "lag_samples": 0, "lag_ms": 0.0,
-                        "max_lag_ms": round(max_lag_s * 1000, 3)}
+                        "max_lag_ms": round(max_lag_s * 1000, 3),
+                        "reason": "insufficient_samples"}
     # Threshold a short moving-RMS envelope instead of raw periodic waveform
     # correlation. Raw correlation can choose a one-period or window-edge peak
     # even for identical pitched notes with leading silence.
     def onset(x):
         seg = x[:n]
+        if float(np.std(seg)) <= 1e-12:
+            return None
         width = max(4, int(0.0005 * sr))
         energy = np.convolve(seg * seg, np.ones(width) / width, mode="same")
+        if float(energy.max()) <= 1e-18 or float(np.ptp(energy)) <= 1e-18:
+            return None
         threshold = max(1e-16, 0.0004 * float(energy.max()))  # (2% amplitude)^2
         hit = np.flatnonzero(energy >= threshold)
-        return int(hit[0]) if len(hit) else 0
-    lag = onset(xr) - onset(xf)
+        return int(hit[0]) if len(hit) else None
+    onset_r, onset_f = onset(xr), onset(xf)
+    if onset_r is None or onset_f is None:
+        return xr, xf, {"status": "not_evaluated", "lag_samples": 0, "lag_ms": 0.0,
+                        "max_lag_ms": round(max_lag_s * 1000, 3),
+                        "reason": "silent_or_constant_onset_window"}
+    lag = onset_r - onset_f
     if abs(lag) > max_lag:
         return xr, xf, {"status": "rejected", "method": "moving_rms_threshold",
                         "lag_samples": lag,
@@ -234,6 +246,8 @@ def artifact_gates(xr, xf, sr, sr_ref=None, expected_onset_s=None, note_off_s=No
     NOT to be trusted for this render (the loop twice optimized FOR artifacts
     the refs could not see — 2026-07-12 audit). All computed on the render,
     crest compared against the reference."""
+    if len(xr) == 0 or len(xf) == 0:
+        raise ValueError(f"artifact gates require non-empty signals: render_frames={len(xr)}, reference_frames={len(xf)}")
     gates = {}
     finite = bool(np.isfinite(xr).all())
     gates["finite"] = {"value": finite, "pass": finite}
@@ -241,6 +255,12 @@ def artifact_gates(xr, xf, sr, sr_ref=None, expected_onset_s=None, note_off_s=No
         gates["all_pass"] = False
         gates["trusted"] = False
         return gates
+    peak_render = float(np.abs(xr).max())
+    peak_reference = float(np.abs(xf).max())
+    has_signal = peak_render > 1e-9 and peak_reference > 1e-9
+    gates["signal_energy"] = {"render_peak": round(peak_render, 12),
+                              "reference_peak": round(peak_reference, 12),
+                              "pass": has_signal}
     # onset crest: attack (first 3 ms after onset) vs body (10 ms..60%) —
     # render must not exceed the reference's crest by >6 dB (impulse/click
     # artifacts). Onset = first sample above 2% of peak (refs have lead-in
@@ -259,8 +279,9 @@ def artifact_gates(xr, xf, sr, sr_ref=None, expected_onset_s=None, note_off_s=No
                                "pass": bool(cr <= cf + 6.0)}
     # adjacent-sample jump relative to own peak: a near-full-scale single-sample
     # flip is always an artifact regardless of level (scale-invariant)
-    pk = float(np.abs(xr).max()) + 1e-12
-    j = float(np.abs(np.diff(xr)).max()) / pk
+    pk = peak_render + 1e-12
+    sample_diff = np.abs(np.diff(xr))
+    j = float(sample_diff.max()) / pk if len(sample_diff) else 0.0
     gates["max_sample_jump"] = {"value": round(j, 3), "pass": bool(j < 1.6)}
     # Hard clipping occupancy. A single true peak near 1 can be legitimate; a
     # run of samples pinned there is not. Render floats may exceed 1 in debug,
@@ -302,7 +323,8 @@ def artifact_gates(xr, xf, sr, sr_ref=None, expected_onset_s=None, note_off_s=No
         at = max(1, min(len(xr) - 2, int(note_off_s * sr)))
         radius = max(2, int(0.002 * sr))
         lo, hi = max(1, at - radius), min(len(xr) - 1, at + radius)
-        release_jump = float(np.abs(np.diff(xr[lo:hi])).max()) / pk
+        release_diff = np.abs(np.diff(xr[lo:hi]))
+        release_jump = float(release_diff.max()) / pk if len(release_diff) else 0.0
         gates["release_discontinuity"] = {"peak_ratio": round(release_jump, 4),
                                           "pass": bool(release_jump < 0.35)}
         post = xr[at:]
@@ -519,10 +541,16 @@ def compare_files(render_path, ref_path, profile="default", flat=False,
     ar, af, alignment = onset_align(xr, xf, sr)
     lm = logmel_dist(xr, xf, sr, perceptual=not flat,
                      n=prof["n"], hop=prof["hop"], mels=prof["mels"], fmin=prof["fmin"])
+    gates["alignment"] = {"status": alignment["status"],
+                          "pass": alignment["status"] == "applied"}
+    evaluated = [v["pass"] for v in gates.values()
+                 if isinstance(v, dict) and v.get("pass") is not None]
+    gates["all_pass"] = bool(all(evaluated))
+    gates["trusted"] = gates["all_pass"]
     report = {
         "schema_version": REPORT_SCHEMA_VERSION,
         "metric_version": METRIC_VERSION,
-        "interpretation": "trusted" if gates["all_pass"] else "untrusted",
+        "interpretation": "trusted" if gates["trusted"] else "untrusted",
         "inputs": {
             "render": {"path": str(render_path), "sha256": file_sha256(render_path),
                        "sample_rate": sr_r, "frames": native_frames["render"]},
@@ -552,7 +580,11 @@ def compare_files(render_path, ref_path, profile="default", flat=False,
         },
         "sr": sr,
         "seconds": round(n / sr, 2),
-        "lufs": {"render": round(l_r, 1), "reference": round(l_f, 1), "delta": round(l_r - l_f, 1)},
+        "lufs": {
+            "render": round(l_r, 1) if np.isfinite(l_r) else None,
+            "reference": round(l_f, 1) if np.isfinite(l_f) else None,
+            "delta": round(l_r - l_f, 1) if np.isfinite(l_r) and np.isfinite(l_f) else None,
+        },
         "logmel_dist": lm,
         "weighting": "flat" if flat else "K (BS.1770)",
         "ref_corpus": ({k: ref_meta[k] for k in ("corpus", "sr", "level_normalized", "mask_after_s", "invalid_axes", "notes") if k in ref_meta} if ref_meta else None),

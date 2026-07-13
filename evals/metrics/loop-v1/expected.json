@@ -1,6 +1,10 @@
 {
   "artifact_mutation": {
     "gates": {
+      "alignment": {
+        "pass": true,
+        "status": "applied"
+      },
       "all_pass": false,
       "clipping": {
         "occupancy": 0.0,
@@ -36,6 +40,11 @@
         "pass": null,
         "status": "not_evaluated"
       },
+      "signal_energy": {
+        "pass": true,
+        "reference_peak": 0.302975922823,
+        "render_peak": 0.899999976158
+      },
       "trusted": false,
       "ultrasonic_ratio": {
         "pass": false,
@@ -49,7 +58,7 @@
       "overall": 1.0065,
       "tail": 0.9936
     },
-    "metric_version": "2026.07.12-l1",
+    "metric_version": "2026.07.12-l1.1",
     "mr_stft": {
       "alignment": {
         "lag_ms": 0.0,
@@ -71,6 +80,10 @@
   "generator": "scripts/dev/generate_loop_goldens.py",
   "identity": {
     "gates": {
+      "alignment": {
+        "pass": true,
+        "status": "applied"
+      },
       "all_pass": true,
       "clipping": {
         "occupancy": 0.0,
@@ -106,6 +119,11 @@
         "pass": null,
         "status": "not_evaluated"
       },
+      "signal_energy": {
+        "pass": true,
+        "reference_peak": 0.302975922823,
+        "render_peak": 0.302975922823
+      },
       "trusted": true,
       "ultrasonic_ratio": {
         "pass": true,
@@ -119,7 +137,7 @@
       "overall": 0.0,
       "tail": 0.0
     },
-    "metric_version": "2026.07.12-l1",
+    "metric_version": "2026.07.12-l1.1",
     "mr_stft": {
       "alignment": {
         "lag_ms": 0.0,

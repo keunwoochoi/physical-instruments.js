@@ -98,6 +98,18 @@ class TrustGateTests(unittest.TestCase):
         gates = compare.artifact_gates(x, tone(), SR, note_off_s=0.3)
         self.assertFalse(gates["release_discontinuity"]["pass"])
 
+    def test_single_sample_release_window_does_not_crash(self):
+        x = np.asarray([0.25], dtype=np.float64)
+        gates = compare.artifact_gates(x, x, SR, note_off_s=0.0)
+        self.assertEqual(gates["max_sample_jump"]["value"], 0.0)
+        self.assertEqual(gates["release_discontinuity"]["peak_ratio"], 0.0)
+
+    def test_silent_signal_fails_energy_gate(self):
+        x = np.zeros(SR, dtype=np.float64)
+        gates = compare.artifact_gates(x, x, SR)
+        self.assertFalse(gates["signal_energy"]["pass"])
+        self.assertFalse(gates["trusted"])
+
 
 class AlignmentAndDistanceTests(unittest.TestCase):
     def test_bounded_alignment_reports_shift_and_restores_identity(self):
@@ -114,6 +126,17 @@ class AlignmentAndDistanceTests(unittest.TestCase):
         y = np.concatenate([np.zeros(int(0.02 * SR)), x])
         _, _, meta = compare.onset_align(y, x, SR, max_lag_s=0.01)
         self.assertEqual(meta["status"], "rejected")
+
+    def test_silent_alignment_is_not_arbitrarily_applied(self):
+        x = np.zeros(SR, dtype=np.float64)
+        _, _, meta = compare.onset_align(x, x, SR)
+        self.assertEqual(meta["status"], "not_evaluated")
+        self.assertEqual(meta["reason"], "silent_or_constant_onset_window")
+
+    def test_constant_alignment_is_not_arbitrarily_applied(self):
+        x = np.full(SR, 0.25, dtype=np.float64)
+        _, _, meta = compare.onset_align(x, x, SR)
+        self.assertEqual(meta["status"], "not_evaluated")
 
     def test_identical_mr_stft_is_zero(self):
         x = tone()
@@ -159,6 +182,41 @@ class ReportContractTests(unittest.TestCase):
             sf.write(b, x, SR, subtype="FLOAT")
             with self.assertRaisesRegex(ValueError, "NaN or infinite"):
                 compare.compare_files(a, b)
+
+    def test_zero_frame_file_fails_with_actionable_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            a = os.path.join(d, "empty.wav")
+            b = os.path.join(d, "reference.wav")
+            sf.write(a, np.asarray([], dtype=np.float32), SR, subtype="FLOAT")
+            sf.write(b, tone(), SR, subtype="FLOAT")
+            with self.assertRaisesRegex(ValueError, "zero frames"):
+                compare.compare_files(a, b)
+
+    def test_rejected_alignment_marks_report_untrusted_without_aborting(self):
+        reference = tone(lead=0.002)
+        delayed = np.concatenate([np.zeros(int(0.02 * SR)), reference])
+        with tempfile.TemporaryDirectory() as d:
+            a = os.path.join(d, "candidate.wav")
+            b = os.path.join(d, "reference.wav")
+            sf.write(a, delayed, SR, subtype="FLOAT")
+            sf.write(b, reference, SR, subtype="FLOAT")
+            report = compare.compare_files(a, b)
+        self.assertEqual(report["mr_stft"]["alignment"]["status"], "rejected")
+        self.assertFalse(report["gates"]["alignment"]["pass"])
+        self.assertEqual(report["interpretation"], "untrusted")
+
+    def test_silent_file_returns_finite_serializable_untrusted_report(self):
+        silent = np.zeros(SR, dtype=np.float64)
+        with tempfile.TemporaryDirectory() as d:
+            a = os.path.join(d, "candidate.wav")
+            b = os.path.join(d, "reference.wav")
+            sf.write(a, silent, SR, subtype="FLOAT")
+            sf.write(b, silent, SR, subtype="FLOAT")
+            report = compare.compare_files(a, b)
+        self.assertEqual(report["interpretation"], "untrusted")
+        self.assertFalse(report["gates"]["signal_energy"]["pass"])
+        self.assertIsNone(report["lufs"]["render"])
+        json.dumps(report, allow_nan=False)
 
     def test_invalid_loudness_axis_is_removed(self):
         report = {
