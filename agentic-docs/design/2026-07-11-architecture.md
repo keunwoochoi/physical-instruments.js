@@ -38,6 +38,27 @@ Owns: instrument façades and presets (GM program map), exciter↔resonator↔bo
 
 Materialized as GitHub issues #3–#10 under roadmap tracker #1. Q1 exit gate: modal mallets pass AB vs Tone.js/smplr (n≥5 humans) AND 32 voices across ≥4 simultaneous tracks ≤50% of the 2.67 ms budget on M1 and mid-tier Android.
 
+**Amendment — owner decision, 2026-07-13: the performance gate is desktop-first.** The two-device form
+above was blocking work on a device class the product is not primarily used on, and it was doing so on the
+strength of an *estimated* mobile multiplier, because no real device measurement has ever been taken (#5).
+Owner: *"it's fine. it will be used perhaps more on desktop."*
+
+The gate is therefore:
+
+- **Desktop (M1) is the gate.** 32 voices across ≥4 tracks ≤ 50% of the 2.67 ms budget. Unchanged, and it
+  still blocks.
+- **Mobile is a degradation target, not a gate.** Under-budget on a phone we shed voices and shed quality
+  tiers; we never glitch, crackle, or go silent without a diagnostic (PRINCIPLES: *degradation is
+  acceptable; corruption is not*). A campaign may ship with a mobile tier that is smaller, quieter in
+  polyphony, or simpler in topology than the desktop one.
+- **Mobile numbers may no longer block a phase**, and — importantly — **estimated mobile numbers may no
+  longer be presented as budget rows at all.** If we are not gating on it, we do not get to pretend we
+  measured it.
+
+This supersedes the "on M1 **and** mid-tier Android" clause for all downstream budgets. #5 (real device
+measurement) remains open and worth doing — it tells us where the mobile tier sits — but it is no longer a
+precondition of anything.
+
 ## Deferred until demanded
 
 Threads/SharedArrayBuffer; per-instrument WASM code-splitting; neural/DDSP components (offline parameter fitting is v2 research); React wrapper (post-API-stability, ~Q3); MPE surface in the public API (architecture supports per-voice continuous control from day one; API exposure is v0.5+); tempo/transport abstraction (customer zero pre-bakes absolute seconds).

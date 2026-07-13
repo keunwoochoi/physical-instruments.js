@@ -10,7 +10,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-BUDGET_GZ=$((100 * 1024))   # PRINCIPLES #2: core + one instrument <= 100 KB gz
+BUDGET_GZ=$((150 * 1024))   # PRINCIPLES #2 (owner amendment 2026-07-13): whole library <= 150 KB gz
 SHIPPED=packages/core/wasm/instruments_dsp.wasm
 BUILT=target/wasm32-unknown-unknown/release/instruments_dsp.wasm
 

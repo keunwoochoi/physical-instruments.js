@@ -1,7 +1,7 @@
 # Higher-capacity piano: make the box real
 
 Date: 2026-07-13
-Status: draft (**revision 2**) — proposes an architecture and a staged plan for issue #49.
+Status: draft (**revision 3**) — proposes an architecture and a staged plan for issue #49.
 
 Revision 2 answers a 7/7 blocking persona panel on revision 1. If you reviewed r1, read
 "What revision 1 got wrong" at the end first — the errors are the useful part.
@@ -409,9 +409,9 @@ It does **not** improve the attack. That is the trade the owner is being asked t
 - **Phrase-level AB:** every gate ABs the **chord, repeat, pedal and phrase** items of the P0 corpus,
   not only the isolated anchors. Otherwise iteration is steered entirely by single notes — which is
   exactly how you arrive at something beautiful in isolation and lifeless in a phrase.
-- **Mobile:** iPhone 8 / Safari 16.4 floor and Pixel 6a, per `2026-07-12-instrument-controls.md` —
-  p99 < 50% of budget, `droppedQuanta == 0`. **Every number in this doc is desktop.** A phone is
-  roughly 3–4× slower, so a desktop 30%-of-budget projection is 90–150% on an A-series phone.
+- **Desktop is the gate; mobile degrades.** Owner decision 2026-07-13 (`2026-07-11-architecture.md`).
+  We ship a smaller board rung and fewer voices on weak devices — we never glitch. No phase blocks on a
+  mobile number, and no estimated mobile number appears as a budget row.
 
 ---
 
@@ -483,37 +483,40 @@ estimate that currently justifies rejecting it.
 
 Binding. Exceeding any of these is an owner decision, not an implementer's.
 
-**Every CPU row is desktop-measured and carries a mobile column, because a desktop number under a
-two-device gate is how this campaign nearly shipped an impossible budget.** Mobile figures are the
-desktop figure × 3.5 — **an estimate standing in for the measurement #5 owes us**, and they are
-predictions, not results.
+**The gate is desktop.** Owner decision, 2026-07-13, recorded in `2026-07-11-architecture.md`: mobile is a
+**degradation target, not a gate**. Consequently there are **no estimated mobile rows in this table** — if
+we are not gating on it, we do not get to present a guess as a budget. (An earlier revision of this doc did
+exactly that, with a made-up ×3.5 multiplier, which is the same sin as r1's unmeasured "3×" for
+Architecture B.)
 
-| Budget | Baseline | Ceiling (desktop) | Mobile (est. ×3.5) |
-|---|---|---|---|
-| Per-voice CPU @48 kHz | 13.22 µs | ≤ 20 µs | ~70 µs — **this, not the board, is what breaks the phone** |
-| Shared board, open loop (P3) | 0 | ≤ 60 µs/q, flat in polyphony | ~210 µs |
-| Shared board, closed loop (P4) | 0 | **≤ 230 µs/q** at 20×64 (measured 216.5) | ~760 µs — **ladder to 4×96 → ~311 µs** |
-| **Board instances** | — | **per piano track.** MAX_TRACKS = 16 → the ceiling is **× the number of piano tracks**. Two piano parts = two boards. **Hard-cap at 1 board**, or state what track #2 gets. | — |
-| Idle engine | 19.9 µs | rises — a closed-loop board **cannot early-out**. ~40–90 µs once a piano track exists. | ~140–315 µs **with nothing sounding** |
-| Piano-led arrangement | ~16% desktop | ≤ 50% | **the frozen baseline is already ~58% at 32 voices. It fails the gate today.** |
-| Mobile polyphony cap | none | — | **required, and it is a product decision.** ~16–24 voices. |
-| Per-voice state | 25,760 B | ≤ 28 KB (×64) | same |
-| Shared board state | 0 | ≤ 32 KB **per piano track**; +792 KB freed by retiring `SympBank` | same |
-| Init | — | ≤ 20 ms **measured on the floor device**, inside gesture-unlock — and it must now also cover the **device-tier micro-bench** that selects the ladder rung | — |
-| Degradation | voice stealing | the board degrades by ports and modes, **selected at init**, never mid-arrangement (truncating ringing high-Q modes is an audible step) | — |
+| Budget | Baseline | Ceiling (desktop, measured) |
+|---|---|---|
+| Per-voice CPU @48 kHz | 13.22 µs | **≤ 20 µs** |
+| Shared board, open loop (P3) | 0 | **≤ 60 µs/quantum**, flat in polyphony |
+| Shared board, closed loop (P4) | 0 | **≤ 230 µs/quantum** at 20 ports × 64 modes (measured 216.5) |
+| **Board instances** | — | **per piano track**, and `MAX_TRACKS = 16` — so the ceiling multiplies. Two piano parts = two boards = ~433 µs. **Hard-cap at one board instance**, or state what the second piano track gets. |
+| Idle engine | 19.9 µs | **rises** — a closed-loop board **cannot early-out** when nothing sounds. ~40–90 µs once a piano track exists. |
+| Piano-led arrangement | ~16% | **≤ 50% of budget on M1** — the (now desktop-only) exit gate |
+| Per-voice state | 25,760 B | ≤ 28 KB (remember: ×64) |
+| Shared board state | 0 | ≤ 32 KB **per piano track**; +792 KB freed by retiring `SympBank` |
+| Init | — | ≤ 20 ms, inside the gesture-unlock path |
+| Degradation | voice stealing | the board degrades by **ports and modes, selected at init** — never mid-arrangement, because truncating ringing high-Q modes is an audible step. This is now the **mobile tier**, not a gate. |
+
+**Mobile, for the record and not as a blocker.** At an estimated ×3.5, 32 baseline piano voices are ~58% of
+budget — i.e. **the piano we ship today would already miss the old two-device gate**, with no soundboard at
+all. That is now a *degradation* problem, not a *blocking* one: on a weak device we ship fewer voices and a
+smaller board rung. #5 (real device measurement) stays open and worth doing — it tells us where the mobile
+tier actually sits — but it is **no longer a precondition of any phase**.
 
 **Bundle — one owned, composed number.** `scripts/audit/bundle-size-audit.sh` owns it (#46; repaired in
 #63 — it had been omitting `packages/midi` *and* was red-by-construction in CI). Cite the script; do not
 restate these from memory.
 
-All-in is **76,803 B gz** (66,722 wasm + 4,715 core JS + 2,682 worklet + 2,684 midi) against the 102,400 B
-contract → **25.0 KB gz of headroom for the project's entire remaining life.** Claimants: this campaign
+All-in is **76,803 B gz** (66,722 wasm + 4,715 core JS + 2,682 worklet + 2,684 midi) against the **153,600 B** contract (raised from 102,400 by owner decision 2026-07-13; see PRINCIPLES #2) → **25.0 KB gz of headroom for the project's entire remaining life.** Claimants: this campaign
 (**≤ +5 KB gz**), strings/horns (**≤ +10 KB gz**), the 808 kit (~+2 KB gz), plus S0's unbudgeted JS and the
 deferred shared room stage — which *both* docs call the biggest cross-family gap and *neither* budgets.
 
-**These do not fit, and no gate currently forces the choice.** The allocation is an owner decision.
-**Making it is a precondition of P2** (the first WASM-touching phase) — not "#46 is a precondition",
-which is now satisfied and would let the first new byte land with the ceiling still unallocated.
+**With the ceiling raised to 150 KB they now fit**, with ~48 KB gz still spare after every named claimant. The audit enforces it; do not restate the number.
 
 The audio-thread constitution is unchanged: no allocation, no locks, no denormals, bounded work per
 sample. #49 authorizes more *cost*, not an exemption.

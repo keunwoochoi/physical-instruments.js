@@ -1,7 +1,7 @@
 # String and horn families: the continuously-excited instrument
 
 Date: 2026-07-13
-Status: draft (**revision 2**) — proposes scope, anchor instruments, and a staged plan for issue #50.
+Status: draft (**revision 3**) — proposes scope, anchor instruments, and a staged plan for issue #50.
 
 Revision 2 answers a 7/7 blocking persona panel on revision 1. "What revision 1 got wrong" is at the
 end; if you reviewed r1, start there.
@@ -449,16 +449,12 @@ Requirements, not measurements. **Scalar engine — no SIMD exists.**
 | Degradation | voice stealing **with a release ramp** (time constant and click-gate threshold declared; a voice currently receiving expression is stolen last); expression applied at frame offsets, **coalescing only on ring saturation**; **note lifecycle undroppable**; every coalesce or drop **reported**, never silent |
 
 **Bundle — the composed number.** All-in is **76,803 B gz** (wasm 66,722 + core 4,715 + worklet 2,682 +
-midi 2,684) against the 102,400 B contract → **25.0 KB gz of headroom for the project's entire remaining
+midi 2,684) against the **153,600 B** contract (raised from 102,400 by owner decision 2026-07-13; see PRINCIPLES #2) → **25.0 KB gz of headroom for the project's entire remaining
 life.** Owned by `scripts/audit/bundle-size-audit.sh` (#46; repaired in #63 — it had omitted `packages/midi`
 entirely and was red-by-construction in CI). **Cite the script; never restate these from memory.**
 
 Claimants: this campaign (≤ +10 KB gz), the piano (≤ +5), the 808 kit (~+2), S0's JS (≤ ~2.4), and the
-deferred shared room stage that both docs want and neither budgets. **These do not fit.**
-
-**The allocation decision is itself the precondition of S1** — *not* "#46 is a precondition", which is now
-satisfied and would let the first new byte of WASM land with the ceiling still unallocated. It is an owner
-decision and nothing currently forces it.
+deferred shared room stage that both docs want and neither budgets. **With the ceiling raised to 150 KB (owner decision, 2026-07-13) they now fit**, with ~48 KB gz spare after every named claimant — including the shared room stage that neither doc had budgeted. The audit enforces it.
 
 ## Risks
 
