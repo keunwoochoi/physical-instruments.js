@@ -24,6 +24,8 @@
 - Every implementation PR starts from or adopts a GitHub issue. Use a `type(scope): imperative summary` title; the issue body owns motivation, evidence, desired outcome, scope and constraints, acceptance criteria, and validation expectations. Use the forms in `.github/ISSUE_TEMPLATE/`.
 - The issue is the live control plane: assignment records ownership; comments record material decisions and blockers; checkboxes record acceptance. Do not create local TODO, backlog, plan-status, or per-PR decision-log files.
 - Open implementation PRs as drafts. The PR body links the source issue with `Closes #N`, states impact and validation, names review focus, and routes every separable follow-up to an issue. Use `.github/pull_request_template.md`.
+- Evidence is immutable-input-bound: every current claim names the exact head SHA or artifact seal it validates. After any head change, rerun the evidence or label it historical before requesting review.
+- When the owner asks to wrap a progressive session, stop new scope and use `skills/wrap-session/SKILL.md` to reconcile published stacks, evidence freshness, exact heads, blockers, and resume points.
 - Keep durable architecture and policy in their owner docs. Keep changing plans, status, review evidence, and completion state in GitHub.
 
 ## Routes
@@ -36,6 +38,7 @@
 | Evaluating sound | `skills/run-evals/SKILL.md` | `evals/README.md` |
 | Porting third-party code | `skills/port-audit/SKILL.md` | — |
 | New feature > 1 PR | `skills/new-design-doc/SKILL.md` | `agentic-docs/design/TEMPLATE.md` |
+| Progressive or stacked session wrap | `skills/wrap-session/SKILL.md` | `skills/finalize-pr/SKILL.md` for any potentially merge-ready PR |
 | Any issue or PR | `.github/ISSUE_TEMPLATE/` | `.github/pull_request_template.md` when opening or finalizing a PR |
 
 ## Repo map

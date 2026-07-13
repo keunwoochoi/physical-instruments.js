@@ -12,13 +12,17 @@ Closes #
 <!-- Small list of concrete changes; do not restate the diff line by line. -->
 
 ## Validation
-<!-- What was driven for real (playground listen, offline render, dsp-bench numbers), not just green tests -->
+<!-- What was driven for real at the exact current head (playground listen, offline render, dsp-bench numbers), not just green tests -->
+
+## Evidence freshness
+<!-- Exact current head SHA derived with `git rev-parse HEAD` and verified against the PR `headRefOid`; current CI/test/build/bench/panel/campaign/listening evidence; predecessor evidence explicitly labeled historical; skipped or unavailable gates stated as missing, never implied pass. -->
 
 ## Review focus
 <!-- Files, assumptions, risks, listening timestamps, or evidence that deserve concentrated review. -->
 
 ## Gates
 - [ ] CI green (incl. harness-audit)
+- [ ] Every validation claim is current-head or explicitly labeled historical
 - [ ] `dsp-bench` result attached (DSP changes)
 - [ ] `panel-review` comment on current head SHA (instrument/API/packaging changes)
 - [ ] Licensing ledger updated (ports)

@@ -1,0 +1,32 @@
+:root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #12100e; color: #f4eee8; }
+* { box-sizing: border-box; }
+body { margin: 0; background: radial-gradient(circle at 20% 0, #30251d, #12100e 40rem); }
+main { width: min(900px, calc(100% - 2rem)); margin: 3rem auto 6rem; }
+header { margin-bottom: 2rem; }
+h1 { font-size: clamp(2.2rem, 7vw, 4.8rem); line-height: .95; margin: .25rem 0 1rem; letter-spacing: -.05em; }
+h2 { margin-top: 0; }
+.eyebrow { color: #e88c55; text-transform: uppercase; letter-spacing: .16em; font-size: .72rem; font-weight: 700; }
+.notice { border-left: 3px solid #e88c55; padding-left: 1rem; color: #d8c8ba; }
+.card { background: rgba(35, 29, 25, .94); border: 1px solid #4a3b31; border-radius: 18px; padding: clamp(1rem, 4vw, 2rem); box-shadow: 0 24px 70px #0008; }
+.card + .card { margin-top: 1rem; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1rem; }
+label { display: grid; gap: .35rem; color: #d8c8ba; font-size: .84rem; }
+input, select, textarea { width: 100%; background: #15120f; color: #fff; border: 1px solid #59483c; border-radius: 8px; padding: .75rem; font: inherit; }
+.check { display: flex; align-items: center; gap: .6rem; margin: 1.2rem 0; }
+.check input { width: auto; }
+button { border: 0; border-radius: 999px; background: #e66f2d; color: #160d08; font-weight: 800; padding: .75rem 1.2rem; cursor: pointer; }
+button.secondary { background: #3b312a; color: #fff; margin-left: .5rem; }
+button:disabled { opacity: .35; cursor: not-allowed; }
+details { margin-top: 1.2rem; }
+summary { cursor: pointer; color: #d8c8ba; }
+details label { margin: .8rem 0; }
+.players { display: grid; gap: 1rem; margin: 1.3rem 0; }
+.sample { background: #171310; padding: 1rem; border-radius: 12px; border: 1px solid #44372e; }
+.sample header { display: flex; justify-content: space-between; margin: 0 0 .6rem; }
+.sample .play { width: 100%; }
+.rating { display: grid; grid-template-columns: 3rem 1fr 3rem; align-items: center; gap: .8rem; margin-top: .7rem; }
+.rating input { padding: 0; accent-color: #e66f2d; }
+.choices { display: flex; flex-wrap: wrap; gap: .6rem; margin: 1rem 0; }
+.choices button.selected { outline: 3px solid #f6c6a8; }
+.progress { color: #e88c55; font-size: .8rem; }
+#status { min-height: 1.2rem; color: #d8c8ba; }

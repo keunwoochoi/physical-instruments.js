@@ -1,139 +1,411 @@
 {
-  "_doc": "Reference-corpus analysis constraints (audit 2026-07-12). Corpus provenance and license decisions are owned by agentic-docs/licensing.md; audio remains scratchpad-only. This file owns known limitations: compare.py applies mask_after_s and fail-closed invalid_axes, then surfaces the resolved contract in its report.",
+  "schema_version": "2.0.0",
+  "description": "Stable exact-asset reference contracts. Paths locate private audio; IDs and canonical digests own identity. Unverified contracts are inventory only and cannot run.",
   "corpora": [
     {
-      "match": "references/piano-salamander",
-      "corpus": "Salamander Grand V3 (freepats mirror)",
+      "id": "corpus.equation.loop-pilot-v1",
+      "status": "verified",
+      "name": "Repository equation-owned loop pilot",
+      "license": "MIT OR Apache-2.0",
+      "provenance_owner": "scripts/dev/generate_loop_goldens.py",
+      "notes": "Deterministic synthetic audio generated from repository-owned equations; never human/reference-corpus evidence."
+    },
+    {
+      "id": "corpus.salamander.grand-v3-freepats.v1",
+      "status": "verified",
+      "name": "Salamander Grand Piano V3 exact attack campaign assets",
       "license": "CC-BY-3.0",
-      "sr": 48000,
-      "level_normalized": false,
-      "notes": "16 velocity layers, natural decays ~16 s. Trustworthy full-band. Corpus samples every 3rd key only."
+      "provenance_owner": "evals/reference-receipts/piano-salamander-attack-v1.json",
+      "notes": "The committed receipt owns exact upstream asset hashes, canonical operations, paths, and canonical digests for four attack cases."
     },
     {
-      "match": "references/guitar-acoustic",
-      "corpus": "NSynth guitar_acoustic",
-      "license": "CC-BY-4.0",
-      "sr": 16000,
-      "level_normalized": true,
-      "mask_after_s": 3.3,
-      "invalid_axes": {
-        "lufs": "Corpus files are level-normalized; absolute loudness is not preserved.",
-        "velocity_loudness": "Level normalization destroys the recorded velocity-to-loudness curve.",
-        "release": "A hard release gate follows note-off; release behavior is not natural."
-      },
-      "notes": "BLIND >8 kHz (ultrasonic gate is the only guard). Level-normalized: velocity->loudness curves are FAKE here, fit velocity->timbre only. Hard release gate ~0.3 s after the 3 s note-off: masked."
+      "id": "corpus.legacy.acoustic-drums.v1",
+      "status": "unverified",
+      "name": "Legacy mixed acoustic-drum case paths",
+      "license": null,
+      "provenance_owner": "agentic-docs/design/2026-07-12-acoustic-drum-reference-corpus-v2.md",
+      "notes": "Legacy drumkit paths can mix Virtuosity, DRSKit, MuldjordKit, Naked Drums, or other material.",
+      "reason": "Source family, license, microphone role, and canonical digest are ambiguous."
     },
     {
-      "match": "references/guitar-electric",
-      "corpus": "NSynth guitar_electronic",
-      "license": "CC-BY-4.0",
-      "sr": 16000,
-      "level_normalized": true,
-      "mask_after_s": 3.3,
-      "invalid_axes": {
-        "lufs": "Corpus files are level-normalized; absolute loudness is not preserved.",
-        "velocity_loudness": "Level normalization destroys the recorded velocity-to-loudness curve.",
-        "release": "A hard release gate follows note-off; release behavior is not natural."
-      },
-      "notes": "Same NSynth caveats as guitar-acoustic."
+      "id": "corpus.legacy.guitars.v1",
+      "status": "unverified",
+      "name": "Legacy mixed guitar case paths",
+      "license": null,
+      "provenance_owner": "agentic-docs/licensing.md#reference-audio-match-reference-loop",
+      "notes": "Legacy paths can conflate NSynth and FreePats/other sources, especially distorted guitar.",
+      "reason": "Exact source example and canonical digest are not committed per case."
     },
     {
-      "match": "references/bass",
-      "corpus": "NSynth bass",
-      "license": "CC-BY-4.0",
-      "sr": 16000,
-      "level_normalized": true,
-      "mask_after_s": 3.3,
-      "invalid_axes": {
-        "lufs": "Corpus files are level-normalized; absolute loudness is not preserved.",
-        "velocity_loudness": "Level normalization destroys the recorded velocity-to-loudness curve.",
-        "release": "A hard release gate follows note-off; release behavior is not natural."
-      },
-      "notes": "Same NSynth caveats."
+      "id": "corpus.legacy.bass.v1",
+      "status": "unverified",
+      "name": "Legacy mixed bass case paths",
+      "license": null,
+      "provenance_owner": "agentic-docs/licensing.md#reference-audio-match-reference-loop",
+      "notes": "Legacy paths conflict between NSynth labels and Karoryfer/FreePats campaign sources.",
+      "reason": "Exact source example and canonical digest are not committed per case."
     },
     {
-      "match": "references/mallet",
-      "corpus": "NSynth mallet",
-      "license": "CC-BY-4.0",
-      "sr": 16000,
-      "level_normalized": true,
-      "mask_after_s": 3.3,
-      "invalid_axes": {
-        "lufs": "Corpus files are level-normalized; absolute loudness is not preserved.",
-        "velocity_loudness": "Level normalization destroys the recorded velocity-to-loudness curve.",
-        "release": "A hard release gate follows note-off; release behavior is not natural."
-      },
-      "notes": "Same NSynth caveats."
+      "id": "corpus.a43.freesound-pack-532.v1",
+      "status": "verified",
+      "name": "A43 original Roland TR-808 isolated voices, Freesound pack 532",
+      "license": "Sampling+ 1.0",
+      "provenance_owner": "agentic-docs/licensing.md#reference-audio-match-reference-loop",
+      "notes": "Issue #29 owns exact corrected canonical digests; sources are edited lossy previews with voice-specific invalid axes."
     },
     {
-      "match": "references/epiano-wurli",
-      "corpus": "Greg Sullivan Wurlitzer EP200 (sfzinstruments/GregSullivan.E-Pianos)",
-      "license": "CC-BY-3.0",
-      "sr": 44100,
-      "level_normalized": true,
-      "invalid_axes": {
-        "lufs": "Corpus files are peak-normalized; absolute loudness is not preserved.",
-        "velocity_loudness": "Peak normalization destroys the recorded velocity-to-loudness curve.",
-        "decay": "Tails are hard-trimmed while ringing.",
-        "release": "Tails are hard-trimmed while ringing."
-      },
-      "notes": "4 velocity layers (pp/mp/f/ff), full-band, trustworthy attack + harmonic balance. Peak-normalized: velocity->loudness FAKE, fit velocity->timbre only. Tails hard-trimmed while ringing (pp files down to 0.36 s): decay/t60/release axes untrustworthy. ~5 Hz AM on low notes is the built-in amp tremolo (preset effect, not a fit target)."
-    },
-    {
-      "match": "references/epiano-pianet",
-      "corpus": "Greg Sullivan Pianet T (same repo)",
-      "license": "CC-BY-3.0",
-      "sr": 44100,
-      "level_normalized": true,
-      "invalid_axes": {
-        "attack": "Pianet sticky-pad excitation is not an electric-piano hammer reference.",
-        "velocity_loudness": "Only two layers are available; do not infer a velocity curve."
-      },
-      "notes": "2 layers only; long natural decays (~35 s low). Sticky-pad excitation, no hammer: decay-shape sanity only, never attack fitting."
-    },
-    {
-      "match": "references/epiano",
-      "corpus": "NSynth keyboard_electronic",
-      "license": "CC-BY-4.0",
-      "sr": 16000,
-      "level_normalized": true,
-      "mask_after_s": 3.3,
-      "invalid_axes": {
-        "lufs": "Corpus files are level-normalized; absolute loudness is not preserved.",
-        "velocity_loudness": "Level normalization destroys the recorded velocity-to-loudness curve.",
-        "release": "A hard release gate follows note-off; release behavior is not natural."
-      },
-      "notes": "Same NSynth caveats as guitar-acoustic. Sources triaged for tine/reed-EP character (SOURCES.txt): 098/002/001 bark ladders, 069 two-stage decay; 003 has 5.4 Hz tremolo (held out)."
-    },
-    {
-      "match": "references/kick",
-      "corpus": "DRSKit + MuldjordKit + NakedDrums (DrumGizmo/sfz) + VSCO-2-CE concert BD",
-      "license": "CC-BY-4.0 / CC0-1.0 (per SOURCES.txt)",
-      "sr": 44100,
-      "level_normalized": false,
-      "notes": "Close-mic, trustworthy full-band. Concert BD is an openness ANCHOR, not a kit kick: expect structural crest-gate reds against it (slow bloom); pair primary comparisons with the kit-kick refs."
-    },
-    {
-      "match": "references/cymbals",
-      "corpus": "virtuosity-drums + VSCO-2-CE",
+      "id": "corpus.virtuosity-drums.jazz-kick-close.v1",
+      "status": "verified",
+      "name": "Virtuosity Drums exact jazz-kick close-mic velocity assets",
       "license": "CC0-1.0",
-      "sr": 44100,
+      "provenance_owner": "evals/reference-receipts/drums-jazz-virtuosity-kick-v1.json",
+      "notes": "The committed receipt owns exact upstream asset hashes, close-mic role, canonical operations, paths, and canonical digests for soft, medium, and hard jazz-kick cases."
+    }
+  ],
+  "contracts": [
+    {
+      "id": "ref.equation.loop-pilot-v1.16000",
+      "corpus_id": "corpus.equation.loop-pilot-v1",
+      "status": "verified",
+      "reference_path": "references/equation-loop-pilot-v1/reference-16000.wav",
+      "canonical_sha256": "7045dd6236640746445381ae3160b99077871b78bec792c34d729b88dc380e18",
+      "sample_rate": 16000,
       "level_normalized": false,
-      "invalid_axes": {
-        "tail": "Overhead references contain room bleed; tail similarity is not an isolated cymbal-decay measure."
-      },
-      "notes": "Overhead mics carry room bleed; attack-window axes are more trustworthy than tails."
+      "invalid_axes": {},
+      "notes": "Equation-owned mono IEEE-float fixture resampled deterministically to 16000 Hz."
     },
     {
-      "match": "references/drumkit",
-      "corpus": "virtuosity-drums",
-      "license": "CC0-1.0",
-      "sr": 44100,
+      "id": "ref.equation.loop-pilot-v1.44100",
+      "corpus_id": "corpus.equation.loop-pilot-v1",
+      "status": "verified",
+      "reference_path": "references/equation-loop-pilot-v1/reference-44100.wav",
+      "canonical_sha256": "95ce1a5c8bc0eabcbc9ea94292d87a494df7f7894253ca83fbf2a39142c9826e",
+      "sample_rate": 44100,
+      "level_normalized": false,
+      "invalid_axes": {},
+      "notes": "Equation-owned mono IEEE-float fixture resampled deterministically to 44100 Hz."
+    },
+    {
+      "id": "ref.equation.loop-pilot-v1.48000",
+      "corpus_id": "corpus.equation.loop-pilot-v1",
+      "status": "verified",
+      "reference_path": "references/equation-loop-pilot-v1/reference-48000.wav",
+      "canonical_sha256": "0a3664c121555f0c9e55d85ed0fca97ab72194b9525e65f5a82b71f95a322059",
+      "sample_rate": 48000,
+      "level_normalized": false,
+      "invalid_axes": {},
+      "notes": "Equation-owned mono IEEE-float fixture resampled deterministically to 48000 Hz."
+    },
+    {
+      "id": "ref.salamander.grand-v3.a1-v12.attack-canon-v1",
+      "corpus_id": "corpus.salamander.grand-v3-freepats.v1",
+      "status": "verified",
+      "reference_path": "references/piano-salamander/canonical/A1-mf.wav",
+      "canonical_sha256": "bba308985d65e792212bf3f01aaf2766276a05f0b85fe1474f04920db919f7f8",
+      "sample_rate": 48000,
+      "level_normalized": false,
+      "invalid_axes": {},
+      "notes": "Exact source and canonicalization identity owned by receipt.salamander.grand-v3.attack-v1 entry A1v12.flac."
+    },
+    {
+      "id": "ref.salamander.grand-v3.c4-v2.attack-canon-v1",
+      "corpus_id": "corpus.salamander.grand-v3-freepats.v1",
+      "status": "verified",
+      "reference_path": "references/piano-salamander/canonical/C4-pp.wav",
+      "canonical_sha256": "3884d4936969f254a9756618cd0e8bb2b795ce62183a2ea465f5199fa6614b3c",
+      "sample_rate": 48000,
+      "level_normalized": false,
+      "invalid_axes": {},
+      "notes": "Exact source and canonicalization identity owned by receipt.salamander.grand-v3.attack-v1 entry C4v2.flac."
+    },
+    {
+      "id": "ref.salamander.grand-v3.c4-v16.attack-canon-v1",
+      "corpus_id": "corpus.salamander.grand-v3-freepats.v1",
+      "status": "verified",
+      "reference_path": "references/piano-salamander/canonical/C4-ff.wav",
+      "canonical_sha256": "14ac208246645106af9eb5cc10a3d3eb39c1ac577d5e05c9425b4de6e1509d7b",
+      "sample_rate": 48000,
+      "level_normalized": false,
+      "invalid_axes": {},
+      "notes": "Exact source and canonicalization identity owned by receipt.salamander.grand-v3.attack-v1 entry C4v16.flac."
+    },
+    {
+      "id": "ref.salamander.grand-v3.c5-v12.cs5-attack-canon-v1",
+      "corpus_id": "corpus.salamander.grand-v3-freepats.v1",
+      "status": "verified",
+      "reference_path": "references/piano-salamander/canonical/Cs5-mf.wav",
+      "canonical_sha256": "c572f0601cfd4114a430b5b21079bcdcdecbf4b372c2d1cbc08cb07f2db98e83",
+      "sample_rate": 48000,
+      "level_normalized": false,
+      "invalid_axes": {},
+      "notes": "Exact source and canonicalization identity owned by receipt.salamander.grand-v3.attack-v1 entry C5v12.flac."
+    },
+    {
+      "id": "ref.legacy.drums.pop-kick-ff.v1",
+      "corpus_id": "corpus.legacy.acoustic-drums.v1",
+      "status": "unverified",
+      "reference_path": "references/drumkit/canonical/pop-kick-ff.wav",
+      "canonical_sha256": null,
+      "sample_rate": null,
+      "level_normalized": null,
+      "invalid_axes": {},
+      "notes": "Migrated from a path-only v1 case without asserting provenance.",
+      "reason": "Exact source asset, canonicalization recipe, and canonical SHA-256 are not committed."
+    },
+    {
+      "id": "ref.legacy.drums.rock-kick-mf.v1",
+      "corpus_id": "corpus.legacy.acoustic-drums.v1",
+      "status": "unverified",
+      "reference_path": "references/drumkit/canonical/rock-kick-mf.wav",
+      "canonical_sha256": null,
+      "sample_rate": null,
+      "level_normalized": null,
+      "invalid_axes": {},
+      "notes": "Migrated from a path-only v1 case without asserting provenance.",
+      "reason": "Exact source asset, canonicalization recipe, and canonical SHA-256 are not committed."
+    },
+    {
+      "id": "ref.legacy.drums.rock-snare-ff.v1",
+      "corpus_id": "corpus.legacy.acoustic-drums.v1",
+      "status": "unverified",
+      "reference_path": "references/drumkit/canonical/rock-snare-ff.wav",
+      "canonical_sha256": null,
+      "sample_rate": null,
+      "level_normalized": null,
+      "invalid_axes": {},
+      "notes": "Migrated from a path-only v1 case without asserting provenance.",
+      "reason": "Exact source asset, canonicalization recipe, and canonical SHA-256 are not committed."
+    },
+    {
+      "id": "ref.legacy.drums.jazz-brush-mf.v1",
+      "corpus_id": "corpus.legacy.acoustic-drums.v1",
+      "status": "unverified",
+      "reference_path": "references/drumkit/canonical/jazz-brush-mf.wav",
+      "canonical_sha256": null,
+      "sample_rate": null,
+      "level_normalized": null,
+      "invalid_axes": {},
+      "notes": "Migrated from a path-only v1 case without asserting provenance.",
+      "reason": "Exact source asset, canonicalization recipe, and canonical SHA-256 are not committed."
+    },
+    {
+      "id": "ref.legacy.guitars.nylon-a3-mf.v1",
+      "corpus_id": "corpus.legacy.guitars.v1",
+      "status": "unverified",
+      "reference_path": "references/guitar-acoustic/canonical/nylon-A3-mf.wav",
+      "canonical_sha256": null,
+      "sample_rate": null,
+      "level_normalized": null,
+      "invalid_axes": {},
+      "notes": "Migrated from a path-only v1 case without asserting provenance.",
+      "reason": "Exact source asset, canonicalization recipe, and canonical SHA-256 are not committed."
+    },
+    {
+      "id": "ref.legacy.guitars.steel-e2-ff.v1",
+      "corpus_id": "corpus.legacy.guitars.v1",
+      "status": "unverified",
+      "reference_path": "references/guitar-acoustic/canonical/steel-E2-ff.wav",
+      "canonical_sha256": null,
+      "sample_rate": null,
+      "level_normalized": null,
+      "invalid_axes": {},
+      "notes": "Migrated from a path-only v1 case without asserting provenance.",
+      "reason": "Exact source asset, canonicalization recipe, and canonical SHA-256 are not committed."
+    },
+    {
+      "id": "ref.legacy.guitars.electric-e2-mf.v1",
+      "corpus_id": "corpus.legacy.guitars.v1",
+      "status": "unverified",
+      "reference_path": "references/guitar-electric/canonical/clean-E2-mf.wav",
+      "canonical_sha256": null,
+      "sample_rate": null,
+      "level_normalized": null,
+      "invalid_axes": {},
+      "notes": "Migrated from a path-only v1 case without asserting provenance.",
+      "reason": "Exact source asset, canonicalization recipe, and canonical SHA-256 are not committed."
+    },
+    {
+      "id": "ref.legacy.guitars.distorted-a3-ff.v1",
+      "corpus_id": "corpus.legacy.guitars.v1",
+      "status": "unverified",
+      "reference_path": "references/guitar-electric/canonical/distorted-A3-ff.wav",
+      "canonical_sha256": null,
+      "sample_rate": null,
+      "level_normalized": null,
+      "invalid_axes": {},
+      "notes": "Migrated from a path-only v1 case without asserting provenance.",
+      "reason": "Exact source asset, canonicalization recipe, and canonical SHA-256 are not committed."
+    },
+    {
+      "id": "ref.legacy.bass.e1-mf.v1",
+      "corpus_id": "corpus.legacy.bass.v1",
+      "status": "unverified",
+      "reference_path": "references/bass/canonical/E1-mf.wav",
+      "canonical_sha256": null,
+      "sample_rate": null,
+      "level_normalized": null,
+      "invalid_axes": {},
+      "notes": "Migrated from a path-only v1 case without asserting provenance.",
+      "reason": "Exact source asset, canonicalization recipe, and canonical SHA-256 are not committed."
+    },
+    {
+      "id": "ref.legacy.bass.a1-pp.v1",
+      "corpus_id": "corpus.legacy.bass.v1",
+      "status": "unverified",
+      "reference_path": "references/bass/canonical/A1-pp.wav",
+      "canonical_sha256": null,
+      "sample_rate": null,
+      "level_normalized": null,
+      "invalid_axes": {},
+      "notes": "Migrated from a path-only v1 case without asserting provenance.",
+      "reason": "Exact source asset, canonicalization recipe, and canonical SHA-256 are not committed."
+    },
+    {
+      "id": "ref.legacy.bass.a1-ff.v1",
+      "corpus_id": "corpus.legacy.bass.v1",
+      "status": "unverified",
+      "reference_path": "references/bass/canonical/A1-ff.wav",
+      "canonical_sha256": null,
+      "sample_rate": null,
+      "level_normalized": null,
+      "invalid_axes": {},
+      "notes": "Migrated from a path-only v1 case without asserting provenance.",
+      "reason": "Exact source asset, canonicalization recipe, and canonical SHA-256 are not committed."
+    },
+    {
+      "id": "ref.legacy.bass.d2-mf.v1",
+      "corpus_id": "corpus.legacy.bass.v1",
+      "status": "unverified",
+      "reference_path": "references/bass/canonical/D2-mf.wav",
+      "canonical_sha256": null,
+      "sample_rate": null,
+      "level_normalized": null,
+      "invalid_axes": {},
+      "notes": "Migrated from a path-only v1 case without asserting provenance.",
+      "reason": "Exact source asset, canonicalization recipe, and canonical SHA-256 are not committed."
+    },
+    {
+      "id": "ref.a43.freesound-9698.kick-short.canon-v2",
+      "corpus_id": "corpus.a43.freesound-pack-532.v1",
+      "status": "verified",
+      "reference_path": "references/drums-808-original/a43/canonical/kick-short-9698.wav",
+      "canonical_sha256": "6e3d0f4cec53f431141d3aa3a0b9deb9f016ede4a316a01c64edd675a8aeb32f",
+      "sample_rate": 48000,
       "level_normalized": false,
       "invalid_axes": {
-        "tail": "Overhead references contain room bleed; tail similarity is not an isolated instrument-decay measure."
+        "lufs": "Preview gain and hardware output setting are undocumented; absolute loudness is not a fit target.",
+        "velocity_loudness": "Only one hit at undocumented control settings is available.",
+        "decay": "Edited short-kick tail is not a neutral decay-control reference.",
+        "release": "The source is an edited one-shot."
       },
-      "notes": "Room bleed in overheads (see cymbals)."
+      "notes": "Exact corrected canon-v2 digest from issue #29; trust only axes not explicitly invalidated."
+    },
+    {
+      "id": "ref.a43.freesound-11378.snare.canon-v2",
+      "corpus_id": "corpus.a43.freesound-pack-532.v1",
+      "status": "verified",
+      "reference_path": "references/drums-808-original/a43/canonical/snare-11378.wav",
+      "canonical_sha256": "0b5d938cb1822c07d046f483720f8d748a166952d93dac90ab834516d06b69a4",
+      "sample_rate": 48000,
+      "level_normalized": false,
+      "invalid_axes": {
+        "lufs": "Preview gain and hardware output setting are undocumented; absolute loudness is not a fit target.",
+        "velocity_loudness": "Only one hit at undocumented control settings is available.",
+        "decay": "The author discloses further editing and processing in Bias Peak.",
+        "release": "The source is an edited one-shot."
+      },
+      "notes": "Exact corrected canon-v2 digest from issue #29; trust only axes not explicitly invalidated."
+    },
+    {
+      "id": "ref.a43.freesound-9877.closed-hat.canon-v2",
+      "corpus_id": "corpus.a43.freesound-pack-532.v1",
+      "status": "verified",
+      "reference_path": "references/drums-808-original/a43/canonical/closed-hat-9877.wav",
+      "canonical_sha256": "fcd3e19a8a38f765f30349c2afa0cc8312c07d5bdd6dfda08c57490d324d30cc",
+      "sample_rate": 48000,
+      "level_normalized": false,
+      "invalid_axes": {
+        "lufs": "Preview gain and hardware output setting are undocumented; absolute loudness is not a fit target.",
+        "velocity_loudness": "Only one hit at undocumented control settings is available."
+      },
+      "notes": "Exact corrected canon-v2 digest from issue #29; trust only axes not explicitly invalidated."
+    },
+    {
+      "id": "ref.a43.freesound-9697.maraca.canon-v2",
+      "corpus_id": "corpus.a43.freesound-pack-532.v1",
+      "status": "verified",
+      "reference_path": "references/drums-808-original/a43/canonical/maraca-9697.wav",
+      "canonical_sha256": "a7ab479cb41d562d1001f2151324567aad25157a1cd34ce2158c6372708e7ae3",
+      "sample_rate": 48000,
+      "level_normalized": false,
+      "invalid_axes": {
+        "lufs": "Preview gain and hardware output setting are undocumented; absolute loudness is not a fit target.",
+        "velocity_loudness": "Only one hit at undocumented control settings is available.",
+        "decay": "The edited 35 ms source cannot independently establish a natural tail.",
+        "release": "The source is an edited one-shot."
+      },
+      "notes": "Exact corrected canon-v2 digest from issue #29; trust only axes not explicitly invalidated."
+    },
+    {
+      "id": "ref.a43.freesound-9878.open-hat.canon-v2",
+      "corpus_id": "corpus.a43.freesound-pack-532.v1",
+      "status": "verified",
+      "reference_path": "references/drums-808-original/a43/canonical/open-hat-9878.wav",
+      "canonical_sha256": "a85e47ccb63fd5cbff51f7e3d9db20c26e29a928e916d92a186abf9e4b25988a",
+      "sample_rate": 48000,
+      "level_normalized": false,
+      "invalid_axes": {
+        "lufs": "Preview gain and hardware output setting are undocumented; absolute loudness is not a fit target.",
+        "velocity_loudness": "Only one hit at undocumented control settings is available."
+      },
+      "notes": "Exact corrected canon-v2 digest from issue #29; trust only axes not explicitly invalidated."
+    },
+    {
+      "id": "ref.a43.freesound-9780.cowbell.canon-v2",
+      "corpus_id": "corpus.a43.freesound-pack-532.v1",
+      "status": "verified",
+      "reference_path": "references/drums-808-original/a43/canonical/cowbell-9780.wav",
+      "canonical_sha256": "05d8766d09088a0358102399af216d1d36c6ddc6c6e308012ffed086e77f5ced",
+      "sample_rate": 48000,
+      "level_normalized": false,
+      "invalid_axes": {
+        "lufs": "Preview gain and hardware output setting are undocumented; absolute loudness is not a fit target.",
+        "velocity_loudness": "Only one hit at undocumented control settings is available."
+      },
+      "notes": "Exact corrected canon-v2 digest from issue #29; trust only axes not explicitly invalidated."
+    },
+    {
+      "id": "ref.virtuosity-drums.kick-close-snoff-vl1-rr1.canon-v1",
+      "corpus_id": "corpus.virtuosity-drums.jazz-kick-close.v1",
+      "status": "verified",
+      "reference_path": "references/jazz-kick-virtuosity/canonical/jazz-kick-soft.wav",
+      "canonical_sha256": "6713a4823bb778957a04b72ee0b580beb2b08ca7c1f08660d2d8323af4754c17",
+      "sample_rate": 48000,
+      "level_normalized": false,
+      "invalid_axes": {},
+      "notes": "Exact source and canonicalization identity owned by receipt.virtuosity-drums.jazz-kick-close-v1 entry Samples__kickmic__kick__kickmic_kick_snoff_vl1_rr1.flac."
+    },
+    {
+      "id": "ref.virtuosity-drums.kick-close-snoff-vl3-rr1.canon-v1",
+      "corpus_id": "corpus.virtuosity-drums.jazz-kick-close.v1",
+      "status": "verified",
+      "reference_path": "references/jazz-kick-virtuosity/canonical/jazz-kick-mf.wav",
+      "canonical_sha256": "001c0b203d04bbc1c21654fe5e95e526d039a25bcbb5ee9b6bc7aaa2932e891d",
+      "sample_rate": 48000,
+      "level_normalized": false,
+      "invalid_axes": {},
+      "notes": "Exact source and canonicalization identity owned by receipt.virtuosity-drums.jazz-kick-close-v1 entry Samples__kickmic__kick__kickmic_kick_snoff_vl3_rr1.flac."
+    },
+    {
+      "id": "ref.virtuosity-drums.kick-close-snoff-vl4-rr1.canon-v1",
+      "corpus_id": "corpus.virtuosity-drums.jazz-kick-close.v1",
+      "status": "verified",
+      "reference_path": "references/jazz-kick-virtuosity/canonical/jazz-kick-ff.wav",
+      "canonical_sha256": "1a21facffa9659c768f78c8aac83813c2f4d32fbd948bbdc9f42a3e657c01797",
+      "sample_rate": 48000,
+      "level_normalized": false,
+      "invalid_axes": {},
+      "notes": "Exact source and canonicalization identity owned by receipt.virtuosity-drums.jazz-kick-close-v1 entry Samples__kickmic__kick__kickmic_kick_snoff_vl4_rr1.flac."
     }
   ]
 }

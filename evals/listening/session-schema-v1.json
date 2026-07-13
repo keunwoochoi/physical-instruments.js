@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://instruments.js/evals/listening/session-schema-v1.json",
+  "title": "instruments.js raw listener session v1",
+  "type": "object",
+  "required": ["schema_version", "experiment_id", "experiment_digest", "session_id", "evidence_kind", "listener", "setup", "randomization", "trial_order", "started_at", "submitted_at", "trials"],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "experiment_id": { "type": "string" },
+    "experiment_digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "session_id": { "type": "string", "minLength": 1 },
+    "evidence_kind": { "enum": ["human", "synthetic_harness_pilot"] },
+    "listener": {
+      "type": "object",
+      "required": ["id", "experience", "hearing_notes"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "experience": { "type": "string" },
+        "hearing_notes": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "setup": {
+      "type": "object",
+      "required": ["transducer", "environment", "device", "volume_check"],
+      "properties": {
+        "transducer": { "enum": ["headphones", "studio_monitors", "speakers", "other"] },
+        "environment": { "type": "string", "minLength": 1 },
+        "device": { "type": "string", "minLength": 1 },
+        "volume_check": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "randomization": {
+      "type": "object",
+      "required": ["algorithm", "seed"],
+      "properties": {
+        "algorithm": { "const": "xorshift32-fisher-yates-v1" },
+        "seed": { "type": "integer", "minimum": 0, "maximum": 4294967295 }
+      },
+      "additionalProperties": false
+    },
+    "trial_order": { "type": "array", "items": { "type": "string" }, "uniqueItems": true, "minItems": 1 },
+    "started_at": { "type": "string" },
+    "submitted_at": { "type": "string" },
+    "trials": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["trial_id", "protocol", "presentation", "response", "play_counts", "playback"],
+        "properties": {
+          "trial_id": { "type": "string" },
+          "protocol": { "enum": ["ab", "abx", "mushra"] },
+          "presentation": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+          "response": { "type": "object" },
+          "play_counts": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
+          "playback": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "required": ["starts", "completed", "listened_ms"],
+              "properties": {
+                "starts": { "type": "integer", "minimum": 0 },
+                "completed": { "type": "integer", "minimum": 0 },
+                "listened_ms": { "type": "integer", "minimum": 0 }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

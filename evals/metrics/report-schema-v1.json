@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://instruments.js/evals/metrics/report-schema-v1.json",
-  "title": "instruments.js loop metric report v1",
+  "$id": "https://instruments.js/evals/metrics/report-schema-v1.2.json",
+  "title": "instruments.js loop metric report v1.2",
   "type": "object",
   "required": [
     "schema_version",
@@ -21,10 +21,11 @@
     "trajectories",
     "harmonic_partials",
     "stereo",
-    "axis_validity"
+    "axis_validity",
+    "reference_contract"
   ],
   "properties": {
-    "schema_version": { "const": "1.1.0" },
+    "schema_version": { "const": "1.2.0" },
     "metric_version": { "type": "string", "minLength": 1 },
     "interpretation": { "enum": ["trusted", "untrusted"] },
     "inputs": {
@@ -44,6 +45,26 @@
     "seconds": { "type": "number", "minimum": 0 },
     "lufs": { "type": "object" },
     "logmel_dist": { "type": "object" },
+    "reference_contract": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["id", "corpus_id", "status", "declared_path", "reference_sha256", "contract_sha256", "registry_sha256", "registry_schema_sha256"],
+          "properties": {
+            "id": { "type": "string" },
+            "corpus_id": { "type": "string" },
+            "status": { "const": "verified" },
+            "declared_path": { "type": "string" },
+            "reference_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "contract_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "registry_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "registry_schema_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
     "mr_stft": {
       "type": "object",
       "required": ["w256", "w1024", "w4096", "mean", "alignment"],
@@ -59,7 +80,8 @@
             "status": { "enum": ["applied", "rejected", "not_evaluated"] },
             "lag_samples": { "type": "integer" },
             "lag_ms": { "type": "number" },
-            "max_lag_ms": { "type": "number", "minimum": 0 }
+            "max_lag_ms": { "type": "number", "minimum": 0 },
+            "reason": { "type": "string" }
           }
         }
       }

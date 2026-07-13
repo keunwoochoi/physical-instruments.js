@@ -26,8 +26,8 @@ from scipy.signal import resample_poly
 import soundfile as sf
 
 
-REPORT_SCHEMA_VERSION = "1.1.0"
-METRIC_VERSION = "2026.07.12-l3"
+REPORT_SCHEMA_VERSION = "1.2.0"
+METRIC_VERSION = "2026.07.12-l3.3"
 SCHEMA_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "evals", "metrics", "report-schema-v1.json"))
 _REPORT_SCHEMA = None
 
@@ -52,6 +52,8 @@ def validate_report(report):
 
 def load_audio(path):
     x, sr = sf.read(path, always_2d=True)
+    if x.shape[0] == 0:
+        raise ValueError(f"audio file has zero frames: {path}")
     return x.astype(np.float64), sr
 
 
@@ -89,11 +91,11 @@ def lufs(x, sr):
 # bins 1-2 of the default 1024-pt STFT and its beater attack is smeared by 21 ms
 # windows — so the kick profile analyzes TWICE: a fine-time view for the attack
 # and a long-window low-frequency view for the fundamental/tail.
-COMMON_THRESHOLDS = {"max_sample_jump": 1.6, "max_clipping_occupancy": 1e-4, "max_peak": 1.05, "max_ultrasonic_ratio": 0.05, "max_dc_ratio": 0.01, "max_release_jump": 0.6, "max_warp_ms": 30.0}
+COMMON_THRESHOLDS = {"max_sample_jump": 1.6, "max_clipping_occupancy": 1e-4, "max_peak": 1.05, "max_ultrasonic_ratio": 0.05, "max_dc_ratio": 0.01, "max_release_jump": 0.6, "max_warp_ms": 30.0, "trajectory_attack_end_ms": 50.0, "trajectory_body_end_ms": 500.0}
 PROFILES = {
     "default": {"n": 1024, "hop": 256, "mels": 64, "fmin": 30.0, "thresholds": COMMON_THRESHOLDS},
     "kick":    {"n": 256,  "hop": 64,  "mels": 48, "fmin": 25.0,
-                "thresholds": {**COMMON_THRESHOLDS, "max_warp_ms": 10.0},
+                "thresholds": {**COMMON_THRESHOLDS, "max_warp_ms": 10.0, "trajectory_attack_end_ms": 30.0, "trajectory_body_end_ms": 300.0},
                 "lf": {"n": 4096, "hop": 512, "mels": 40, "fmin": 20.0, "fmax": 400.0}},
     "cymbal":  {"n": 2048, "hop": 512, "mels": 72, "fmin": 100.0, "thresholds": {**COMMON_THRESHOLDS, "max_ultrasonic_ratio": 0.12}},
     "pitched": {"n": 1024, "hop": 256, "mels": 64, "fmin": 30.0, "thresholds": COMMON_THRESHOLDS},
@@ -180,7 +182,7 @@ def logmel_dist(xr, xf, sr, perceptual=True, **kw):
     }
 
 
-def onset_align(xr, xf, sr, max_lag_s=0.012, search_s=0.05):
+def onset_align(xr, xf, sr, max_lag_s=0.012, search_s=0.1):
     """Bounded onset-envelope alignment; report rather than hide the shift.
 
     Alignment may remove capture latency, but it must not warp an attack. A lag
@@ -190,18 +192,28 @@ def onset_align(xr, xf, sr, max_lag_s=0.012, search_s=0.05):
     max_lag = max(1, int(max_lag_s * sr))
     if n <= 64:
         return xr, xf, {"status": "not_evaluated", "lag_samples": 0, "lag_ms": 0.0,
-                        "max_lag_ms": round(max_lag_s * 1000, 3)}
+                        "max_lag_ms": round(max_lag_s * 1000, 3),
+                        "reason": "insufficient_samples"}
     # Threshold a short moving-RMS envelope instead of raw periodic waveform
     # correlation. Raw correlation can choose a one-period or window-edge peak
     # even for identical pitched notes with leading silence.
     def onset(x):
         seg = x[:n]
+        if float(np.std(seg)) <= 1e-12:
+            return None
         width = max(4, int(0.0005 * sr))
         energy = np.convolve(seg * seg, np.ones(width) / width, mode="same")
+        if float(energy.max()) <= 1e-18 or float(np.ptp(energy)) <= 1e-18:
+            return None
         threshold = max(1e-16, 0.0004 * float(energy.max()))  # (2% amplitude)^2
         hit = np.flatnonzero(energy >= threshold)
-        return int(hit[0]) if len(hit) else 0
-    lag = onset(xr) - onset(xf)
+        return int(hit[0]) if len(hit) else None
+    onset_r, onset_f = onset(xr), onset(xf)
+    if onset_r is None or onset_f is None:
+        return xr, xf, {"status": "not_evaluated", "lag_samples": 0, "lag_ms": 0.0,
+                        "max_lag_ms": round(max_lag_s * 1000, 3),
+                        "reason": "silent_or_constant_onset_window"}
+    lag = onset_r - onset_f
     if abs(lag) > max_lag:
         return xr, xf, {"status": "rejected", "method": "moving_rms_threshold",
                         "lag_samples": lag,
@@ -243,6 +255,8 @@ def artifact_gates(xr, xf, sr, sr_ref=None, expected_onset_s=None, note_off_s=No
     the refs could not see — 2026-07-12 audit). All computed on the render,
     crest compared against the reference."""
     thresholds = thresholds or COMMON_THRESHOLDS
+    if len(xr) == 0 or len(xf) == 0:
+        raise ValueError(f"artifact gates require non-empty signals: render_frames={len(xr)}, reference_frames={len(xf)}")
     gates = {}
     finite = bool(np.isfinite(xr).all())
     gates["finite"] = {"value": finite, "pass": finite}
@@ -250,6 +264,12 @@ def artifact_gates(xr, xf, sr, sr_ref=None, expected_onset_s=None, note_off_s=No
         gates["all_pass"] = False
         gates["trusted"] = False
         return gates
+    peak_render = float(np.abs(xr).max())
+    peak_reference = float(np.abs(xf).max())
+    has_signal = peak_render > 1e-9 and peak_reference > 1e-9
+    gates["signal_energy"] = {"render_peak": round(peak_render, 12),
+                              "reference_peak": round(peak_reference, 12),
+                              "pass": has_signal}
     # onset crest: attack (first 3 ms after onset) vs body (10 ms..60%) —
     # render must not exceed the reference's crest by >6 dB (impulse/click
     # artifacts). Onset = first sample above 2% of peak (refs have lead-in
@@ -268,8 +288,9 @@ def artifact_gates(xr, xf, sr, sr_ref=None, expected_onset_s=None, note_off_s=No
                                "pass": bool(cr <= cf + 6.0)}
     # adjacent-sample jump relative to own peak: a near-full-scale single-sample
     # flip is always an artifact regardless of level (scale-invariant)
-    pk = float(np.abs(xr).max()) + 1e-12
-    j = float(np.abs(np.diff(xr)).max()) / pk
+    pk = peak_render + 1e-12
+    sample_diff = np.abs(np.diff(xr))
+    j = float(sample_diff.max()) / pk if len(sample_diff) else 0.0
     gates["max_sample_jump"] = {"value": round(j, 3), "limit": thresholds["max_sample_jump"], "pass": bool(j < thresholds["max_sample_jump"])}
     # Hard clipping occupancy. A single true peak near 1 can be legitimate; a
     # run of samples pinned there is not. Render floats may exceed 1 in debug,
@@ -312,7 +333,8 @@ def artifact_gates(xr, xf, sr, sr_ref=None, expected_onset_s=None, note_off_s=No
         at = max(1, min(len(xr) - 2, int(note_off_s * sr)))
         radius = max(2, int(0.002 * sr))
         lo, hi = max(1, at - radius), min(len(xr) - 1, at + radius)
-        release_jump = float(np.abs(np.diff(xr[lo:hi])).max()) / pk
+        release_diff = np.abs(np.diff(xr[lo:hi]))
+        release_jump = float(release_diff.max()) / pk if len(release_diff) else 0.0
         gates["release_discontinuity"] = {"peak_ratio": round(release_jump, 4),
                                           "limit": thresholds["max_release_jump"],
                                           "pass": bool(release_jump < thresholds["max_release_jump"])}
@@ -454,7 +476,33 @@ def bounded_dtw(a, b, max_warp_frames):
             "max_displacement_frames": int(displacement), "path_length": length}
 
 
-def harmonic_decay_trajectories(x, sr, f0, count=6, window_s=0.08, hop_s=0.05):
+def partial_targets(f0, count=16, model=None):
+    """Return declared modal targets without assuming every source is harmonic.
+
+    `proximity_harmonic` finds a local peak around integer multiples, `stiff_string`
+    applies the standard inharmonic string coefficient B, and `modal_ratios`
+    accepts measured/profile-owned ratios for membranes or bars.
+    """
+    if not f0 or f0 <= 0:
+        return []
+    model = model or {"type": "proximity_harmonic", "search_cents": 70.0}
+    kind = model.get("type", "proximity_harmonic")
+    if kind == "modal_ratios":
+        ratios = [float(value) for value in model.get("ratios", [])]
+    elif kind == "stiff_string":
+        coefficient = float(model.get("inharmonicity_b", 0.0))
+        ratios = [n * np.sqrt((1.0 + coefficient * n * n) / (1.0 + coefficient))
+                  for n in range(1, count + 1)]
+    elif kind == "proximity_harmonic":
+        ratios = [float(n) for n in range(1, count + 1)]
+    else:
+        raise ValueError(f"unknown partial model: {kind}")
+    return [{"partial": index, "ratio": ratio, "frequency_hz": float(f0 * ratio)}
+            for index, ratio in enumerate(ratios[:count], start=1)]
+
+
+def harmonic_decay_trajectories(x, sr, f0, count=6, window_s=0.08, hop_s=0.05,
+                                partial_model=None):
     if not f0 or f0 <= 0:
         return {}
     window = max(32, int(window_s * sr))
@@ -462,8 +510,9 @@ def harmonic_decay_trajectories(x, sr, f0, count=6, window_s=0.08, hop_s=0.05):
     starts = range(0, max(1, len(x) - window + 1), hop)
     local_t = np.arange(window) / sr
     result = {}
-    for harmonic in range(1, count + 1):
-        freq = harmonic * f0
+    for target in partial_targets(f0, count, partial_model):
+        partial = target["partial"]
+        freq = target["frequency_hz"]
         if freq >= 0.47 * sr:
             break
         osc = np.exp(-2j * np.pi * freq * local_t) * np.hanning(window)
@@ -475,27 +524,43 @@ def harmonic_decay_trajectories(x, sr, f0, count=6, window_s=0.08, hop_s=0.05):
             values.append(abs(np.dot(segment, osc)))
         values = np.asarray(values)
         db = 20 * np.log10(values / (values.max() + 1e-18) + 1e-9)
-        result[str(harmonic)] = [round(float(v), 3) for v in np.clip(db, -80, 0)]
+        result[str(partial)] = [round(float(v), 3) for v in np.clip(db, -80, 0)]
     return result
 
 
-def trajectory_diagnostics(xr, xf, sr, max_warp_ms, expected_f0=None):
+def trajectory_region_distances(render, reference, width, attack_end_ms, body_end_ms, hop_ms=10.0):
+    attack_end = max(1, int(round(attack_end_ms / hop_ms)))
+    body_end = max(attack_end + 1, int(round(body_end_ms / hop_ms)))
+    regions = {
+        "attack": (0, attack_end),
+        "body": (attack_end, body_end),
+        "tail": (body_end, max(len(render), len(reference))),
+    }
+    return {name: bounded_dtw(render[start:end], reference[start:end], width)
+            for name, (start, end) in regions.items()}
+
+
+def trajectory_diagnostics(xr, xf, sr, max_warp_ms, expected_f0=None, partial_model=None,
+                           attack_end_ms=50.0, body_end_ms=500.0):
     hop_ms = 10.0
     width = max(0, int(round(max_warp_ms / hop_ms)))
     er, ef = rms_trajectory(xr, sr), rms_trajectory(xf, sr)
     cr, cf = centroid_trajectory(xr, sr), centroid_trajectory(xf, sr)
     # Centroid error is perceptually closer to pitch intervals than raw Hz.
-    log_centroid = lambda values: [12 * np.log2(max(v, 20.0) / 20.0) for v in values]
+    def log_centroid(values):
+        return [12 * np.log2(max(v, 20.0) / 20.0) for v in values]
     result = {
         "hop_ms": hop_ms,
         "max_warp_ms": max_warp_ms,
-        "envelope_db": {"render": er, "reference": ef, "distance": bounded_dtw(er, ef, width)},
+        "envelope_db": {"render": er, "reference": ef, "distance": bounded_dtw(er, ef, width),
+                        "regions": trajectory_region_distances(er, ef, width, attack_end_ms, body_end_ms)},
         "centroid_hz": {"render": cr, "reference": cf,
-                         "distance_semitones": bounded_dtw(log_centroid(cr), log_centroid(cf), width)},
+                         "distance_semitones": bounded_dtw(log_centroid(cr), log_centroid(cf), width),
+                         "regions_semitones": trajectory_region_distances(log_centroid(cr), log_centroid(cf), width, attack_end_ms, body_end_ms)},
     }
     if expected_f0:
-        pr = harmonic_decay_trajectories(xr, sr, expected_f0)
-        pf = harmonic_decay_trajectories(xf, sr, expected_f0)
+        pr = harmonic_decay_trajectories(xr, sr, expected_f0, partial_model=partial_model)
+        pf = harmonic_decay_trajectories(xf, sr, expected_f0, partial_model=partial_model)
         partial_width = max(0, int(round(max_warp_ms / 50.0)))
         result["partial_decay_db"] = {
             "hop_ms": 50.0,
@@ -509,7 +574,7 @@ def trajectory_diagnostics(xr, xf, sr, max_warp_ms, expected_f0=None):
     return result
 
 
-def harmonic_partials(x, sr, f0, t0=0.08, dur=0.5, count=16):
+def harmonic_partials(x, sr, f0, t0=0.08, dur=0.5, count=16, partial_model=None):
     if not f0 or f0 <= 0:
         return []
     seg = x[int(t0 * sr):int((t0 + dur) * sr)]
@@ -519,25 +584,32 @@ def harmonic_partials(x, sr, f0, t0=0.08, dur=0.5, count=16):
     spec = np.abs(np.fft.rfft(seg * np.hanning(len(seg)), n=n))
     freqs = np.fft.rfftfreq(n, 1 / sr)
     out = []
-    for harmonic in range(1, count + 1):
-        target = harmonic * f0
+    model = partial_model or {"type": "proximity_harmonic", "search_cents": 70.0}
+    search_cents = float(model.get("search_cents", 70.0))
+    ratio = 2.0 ** (search_cents / 1200.0)
+    for target_info in partial_targets(f0, count, model):
+        partial = target_info["partial"]
+        target = target_info["frequency_hz"]
         if target >= 0.47 * sr:
             break
-        lo, hi = target * 0.965, target * 1.04
+        lo, hi = target / ratio, target * ratio
         idx = np.flatnonzero((freqs >= lo) & (freqs <= hi))
         if not len(idx):
             continue
         peak = int(idx[np.argmax(spec[idx])])
-        out.append({"harmonic": harmonic, "frequency_hz": round(float(freqs[peak]), 2), "magnitude": float(spec[peak])})
-    ref = max((item["magnitude"] for item in out), default=1.0)
+        out.append({"harmonic": partial, "target_hz": round(target, 3),
+                    "target_ratio": round(target_info["ratio"], 8),
+                    "frequency_hz": round(float(freqs[peak]), 2), "magnitude": float(spec[peak])})
+    ref = max((item["magnitude"] for item in out), default=1.0) or 1.0
     for item in out:
         item["level_db"] = round(float(20 * np.log10(item.pop("magnitude") / ref + 1e-12)), 2)
     return [item for item in out if item["level_db"] >= -80.0]
 
 
-def match_harmonic_partials(xr, xf, sr, f0):
-    render = harmonic_partials(xr, sr, f0)
-    reference = harmonic_partials(xf, sr, f0)
+def match_harmonic_partials(xr, xf, sr, f0, partial_model=None):
+    model = partial_model or {"type": "proximity_harmonic", "search_cents": 70.0}
+    render = harmonic_partials(xr, sr, f0, partial_model=model)
+    reference = harmonic_partials(xf, sr, f0, partial_model=model)
     rr = {item["harmonic"]: item for item in render}
     rf = {item["harmonic"]: item for item in reference}
     pairs = []
@@ -546,7 +618,7 @@ def match_harmonic_partials(xr, xf, sr, f0):
         pairs.append({"harmonic": harmonic, "render_hz": a["frequency_hz"], "reference_hz": b["frequency_hz"],
                       "cents_delta": round(float(1200 * np.log2(a["frequency_hz"] / b["frequency_hz"])), 2),
                       "level_delta_db": round(a["level_db"] - b["level_db"], 2)})
-    return {"expected_f0_hz": f0, "render": render, "reference": reference, "pairs": pairs,
+    return {"expected_f0_hz": f0, "partial_model": model, "render": render, "reference": reference, "pairs": pairs,
             "mean_abs_cents": round(float(np.mean([abs(p["cents_delta"]) for p in pairs])), 2) if pairs else None,
             "mean_abs_level_db": round(float(np.mean([abs(p["level_delta_db"]) for p in pairs])), 2) if pairs else None}
 
@@ -555,6 +627,8 @@ def stereo_stats(audio):
     if audio.shape[1] < 2:
         return {"channels": 1, "width_db": None, "correlation": None}
     left, right = audio[:, 0], audio[:, 1]
+    if float(np.max(np.abs(audio))) <= 1e-9:
+        return {"channels": audio.shape[1], "width_db": None, "correlation": None}
     mid = (left + right) * 0.5
     side = (left - right) * 0.5
     width = 20 * np.log10((np.sqrt(np.mean(side ** 2)) + 1e-12) / (np.sqrt(np.mean(mid ** 2)) + 1e-12))
@@ -606,25 +680,6 @@ def partial_decay(x, sr, top=6):
     return out
 
 
-def manifest_lookup(ref_path):
-    """Match ref_path against evals/reference-manifest.json `match` substrings.
-    Returns the corpus entry (known limitations: sr ceiling, level normalization,
-    release-gate mask) or None. Fit with eyes open."""
-    import os
-    here = os.path.dirname(os.path.abspath(__file__))
-    mpath = os.path.join(here, "..", "..", "evals", "reference-manifest.json")
-    try:
-        with open(mpath) as f:
-            man = json.load(f)
-    except OSError:
-        return None
-    p = str(ref_path)
-    for c in man.get("corpora", []):
-        if c.get("match") and c["match"] in p:
-            return c
-    return None
-
-
 def disable_invalid_axes(report, invalid_axes):
     """Fail closed: remove values a corpus contract says cannot be trusted."""
     if not invalid_axes:
@@ -659,7 +714,8 @@ def disable_invalid_axes(report, invalid_axes):
 
 def compare_files(render_path, ref_path, profile="default", flat=False,
                   expected_onset_s=None, note_off_s=None,
-                  max_post_note_off_db=None, expected_f0=None):
+                  max_post_note_off_db=None, expected_f0=None, partial_model=None,
+                  reference_contract=None):
     prof = PROFILES.get(profile, PROFILES["default"])
     audio_r, sr_r = load_audio(render_path)
     audio_f, sr_f = load_audio(ref_path)
@@ -672,7 +728,7 @@ def compare_files(render_path, ref_path, profile="default", flat=False,
                            max_post_note_off_db=max_post_note_off_db)
     if not gates["finite"]["pass"]:
         raise ValueError("render contains NaN or infinite samples; comparison aborted")
-    ref_meta = manifest_lookup(ref_path)
+    ref_meta = reference_contract["contract"] if reference_contract else {}
     operations = []
     if ref_meta and ref_meta.get("mask_after_s"):
         # hard release gates in the corpus tax physically-correct tails: truncate
@@ -699,10 +755,19 @@ def compare_files(render_path, ref_path, profile="default", flat=False,
     ar, af, alignment = onset_align(xr, xf, sr)
     lm = logmel_dist(xr, xf, sr, perceptual=not flat,
                      n=prof["n"], hop=prof["hop"], mels=prof["mels"], fmin=prof["fmin"])
+    gates["alignment"] = {"status": alignment["status"],
+                          "pass": alignment["status"] == "applied"}
+    evaluated = [v["pass"] for v in gates.values()
+                 if isinstance(v, dict) and v.get("pass") is not None]
+    gates["all_pass"] = bool(all(evaluated))
+    gates["trusted"] = gates["all_pass"]
+    trajectory_start = int((expected_onset_s or 0.0) * sr)
+    trajectory_r = ar[min(len(ar), trajectory_start):]
+    trajectory_f = af[min(len(af), trajectory_start):]
     report = {
         "schema_version": REPORT_SCHEMA_VERSION,
         "metric_version": METRIC_VERSION,
-        "interpretation": "trusted" if gates["all_pass"] else "untrusted",
+        "interpretation": "trusted" if gates["trusted"] else "untrusted",
         "inputs": {
             "render": {"path": str(render_path), "sha256": file_sha256(render_path),
                        "sample_rate": sr_r, "frames": native_frames["render"]},
@@ -724,6 +789,7 @@ def compare_files(render_path, ref_path, profile="default", flat=False,
             "note_off_s": note_off_s,
             "max_post_note_off_db": max_post_note_off_db,
             "expected_f0": expected_f0,
+            "partial_model": partial_model,
             "thresholds": prof["thresholds"],
         },
         "operations": operations,
@@ -734,17 +800,24 @@ def compare_files(render_path, ref_path, profile="default", flat=False,
         },
         "sr": sr,
         "seconds": round(n / sr, 2),
-        "lufs": {"render": round(l_r, 1), "reference": round(l_f, 1), "delta": round(l_r - l_f, 1)},
+        "lufs": {
+            "render": round(l_r, 1) if np.isfinite(l_r) else None,
+            "reference": round(l_f, 1) if np.isfinite(l_f) else None,
+            "delta": round(l_r - l_f, 1) if np.isfinite(l_r) and np.isfinite(l_f) else None,
+        },
         "logmel_dist": lm,
         "weighting": "flat" if flat else "K (BS.1770)",
-        "ref_corpus": ({k: ref_meta[k] for k in ("corpus", "sr", "level_normalized", "mask_after_s", "invalid_axes", "notes") if k in ref_meta} if ref_meta else None),
+        "reference_contract": reference_contract["evidence"] if reference_contract else None,
         "centroid": {"render": centroid_traj(xr, sr), "reference": centroid_traj(xf, sr)},
         "envelope": {"render": envelope_stats(xr, sr), "reference": envelope_stats(xf, sr)},
         "partials": {"render": partials(xr, sr), "reference": partials(xf, sr)},
         "crest": {"render": crest_factor(xr), "reference": crest_factor(xf)},
         "mr_stft": mr_stft_dist(ar, af, sr, perceptual=not flat, alignment=alignment),
-        "trajectories": trajectory_diagnostics(xr, xf, sr, prof["thresholds"]["max_warp_ms"], expected_f0),
-        "harmonic_partials": match_harmonic_partials(xr, xf, sr, expected_f0) if expected_f0 else None,
+        "trajectories": trajectory_diagnostics(
+            trajectory_r, trajectory_f, sr, prof["thresholds"]["max_warp_ms"], expected_f0, partial_model,
+            prof["thresholds"]["trajectory_attack_end_ms"], prof["thresholds"]["trajectory_body_end_ms"],
+        ),
+        "harmonic_partials": match_harmonic_partials(xr, xf, sr, expected_f0, partial_model) if expected_f0 else None,
         "stereo": {"render": stereo_stats(audio_r), "reference": stereo_stats(audio_f)},
         "gates": gates,
     }
@@ -753,6 +826,6 @@ def compare_files(render_path, ref_path, profile="default", flat=False,
         report["logmel_lf"] = logmel_dist(xr, xf, sr, perceptual=False, n=lf["n"], hop=lf["hop"],
                                           mels=lf["mels"], fmin=lf["fmin"], fmax=lf["fmax"])
         report["glide_hz"] = {"render": glide_track(xr, sr), "reference": glide_track(xf, sr)}
-    disable_invalid_axes(report, (ref_meta or {}).get("invalid_axes", {}))
+    disable_invalid_axes(report, ref_meta.get("invalid_axes", {}))
     validate_report(report)
     return report

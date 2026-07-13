@@ -33,6 +33,7 @@ PR_HEADINGS = (
     "## Impact",
     "## Summary",
     "## Validation",
+    "## Evidence freshness",
     "## Review focus",
     "## Gates",
     "## Follow-up after merge",
@@ -184,6 +185,9 @@ def check_github_templates(audit: Audit) -> None:
             audit.require(heading in content, f"pull request template is missing heading {heading!r}")
         audit.require("Closes #" in content, "pull request template must link its source issue with `Closes #`")
         audit.require("PR title: type(scope): imperative summary" in content, "pull request template must state the title convention")
+        audit.require("Exact current head SHA" in content, "pull request template must bind evidence to the exact current head SHA")
+        audit.require("git rev-parse HEAD" in content and "headRefOid" in content, "pull request template must require programmatic local/GitHub head verification")
+        audit.require("current-head or explicitly labeled historical" in content, "pull request template must gate evidence freshness")
 
 
 def check_owner_boundaries(audit: Audit) -> None:
@@ -198,6 +202,29 @@ def check_owner_boundaries(audit: Audit) -> None:
 
 
 def check_domain_invariants(audit: Audit) -> None:
+    agents_text = text(ROOT / "AGENTS.md")
+    wrap_path = ROOT / "skills" / "wrap-session" / "SKILL.md"
+    finalize_path = ROOT / "skills" / "finalize-pr" / "SKILL.md"
+    audit.require(wrap_path.is_file(), "missing canonical wrap-session skill")
+    audit.require(
+        any("Progressive or stacked session wrap" in line and "skills/wrap-session/SKILL.md" in line for line in agents_text.splitlines()),
+        "AGENTS.md must route progressive session wrap-up to wrap-session",
+    )
+    audit.require("Evidence is immutable-input-bound" in agents_text, "AGENTS.md must state the exact-head evidence freshness rule")
+    if wrap_path.is_file():
+        wrap_text = text(wrap_path)
+        for required in ("Reconcile evidence freshness", "Synchronize published stacks without rewriting them", "Debrief in the tracker"):
+            audit.require(required in wrap_text, f"wrap-session skill is missing required phase {required!r}")
+        audit.require("never hand-transcribe" in wrap_text, "wrap-session must derive exact heads programmatically")
+        audit.require("Never rebase a published branch" in wrap_text, "wrap-session must forbid rewriting published branch history")
+        audit.require("label it historical" in wrap_text, "wrap-session must preserve stale evidence as explicitly historical")
+    audit.require(finalize_path.is_file(), "missing finalize-pr skill")
+    if finalize_path.is_file():
+        finalize_text = text(finalize_path)
+        audit.require("Prove evidence freshness" in finalize_text, "finalize-pr must audit exact-head evidence freshness")
+        audit.require("git rev-parse HEAD" in finalize_text and "headRefOid" in finalize_text, "finalize-pr must verify programmatic local/GitHub head identity")
+        audit.require("proved byte-identical" in finalize_text, "finalize-pr must require proof before carrying evidence forward")
+
     for persona in ("keunwoo", "hayoung", "yotam", "juhan", "jordan", "senior-web-dev", "producer"):
         audit.require((ROOT / "skills" / "review-as" / "references" / f"{persona}.md").is_file(), f"missing operational persona lens {persona}")
         audit.require((ROOT / "agentic-docs" / "personas" / f"{persona}.md").is_file(), f"missing full persona profile {persona}")
