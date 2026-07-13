@@ -193,18 +193,37 @@
       }
     }
 
+    // The keyboard is drawn at C3-C5 for every instrument, which is fine for a piano
+    // and wrong for anything that does not live there. An electric bass guitar's open E
+    // is E1 (MIDI 28) and its whole range sits BELOW this keyboard - so previewing it at
+    // C3-C5 played it two octaves above the actual instrument.
+    //
+    // Transpose the preview per instrument. The key you press is what you see; the note
+    // the engine plays is in the instrument's real register.
+    const PREVIEW_TRANSPOSE = {
+      bass: -24, // C3-C5 -> C1-C3: the register a bass guitar actually occupies
+    };
+    const xpose = (inst) => PREVIEW_TRANSPOSE[inst] ?? 0;
+
     const down = new Set();
+    const sounding = new Map(); // displayed midi -> the midi we actually sent
     function noteOn(midi, vel = Number($("vel").value)) {
       if (!engine || down.has(midi)) return;
       down.add(midi);
       keyEls.get(midi)?.classList.add("down");
       const inst = $("inst").value;
-      track(inst).noteOn(midi, vel);
+      const played = midi + xpose(inst);
+      sounding.set(midi, { inst, played });
+      track(inst).noteOn(played, vel);
     }
     function noteOff(midi) {
       if (!down.delete(midi)) return;
       keyEls.get(midi)?.classList.remove("down");
-      track($("inst").value).noteOff(midi);
+      // release the note we actually sent, on the track we sent it to - otherwise
+      // switching instrument while a key is held leaves a stuck note.
+      const s = sounding.get(midi);
+      sounding.delete(midi);
+      if (s) track(s.inst).noteOff(s.played);
     }
 
     // pointer Y within the key = velocity (top ≈ pp, bottom edge ≈ ff)
