@@ -1,0 +1,210 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://instruments.js/evals/reference-receipt-schema-v1.json",
+  "title": "instruments.js exact reference canonicalization receipt v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "corpus_id",
+    "toolchain_owner",
+    "source",
+    "canonical_format",
+    "entries"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9.-]*$"
+    },
+    "corpus_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9.-]*$"
+    },
+    "toolchain_owner": {
+      "const": "scripts/dev/requirements-loop.txt"
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "name",
+        "url",
+        "snapshot_id",
+        "fetched_date",
+        "license",
+        "license_path",
+        "license_sha256",
+        "license_owner"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "snapshot_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fetched_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "license": {
+          "type": "string",
+          "minLength": 1
+        },
+        "license_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "license_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "license_owner": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "canonical_format": {
+      "type": "object",
+      "required": [
+        "container",
+        "encoding",
+        "channels",
+        "sample_rate",
+        "libsndfile_version"
+      ],
+      "properties": {
+        "container": {
+          "const": "WAV"
+        },
+        "encoding": {
+          "const": "IEEE_FLOAT_32_LE"
+        },
+        "channels": {
+          "const": 1
+        },
+        "sample_rate": {
+          "const": 48000
+        },
+        "libsndfile_version": {
+          "const": "1.0.31"
+        }
+      },
+      "additionalProperties": false
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "contract_id",
+          "reference_path",
+          "source_path",
+          "source_sha256",
+          "canonical_sha256",
+          "frames",
+          "canonical_onset_frame",
+          "operations",
+          "source_sample_rate",
+          "working_onset_frame",
+          "peak_timestamp",
+          "resample_poly"
+        ],
+        "properties": {
+          "contract_id": {
+            "type": "string"
+          },
+          "reference_path": {
+            "type": "string"
+          },
+          "source_path": {
+            "type": "string"
+          },
+          "source_sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "canonical_sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "frames": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "canonical_onset_frame": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "operations": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "source_sample_rate": {
+            "type": "integer",
+            "minimum": 8000
+          },
+          "working_onset_frame": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "peak_timestamp": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "resample_poly": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "up",
+                  "down",
+                  "padtype"
+                ],
+                "properties": {
+                  "up": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "down": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "padtype": {
+                    "const": "constant"
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

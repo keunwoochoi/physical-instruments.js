@@ -3,6 +3,12 @@ target/
 dist/
 *.wasm
 !evals/**/*.golden.wasm
+# pre-alpha: ship the built engine so the playground runs without a Rust toolchain
+!packages/core/wasm/instruments_dsp.wasm
 .DS_Store
 *.log
+__pycache__/
+*.py[cod]
 evals/incumbents/renders/
+.claude/worktrees/
+.worktrees/

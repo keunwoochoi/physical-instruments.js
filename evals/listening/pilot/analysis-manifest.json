@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0.0",
+  "experiment": "experiment.json",
+  "experiment_digest": "ed890e7bdfc129cbbbb8b3447665cffb47846d2c9cddbd9dc069681aaa55656e",
+  "provenance": {
+    "generator": "campaign-ab-v1",
+    "candidate_commit": "0000000000000000000000000000000000000000",
+    "baseline_commit": "0000000000000000000000000000000000000000",
+    "metric_version": "synthetic-harness-v1",
+    "case_manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "trials": [
+    {
+      "id": "synthetic-tone-mushra",
+      "case_id": "synthetic-tone",
+      "reference_sha256": "193ecf5b51aa0829853ca39ff0ce9d4cbbaedce0253fd94133191db2f5317886",
+      "stimuli": [
+        {
+          "id": "condition-01",
+          "role": "hidden_reference",
+          "sha256": "193ecf5b51aa0829853ca39ff0ce9d4cbbaedce0253fd94133191db2f5317886",
+          "source_sha256": "193ecf5b51aa0829853ca39ff0ce9d4cbbaedce0253fd94133191db2f5317886",
+          "gain_db": 0.0,
+          "integrated_lufs_before": -22.999961,
+          "integrated_lufs_after": -22.999961,
+          "duration_ms": 800
+        },
+        {
+          "id": "condition-02",
+          "role": "candidate",
+          "sha256": "1e1d7e7ce05be32a460f7f22f7c7b742c503908f813e4c0cfbb8f61a791cd5b7",
+          "source_sha256": "1e1d7e7ce05be32a460f7f22f7c7b742c503908f813e4c0cfbb8f61a791cd5b7",
+          "gain_db": 0.0,
+          "integrated_lufs_before": -23.000004,
+          "integrated_lufs_after": -23.000004,
+          "duration_ms": 800
+        },
+        {
+          "id": "condition-03",
+          "role": "anchor",
+          "sha256": "e9ed17292750b3897d1b9ae3b9d48be747dcbadd875ecdc773fe113e331219f3",
+          "source_sha256": "e9ed17292750b3897d1b9ae3b9d48be747dcbadd875ecdc773fe113e331219f3",
+          "gain_db": 0.0,
+          "integrated_lufs_before": -22.999964,
+          "integrated_lufs_after": -22.999964,
+          "duration_ms": 800
+        }
+      ]
+    }
+  ]
+}

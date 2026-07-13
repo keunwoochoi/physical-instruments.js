@@ -19,6 +19,11 @@ jobs:
       - run: cargo check --workspace
       - run: cargo test --workspace
       - run: cargo build -p instruments-dsp --target wasm32-unknown-unknown --release
+      - run: cp target/wasm32-unknown-unknown/release/instruments_dsp.wasm packages/core/wasm/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm
+          path: packages/core/wasm/instruments_dsp.wasm
   typescript:
     runs-on: ubuntu-latest
     steps:
@@ -26,5 +31,35 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - run: npm ci || npm install
+      - run: python3 -m pip install -r scripts/dev/requirements-loop.txt
+      - run: npm run audit:loop
+      - run: npm run audit:bundle   # public bundle-size contract + shipped-WASM freshness (#46)
       - run: npm run typecheck --workspaces --if-present
+      - run: npm run build --workspaces --if-present
+      - run: node scripts/dev/test-midi.mjs
+      - run: node scripts/dev/render-demo.mjs   # numeric render gates (peak/NaN/budget)
+      - run: node scripts/dev/render-demo.mjs --bench
+      - run: npm run test:transport-baseline
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [typescript]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: npm ci || npm install
+      - run: python3 -m pip install -r scripts/dev/requirements-loop.txt
+      - run: npm run build --workspaces --if-present
+      - run: npx playwright install --with-deps chromium webkit
+      - run: python3 -m http.server 8173 &
+      - run: node scripts/dev/e2e-check.mjs
+      - run: npm run audit:listening
+      - run: LISTENING_BROWSER=webkit node scripts/dev/listening-e2e.mjs

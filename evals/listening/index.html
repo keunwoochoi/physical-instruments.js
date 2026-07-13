@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="ij-listening-experiment" content="pilot/experiment.json">
+  <title>instruments.js blind listening</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">instruments.js · local evidence</p>
+      <h1 id="title">Blind listening</h1>
+      <p id="instructions">Loading experiment…</p>
+      <p class="notice">This page records listener evidence. It never computes or declares a release verdict.</p>
+    </header>
+    <section id="setup" class="card">
+      <h2>Listener and setup</h2>
+      <div class="grid">
+        <label>Pseudonymous listener ID (unique per person)<input id="listener" autocomplete="off" required></label>
+        <label>Listening experience<input id="experience" placeholder="e.g. producer, musician, general listener" required></label>
+        <label>Output<select id="transducer"><option value="headphones">Headphones</option><option value="studio_monitors">Studio monitors</option><option value="speakers">Speakers</option><option value="other">Other</option></select></label>
+        <label>Environment<input id="environment" placeholder="quiet room, studio…" required></label>
+        <label>Device / interface<input id="device" required></label>
+        <label>Hearing notes<input id="hearing" placeholder="none, or relevant notes"></label>
+      </div>
+      <label class="check"><input id="volume" type="checkbox"> I set a comfortable fixed volume and will not change it during the session.</label>
+      <button id="start">Start randomized session</button>
+      <button id="resume" class="secondary" hidden>Resume saved session</button>
+      <details>
+        <summary>Recover from a manual session copy</summary>
+        <label>In-progress or completed raw session JSON<textarea id="restore-json" rows="8"></textarea></label>
+        <button id="restore" class="secondary" type="button">Restore session JSON</button>
+      </details>
+    </section>
+    <section id="trial" class="card" hidden></section>
+    <section id="complete" class="card" hidden>
+      <h2>Session complete</h2>
+      <p>Your raw responses are stored only in this browser until you export them. Send the exported JSON to the experiment owner without editing it.</p>
+    </section>
+    <section id="manual-export-section" class="card" hidden>
+      <h2>Raw session recovery copy</h2>
+      <p>Save this JSON before leaving the page. An in-progress copy can be restored on this experiment page after an interruption.</p>
+      <button id="download">Export raw session JSON</button>
+      <button id="copy" class="secondary">Copy raw JSON</button>
+      <button id="clear" class="secondary">Clear local copy</button>
+      <label>Manual export fallback<textarea id="manual-export" rows="12" readonly></textarea></label>
+    </section>
+    <p id="status" role="status"></p>
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

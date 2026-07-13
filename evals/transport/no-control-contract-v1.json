@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0.0",
+  "contract_id": "no-control-transport-v1",
+  "scope": "Default-preserving event transport; no instrument controls or sound changes.",
+  "case_manifest": "evals/transport/no-control-cases-v1.json",
+  "baseline": "evals/transport/no-control-baseline-v1.json",
+  "renderer": "scripts/dev/transport-baseline.mjs",
+  "shipped_wasm": "packages/core/wasm/instruments_dsp.wasm",
+  "metric": {
+    "version": "transport-drift-rms-v1",
+    "statistic": "RMS difference of deterministic signed-mean and RMS block fingerprints, normalized by baseline fingerprint RMS with a 1e-12 denominator floor",
+    "threshold": 0.000001,
+    "fingerprint_blocks": 64
+  },
+  "artifact_policy": {
+    "all_samples_finite": true,
+    "minimum_rms": 0.000001,
+    "maximum_absolute_peak": 1.05,
+    "exact_frame_count": true,
+    "stereo": true
+  },
+  "matrix": {
+    "delivery_simulations": ["quantum-delivery", "preloaded"],
+    "sample_rates": [44100, 48000],
+    "event_offsets": [0, 1, 63, 127],
+    "process_chunk_sizes": [1, 17, 64, 127, 128],
+    "live_delivery_quantum_frames": 128
+  },
+  "equal_frame_order": ["track", "room", "reverb", "pedal-or-note-off", "note-on", "insertion-sequence"],
+  "frozen_paths": [
+    "evals/transport/no-control-cases-v1.json",
+    "evals/transport/no-control-contract-v1.json",
+    "evals/transport/no-control-baseline-v1.json",
+    "scripts/dev/transport-baseline.mjs"
+  ],
+  "candidate_policy": "Every candidate cell must retain the exact interleaved Float32 PCM digest; the frozen numerical drift threshold additionally diagnoses repeatability and rejects committed gain/timing mutations.",
+  "phase_a_real_path_gate": "The Phase A candidate must adapt this frozen event corpus through both actual paths: AudioContext.currentTime plus postMessage plus AudioWorklet plus ij_queue_event, and OfflineAudioContext processorOptions plus AudioWorklet plus ij_queue_event. Browser callback coverage is 128 frames; the direct ring harness owns the declared 1/17/64/127/128 chunk matrix. The Phase A implementation may add candidate adapters and browser assertions but may not edit any frozen path.",
+  "regeneration_command": "node scripts/dev/transport-baseline.mjs generate --allow-rebaseline",
+  "verification_command": "node scripts/dev/transport-baseline.mjs verify"
+}

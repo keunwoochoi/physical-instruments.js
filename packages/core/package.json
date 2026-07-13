@@ -7,12 +7,24 @@
   "sideEffects": false,
   "exports": {
     ".": {
-      "types": "./src/index.ts",
-      "default": "./src/index.ts"
-    }
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./worklet": "./worklet/instruments-processor.js",
+    "./wasm": "./wasm/instruments_dsp.wasm"
   },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist",
+    "worklet",
+    "wasm",
+    "README.md"
+  ],
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json"
   },
   "keywords": [
     "web-audio",

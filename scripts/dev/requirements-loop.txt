@@ -1,0 +1,5 @@
+numpy==2.0.2
+jsonschema==4.23.0
+pyloudnorm==0.1.0
+scipy==1.13.1
+soundfile==0.10.3.post1

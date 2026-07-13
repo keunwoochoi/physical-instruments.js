@@ -1,0 +1,17 @@
+{
+  "name": "fixture-webpack",
+  "private": true,
+  "scripts": {
+    "dev": "webpack serve",
+    "build": "webpack --mode production"
+  },
+  "dependencies": {
+    "instruments.js": "file:../../../packages/core"
+  },
+  "devDependencies": {
+    "html-webpack-plugin": "^5.6.0",
+    "webpack": "^5.95.0",
+    "webpack-cli": "^5.1.0",
+    "webpack-dev-server": "^5.1.0"
+  }
+}

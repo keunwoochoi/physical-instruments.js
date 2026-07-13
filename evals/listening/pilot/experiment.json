@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0.0",
+  "id": "hidden-reference-anchor-pilot",
+  "title": "Blind listening harness pilot",
+  "purpose": "harness_validation",
+  "instructions": "Rate the fidelity of every anonymous condition against the explicit reference. These synthetic tones validate only the listening harness, not an instrument or release.",
+  "sample_rate": 48000,
+  "level_matching": {
+    "method": "bs1770_integrated",
+    "target_lufs": -23.0,
+    "tolerance_lu": 0.1,
+    "window": "full_file"
+  },
+  "randomization": {
+    "algorithm": "xorshift32-fisher-yates-v1",
+    "seed_policy": "fixed_pilot"
+  },
+  "exclusion_policy": {
+    "min_completed_trials": 1,
+    "hidden_reference_min_score": 90,
+    "min_completed_plays_per_stimulus": 1,
+    "unique_listener_ids_required": true
+  },
+  "trials": [
+    {
+      "id": "synthetic-tone-mushra",
+      "protocol": "mushra",
+      "prompt": "Rate fidelity to the explicit reference.",
+      "reference": {
+        "id": "explicit-reference",
+        "path": "audio/reference.wav"
+      },
+      "stimuli": [
+        {
+          "id": "condition-01",
+          "path": "audio/condition-01.wav"
+        },
+        {
+          "id": "condition-02",
+          "path": "audio/condition-02.wav"
+        },
+        {
+          "id": "condition-03",
+          "path": "audio/condition-03.wav"
+        }
+      ]
+    }
+  ]
+}
