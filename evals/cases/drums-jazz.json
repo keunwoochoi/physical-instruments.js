@@ -1,0 +1,82 @@
+{
+  "schema_version": "1.2.0",
+  "family": "drums-jazz",
+  "description": "Virtuosity Drums close-kick velocity anchors; medium velocity is held out from the soft/hard transient and damping fit.",
+  "cases": [
+    {
+      "id": "jazz-kick-soft",
+      "role": "tune",
+      "reference": "references/jazz-kick-virtuosity/canonical/jazz-kick-soft.wav",
+      "reference_contract_id": "ref.virtuosity-drums.kick-close-snoff-vl1-rr1.canon-v1",
+      "reference_sha256": "6713a4823bb778957a04b72ee0b580beb2b08ca7c1f08660d2d8323af4754c17",
+      "render": {
+        "family": "drums-jazz",
+        "midi": 36,
+        "velocity": 30,
+        "note_seconds": 0.3,
+        "total_seconds": 4.0,
+        "sample_rate": 48000,
+        "lead_seconds": 0.03
+      },
+      "analysis": {
+        "profile": "kick",
+        "required_axes": [
+          "mr_stft",
+          "attack",
+          "decay",
+          "lufs"
+        ]
+      }
+    },
+    {
+      "id": "jazz-kick-ff",
+      "role": "tune",
+      "reference": "references/jazz-kick-virtuosity/canonical/jazz-kick-ff.wav",
+      "reference_contract_id": "ref.virtuosity-drums.kick-close-snoff-vl4-rr1.canon-v1",
+      "reference_sha256": "1a21facffa9659c768f78c8aac83813c2f4d32fbd948bbdc9f42a3e657c01797",
+      "render": {
+        "family": "drums-jazz",
+        "midi": 36,
+        "velocity": 120,
+        "note_seconds": 0.3,
+        "total_seconds": 4.0,
+        "sample_rate": 48000,
+        "lead_seconds": 0.03
+      },
+      "analysis": {
+        "profile": "kick",
+        "required_axes": [
+          "mr_stft",
+          "attack",
+          "decay",
+          "lufs"
+        ]
+      }
+    },
+    {
+      "id": "jazz-kick-mf-held",
+      "role": "held_out",
+      "reference": "references/jazz-kick-virtuosity/canonical/jazz-kick-mf.wav",
+      "reference_contract_id": "ref.virtuosity-drums.kick-close-snoff-vl3-rr1.canon-v1",
+      "reference_sha256": "001c0b203d04bbc1c21654fe5e95e526d039a25bcbb5ee9b6bc7aaa2932e891d",
+      "render": {
+        "family": "drums-jazz",
+        "midi": 36,
+        "velocity": 75,
+        "note_seconds": 0.3,
+        "total_seconds": 4.0,
+        "sample_rate": 48000,
+        "lead_seconds": 0.03
+      },
+      "analysis": {
+        "profile": "kick",
+        "required_axes": [
+          "mr_stft",
+          "attack",
+          "decay",
+          "lufs"
+        ]
+      }
+    }
+  ]
+}

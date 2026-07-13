@@ -12,12 +12,11 @@
     },
     {
       "id": "corpus.salamander.grand-v3-freepats.v1",
-      "status": "unverified",
-      "name": "Salamander Grand Piano V3 candidate mapping",
+      "status": "verified",
+      "name": "Salamander Grand Piano V3 exact attack campaign assets",
       "license": "CC-BY-3.0",
-      "provenance_owner": "agentic-docs/licensing.md#reference-audio-match-reference-loop",
-      "notes": "Collection license is verified, but legacy case filenames do not commit exact source-layer/canonicalization receipts.",
-      "reason": "Exact source asset identity and canonical recipe are not committed per case."
+      "provenance_owner": "evals/reference-receipts/piano-salamander-attack-v1.json",
+      "notes": "The committed receipt owns exact upstream asset hashes, canonical operations, paths, and canonical digests for four attack cases."
     },
     {
       "id": "corpus.legacy.acoustic-drums.v1",
@@ -53,6 +52,14 @@
       "license": "Sampling+ 1.0",
       "provenance_owner": "agentic-docs/licensing.md#reference-audio-match-reference-loop",
       "notes": "Issue #29 owns exact corrected canonical digests; sources are edited lossy previews with voice-specific invalid axes."
+    },
+    {
+      "id": "corpus.virtuosity-drums.jazz-kick-close.v1",
+      "status": "verified",
+      "name": "Virtuosity Drums exact jazz-kick close-mic velocity assets",
+      "license": "CC0-1.0",
+      "provenance_owner": "evals/reference-receipts/drums-jazz-virtuosity-kick-v1.json",
+      "notes": "The committed receipt owns exact upstream asset hashes, close-mic role, canonical operations, paths, and canonical digests for soft, medium, and hard jazz-kick cases."
     }
   ],
   "contracts": [
@@ -90,52 +97,48 @@
       "notes": "Equation-owned mono IEEE-float fixture resampled deterministically to 48000 Hz."
     },
     {
-      "id": "ref.legacy.piano.a1-mf.v1",
+      "id": "ref.salamander.grand-v3.a1-v12.attack-canon-v1",
       "corpus_id": "corpus.salamander.grand-v3-freepats.v1",
-      "status": "unverified",
+      "status": "verified",
       "reference_path": "references/piano-salamander/canonical/A1-mf.wav",
-      "canonical_sha256": null,
-      "sample_rate": null,
-      "level_normalized": null,
+      "canonical_sha256": "bba308985d65e792212bf3f01aaf2766276a05f0b85fe1474f04920db919f7f8",
+      "sample_rate": 48000,
+      "level_normalized": false,
       "invalid_axes": {},
-      "notes": "Migrated from a path-only v1 case without asserting provenance.",
-      "reason": "Exact source asset, canonicalization recipe, and canonical SHA-256 are not committed."
+      "notes": "Exact source and canonicalization identity owned by receipt.salamander.grand-v3.attack-v1 entry A1v12.flac."
     },
     {
-      "id": "ref.legacy.piano.c4-pp.v1",
+      "id": "ref.salamander.grand-v3.c4-v2.attack-canon-v1",
       "corpus_id": "corpus.salamander.grand-v3-freepats.v1",
-      "status": "unverified",
+      "status": "verified",
       "reference_path": "references/piano-salamander/canonical/C4-pp.wav",
-      "canonical_sha256": null,
-      "sample_rate": null,
-      "level_normalized": null,
+      "canonical_sha256": "3884d4936969f254a9756618cd0e8bb2b795ce62183a2ea465f5199fa6614b3c",
+      "sample_rate": 48000,
+      "level_normalized": false,
       "invalid_axes": {},
-      "notes": "Migrated from a path-only v1 case without asserting provenance.",
-      "reason": "Exact source asset, canonicalization recipe, and canonical SHA-256 are not committed."
+      "notes": "Exact source and canonicalization identity owned by receipt.salamander.grand-v3.attack-v1 entry C4v2.flac."
     },
     {
-      "id": "ref.legacy.piano.c4-ff.v1",
+      "id": "ref.salamander.grand-v3.c4-v16.attack-canon-v1",
       "corpus_id": "corpus.salamander.grand-v3-freepats.v1",
-      "status": "unverified",
+      "status": "verified",
       "reference_path": "references/piano-salamander/canonical/C4-ff.wav",
-      "canonical_sha256": null,
-      "sample_rate": null,
-      "level_normalized": null,
+      "canonical_sha256": "14ac208246645106af9eb5cc10a3d3eb39c1ac577d5e05c9425b4de6e1509d7b",
+      "sample_rate": 48000,
+      "level_normalized": false,
       "invalid_axes": {},
-      "notes": "Migrated from a path-only v1 case without asserting provenance.",
-      "reason": "Exact source asset, canonicalization recipe, and canonical SHA-256 are not committed."
+      "notes": "Exact source and canonicalization identity owned by receipt.salamander.grand-v3.attack-v1 entry C4v16.flac."
     },
     {
-      "id": "ref.legacy.piano.cs5-mf.v1",
+      "id": "ref.salamander.grand-v3.c5-v12.cs5-attack-canon-v1",
       "corpus_id": "corpus.salamander.grand-v3-freepats.v1",
-      "status": "unverified",
+      "status": "verified",
       "reference_path": "references/piano-salamander/canonical/Cs5-mf.wav",
-      "canonical_sha256": null,
-      "sample_rate": null,
-      "level_normalized": null,
+      "canonical_sha256": "c572f0601cfd4114a430b5b21079bcdcdecbf4b372c2d1cbc08cb07f2db98e83",
+      "sample_rate": 48000,
+      "level_normalized": false,
       "invalid_axes": {},
-      "notes": "Migrated from a path-only v1 case without asserting provenance.",
-      "reason": "Exact source asset, canonicalization recipe, and canonical SHA-256 are not committed."
+      "notes": "Exact source and canonicalization identity owned by receipt.salamander.grand-v3.attack-v1 entry C5v12.flac."
     },
     {
       "id": "ref.legacy.drums.pop-kick-ff.v1",
@@ -370,6 +373,39 @@
         "velocity_loudness": "Only one hit at undocumented control settings is available."
       },
       "notes": "Exact corrected canon-v2 digest from issue #29; trust only axes not explicitly invalidated."
+    },
+    {
+      "id": "ref.virtuosity-drums.kick-close-snoff-vl1-rr1.canon-v1",
+      "corpus_id": "corpus.virtuosity-drums.jazz-kick-close.v1",
+      "status": "verified",
+      "reference_path": "references/jazz-kick-virtuosity/canonical/jazz-kick-soft.wav",
+      "canonical_sha256": "6713a4823bb778957a04b72ee0b580beb2b08ca7c1f08660d2d8323af4754c17",
+      "sample_rate": 48000,
+      "level_normalized": false,
+      "invalid_axes": {},
+      "notes": "Exact source and canonicalization identity owned by receipt.virtuosity-drums.jazz-kick-close-v1 entry Samples__kickmic__kick__kickmic_kick_snoff_vl1_rr1.flac."
+    },
+    {
+      "id": "ref.virtuosity-drums.kick-close-snoff-vl3-rr1.canon-v1",
+      "corpus_id": "corpus.virtuosity-drums.jazz-kick-close.v1",
+      "status": "verified",
+      "reference_path": "references/jazz-kick-virtuosity/canonical/jazz-kick-mf.wav",
+      "canonical_sha256": "001c0b203d04bbc1c21654fe5e95e526d039a25bcbb5ee9b6bc7aaa2932e891d",
+      "sample_rate": 48000,
+      "level_normalized": false,
+      "invalid_axes": {},
+      "notes": "Exact source and canonicalization identity owned by receipt.virtuosity-drums.jazz-kick-close-v1 entry Samples__kickmic__kick__kickmic_kick_snoff_vl3_rr1.flac."
+    },
+    {
+      "id": "ref.virtuosity-drums.kick-close-snoff-vl4-rr1.canon-v1",
+      "corpus_id": "corpus.virtuosity-drums.jazz-kick-close.v1",
+      "status": "verified",
+      "reference_path": "references/jazz-kick-virtuosity/canonical/jazz-kick-ff.wav",
+      "canonical_sha256": "1a21facffa9659c768f78c8aac83813c2f4d32fbd948bbdc9f42a3e657c01797",
+      "sample_rate": 48000,
+      "level_normalized": false,
+      "invalid_axes": {},
+      "notes": "Exact source and canonicalization identity owned by receipt.virtuosity-drums.jazz-kick-close-v1 entry Samples__kickmic__kick__kickmic_kick_snoff_vl4_rr1.flac."
     }
   ]
 }

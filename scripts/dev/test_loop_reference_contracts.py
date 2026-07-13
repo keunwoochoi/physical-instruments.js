@@ -17,6 +17,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import loop_campaign
 import reference_contracts
+import canonicalize_reference_receipt
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -49,8 +50,27 @@ class RegistryTests(unittest.TestCase):
 
     def test_committed_registry_is_valid_and_exact(self):
         loaded = reference_contracts.load_registry()
-        self.assertEqual(len(loaded["contracts"]), 25)
-        self.assertEqual(sum(c["status"] == "verified" for c in loaded["contracts"].values()), 9)
+        self.assertEqual(len(loaded["contracts"]), 28)
+        self.assertEqual(sum(c["status"] == "verified" for c in loaded["contracts"].values()), 16)
+
+    def test_exact_source_receipts_bind_every_promoted_contract(self):
+        expected = {
+            "piano-salamander-attack-v1.json": {
+                "ref.salamander.grand-v3.a1-v12.attack-canon-v1": "bba308985d65e792212bf3f01aaf2766276a05f0b85fe1474f04920db919f7f8",
+                "ref.salamander.grand-v3.c4-v2.attack-canon-v1": "3884d4936969f254a9756618cd0e8bb2b795ce62183a2ea465f5199fa6614b3c",
+                "ref.salamander.grand-v3.c4-v16.attack-canon-v1": "14ac208246645106af9eb5cc10a3d3eb39c1ac577d5e05c9425b4de6e1509d7b",
+                "ref.salamander.grand-v3.c5-v12.cs5-attack-canon-v1": "c572f0601cfd4114a430b5b21079bcdcdecbf4b372c2d1cbc08cb07f2db98e83",
+            },
+            "drums-jazz-virtuosity-kick-v1.json": {
+                "ref.virtuosity-drums.kick-close-snoff-vl1-rr1.canon-v1": "6713a4823bb778957a04b72ee0b580beb2b08ca7c1f08660d2d8323af4754c17",
+                "ref.virtuosity-drums.kick-close-snoff-vl3-rr1.canon-v1": "001c0b203d04bbc1c21654fe5e95e526d039a25bcbb5ee9b6bc7aaa2932e891d",
+                "ref.virtuosity-drums.kick-close-snoff-vl4-rr1.canon-v1": "1a21facffa9659c768f78c8aac83813c2f4d32fbd948bbdc9f42a3e657c01797",
+            },
+        }
+        for filename, identities in expected.items():
+            with self.subTest(receipt=filename):
+                receipt = canonicalize_reference_receipt.load_receipt(ROOT / "evals" / "reference-receipts" / filename)
+                self.assertEqual({entry["contract_id"]: entry["canonical_sha256"] for entry in receipt["entries"]}, identities)
 
     def test_a43_contract_table_matches_owner_evidence(self):
         expected = {
@@ -102,7 +122,7 @@ class RegistryTests(unittest.TestCase):
     def test_verification_semantics_are_enforced(self):
         with tempfile.TemporaryDirectory() as d:
             value = copy.deepcopy(self.registry)
-            value["contracts"][0]["corpus_id"] = "corpus.salamander.grand-v3-freepats.v1"
+            value["contracts"][0]["corpus_id"] = "corpus.legacy.acoustic-drums.v1"
             with self.assertRaisesRegex(ValueError, "unverified corpus"):
                 reference_contracts.load_registry(self.write(d, value))
         for license_value in (None, "", "   "):
@@ -155,8 +175,8 @@ class BindingTests(unittest.TestCase):
 
     def test_unverified_contract_fails_before_filesystem_or_decode(self):
         value = fixture_case(
-            reference="references/piano-salamander/canonical/A1-mf.wav",
-            reference_contract_id="ref.legacy.piano.a1-mf.v1",
+            reference="references/drumkit/canonical/pop-kick-ff.wav",
+            reference_contract_id="ref.legacy.drums.pop-kick-ff.v1",
             reference_sha256=None,
         )
         with mock.patch.object(reference_contracts, "sha256") as digest, mock.patch.object(reference_contracts.sf, "info") as info:
@@ -213,7 +233,7 @@ class BindingTests(unittest.TestCase):
 class RunOrderTests(unittest.TestCase):
     def test_unverified_production_manifest_fails_before_all_campaign_side_effects(self):
         with tempfile.TemporaryDirectory() as d:
-            for family in ("piano", "drums", "guitars", "bass"):
+            for family in ("drums", "guitars", "bass"):
                 with self.subTest(family=family):
                     out = Path(d) / family
                     args = SimpleNamespace(

@@ -1,0 +1,107 @@
+{
+  "schema_version": "1.0.0",
+  "id": "receipt.salamander.grand-v3.attack-v1",
+  "corpus_id": "corpus.salamander.grand-v3-freepats.v1",
+  "toolchain_owner": "scripts/dev/requirements-loop.txt",
+  "source": {
+    "name": "Salamander Grand Piano V3",
+    "url": "https://freepats.zenvoid.org/Piano/SalamanderGrandPiano/",
+    "snapshot_id": "3382bf9496bba2486f5ab0de55a264d1dfc38404",
+    "fetched_date": "2026-07-12",
+    "license": "CC-BY-3.0",
+    "license_owner": "agentic-docs/licensing.md#reference-audio-match-reference-loop"
+  },
+  "canonical_format": {
+    "container": "WAV",
+    "encoding": "IEEE_FLOAT_32_LE",
+    "channels": 1,
+    "sample_rate": 48000
+  },
+  "entries": [
+    {
+      "contract_id": "ref.salamander.grand-v3.a1-v12.attack-canon-v1",
+      "reference_path": "references/piano-salamander/canonical/A1-mf.wav",
+      "source_path": "A1v12.flac",
+      "source_sha256": "eebd4b102ae1101870b50aec8fbef972f695c796e468398d958f82930a9fa539",
+      "canonical_sha256": "bba308985d65e792212bf3f01aaf2766276a05f0b85fe1474f04920db919f7f8",
+      "frames": 480000,
+      "canonical_onset_frame": 1440,
+      "operations": [
+        "stereo arithmetic mean in float64",
+        "pad/crop exact source onset frame 207 to canonical onset frame 1440",
+        "pad/truncate to 480000 frames",
+        "write mono 48 kHz IEEE float32 WAV",
+        "pin libsndfile PEAK timestamp to receipt value 1783887255 for byte-exact reproducibility"
+      ],
+      "source_sample_rate": 48000,
+      "working_onset_frame": 207,
+      "peak_timestamp": 1783887255,
+      "resample_poly": null
+    },
+    {
+      "contract_id": "ref.salamander.grand-v3.c4-v2.attack-canon-v1",
+      "reference_path": "references/piano-salamander/canonical/C4-pp.wav",
+      "source_path": "C4v2.flac",
+      "source_sha256": "2e8331f97c313ebbc6cd9c4d7975c5e8ea8eaec8414d701343dfe4e90a109cd0",
+      "canonical_sha256": "3884d4936969f254a9756618cd0e8bb2b795ce62183a2ea465f5199fa6614b3c",
+      "frames": 384000,
+      "canonical_onset_frame": 1440,
+      "operations": [
+        "stereo arithmetic mean in float64",
+        "pad/crop exact source onset frame 608 to canonical onset frame 1440",
+        "pad/truncate to 384000 frames",
+        "write mono 48 kHz IEEE float32 WAV",
+        "pin libsndfile PEAK timestamp to receipt value 1783887255 for byte-exact reproducibility"
+      ],
+      "source_sample_rate": 48000,
+      "working_onset_frame": 608,
+      "peak_timestamp": 1783887255,
+      "resample_poly": null
+    },
+    {
+      "contract_id": "ref.salamander.grand-v3.c4-v16.attack-canon-v1",
+      "reference_path": "references/piano-salamander/canonical/C4-ff.wav",
+      "source_path": "C4v16.flac",
+      "source_sha256": "e2944a0d1b31ea0ff8eb82b20ae2108027f111d96fb680c6e36d01f40582c252",
+      "canonical_sha256": "14ac208246645106af9eb5cc10a3d3eb39c1ac577d5e05c9425b4de6e1509d7b",
+      "frames": 384000,
+      "canonical_onset_frame": 1440,
+      "operations": [
+        "stereo arithmetic mean in float64",
+        "pad/crop exact source onset frame 634 to canonical onset frame 1440",
+        "pad/truncate to 384000 frames",
+        "write mono 48 kHz IEEE float32 WAV",
+        "pin libsndfile PEAK timestamp to receipt value 1783887255 for byte-exact reproducibility"
+      ],
+      "source_sample_rate": 48000,
+      "working_onset_frame": 634,
+      "peak_timestamp": 1783887255,
+      "resample_poly": null
+    },
+    {
+      "contract_id": "ref.salamander.grand-v3.c5-v12.cs5-attack-canon-v1",
+      "reference_path": "references/piano-salamander/canonical/Cs5-mf.wav",
+      "source_path": "C5v12.flac",
+      "source_sha256": "bef7fa0e75075f0566400a5f5d7c313d6e295d287413c88e742e2dc2205d8915",
+      "canonical_sha256": "c572f0601cfd4114a430b5b21079bcdcdecbf4b372c2d1cbc08cb07f2db98e83",
+      "frames": 336000,
+      "canonical_onset_frame": 1440,
+      "operations": [
+        "stereo arithmetic mean in float64",
+        "scipy.signal.resample_poly up 7450 down 7893 for +1 semitone playback mapping",
+        "pad/crop exact transposed onset frame 422 to canonical onset frame 1440",
+        "pad/truncate to 336000 frames",
+        "write mono 48 kHz IEEE float32 WAV",
+        "pin libsndfile PEAK timestamp to receipt value 1783887255 for byte-exact reproducibility"
+      ],
+      "source_sample_rate": 48000,
+      "working_onset_frame": 422,
+      "peak_timestamp": 1783887255,
+      "resample_poly": {
+        "up": 7450,
+        "down": 7893,
+        "padtype": "constant"
+      }
+    }
+  ]
+}

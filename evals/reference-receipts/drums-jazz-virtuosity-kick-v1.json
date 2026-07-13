@@ -1,0 +1,82 @@
+{
+  "schema_version": "1.0.0",
+  "id": "receipt.virtuosity-drums.jazz-kick-close-v1",
+  "corpus_id": "corpus.virtuosity-drums.jazz-kick-close.v1",
+  "toolchain_owner": "scripts/dev/requirements-loop.txt",
+  "source": {
+    "name": "Virtuosity Drums close kick microphone, snare wires off",
+    "url": "https://github.com/studiorack/virtuosity-drums",
+    "snapshot_id": "d41b734e9ce5edce1be375c262b2644de4387061",
+    "fetched_date": "2026-07-12",
+    "license": "CC0-1.0",
+    "license_owner": "agentic-docs/licensing.md#reference-audio-match-reference-loop"
+  },
+  "canonical_format": {
+    "container": "WAV",
+    "encoding": "IEEE_FLOAT_32_LE",
+    "channels": 1,
+    "sample_rate": 48000
+  },
+  "entries": [
+    {
+      "contract_id": "ref.virtuosity-drums.kick-close-snoff-vl1-rr1.canon-v1",
+      "reference_path": "references/jazz-kick-virtuosity/canonical/jazz-kick-soft.wav",
+      "source_path": "Samples__kickmic__kick__kickmic_kick_snoff_vl1_rr1.flac",
+      "source_sha256": "0597fce86b081caf032d4f4cc97310008253b61f49566e02f9c29d7c79ff14f4",
+      "canonical_sha256": "6713a4823bb778957a04b72ee0b580beb2b08ca7c1f08660d2d8323af4754c17",
+      "frames": 192000,
+      "canonical_onset_frame": 1440,
+      "operations": [
+        "stereo arithmetic mean when applicable in float64",
+        "pad/crop exact source onset frame 224 to canonical onset frame 1440",
+        "pad/truncate to 192000 frames without level normalization",
+        "write mono 48 kHz IEEE float32 WAV",
+        "pin libsndfile PEAK timestamp to receipt value 1783887443 for byte-exact reproducibility"
+      ],
+      "source_sample_rate": 48000,
+      "working_onset_frame": 224,
+      "peak_timestamp": 1783887443,
+      "resample_poly": null
+    },
+    {
+      "contract_id": "ref.virtuosity-drums.kick-close-snoff-vl3-rr1.canon-v1",
+      "reference_path": "references/jazz-kick-virtuosity/canonical/jazz-kick-mf.wav",
+      "source_path": "Samples__kickmic__kick__kickmic_kick_snoff_vl3_rr1.flac",
+      "source_sha256": "4f5ce76c313c39f3f3af340deee3c5d2058632b6d1c6c1aab561d3f2433f30d4",
+      "canonical_sha256": "001c0b203d04bbc1c21654fe5e95e526d039a25bcbb5ee9b6bc7aaa2932e891d",
+      "frames": 192000,
+      "canonical_onset_frame": 1440,
+      "operations": [
+        "stereo arithmetic mean when applicable in float64",
+        "pad/crop exact source onset frame 237 to canonical onset frame 1440",
+        "pad/truncate to 192000 frames without level normalization",
+        "write mono 48 kHz IEEE float32 WAV",
+        "pin libsndfile PEAK timestamp to receipt value 1783887443 for byte-exact reproducibility"
+      ],
+      "source_sample_rate": 48000,
+      "working_onset_frame": 237,
+      "peak_timestamp": 1783887443,
+      "resample_poly": null
+    },
+    {
+      "contract_id": "ref.virtuosity-drums.kick-close-snoff-vl4-rr1.canon-v1",
+      "reference_path": "references/jazz-kick-virtuosity/canonical/jazz-kick-ff.wav",
+      "source_path": "Samples__kickmic__kick__kickmic_kick_snoff_vl4_rr1.flac",
+      "source_sha256": "27b2a5a46b0c361f5712c76f577076270edbb019c9c9df5b4de2d25e853ed52d",
+      "canonical_sha256": "1a21facffa9659c768f78c8aac83813c2f4d32fbd948bbdc9f42a3e657c01797",
+      "frames": 192000,
+      "canonical_onset_frame": 1440,
+      "operations": [
+        "stereo arithmetic mean when applicable in float64",
+        "pad/crop exact source onset frame 276 to canonical onset frame 1440",
+        "pad/truncate to 192000 frames without level normalization",
+        "write mono 48 kHz IEEE float32 WAV",
+        "pin libsndfile PEAK timestamp to receipt value 1783887443 for byte-exact reproducibility"
+      ],
+      "source_sample_rate": 48000,
+      "working_onset_frame": 276,
+      "peak_timestamp": 1783887443,
+      "resample_poly": null
+    }
+  ]
+}

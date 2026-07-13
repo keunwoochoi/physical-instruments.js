@@ -20,6 +20,7 @@
     "loop:run": "python3 scripts/dev/loop_campaign.py run",
     "loop:pilot": "python3 scripts/dev/loop_campaign.py pilot",
     "loop:stage-pilot": "python3 scripts/dev/stage_loop_pilot_refs.py",
+    "loop:canonicalize-reference": "python3 scripts/dev/canonicalize_reference_receipt.py",
     "audit:harness": "scripts/audit/harness-audit.sh"
   },
   "devDependencies": {

@@ -7,8 +7,8 @@
       "id": "a1-mf",
       "role": "tune",
       "reference": "references/piano-salamander/canonical/A1-mf.wav",
-      "reference_contract_id": "ref.legacy.piano.a1-mf.v1",
-      "reference_sha256": null,
+      "reference_contract_id": "ref.salamander.grand-v3.a1-v12.attack-canon-v1",
+      "reference_sha256": "bba308985d65e792212bf3f01aaf2766276a05f0b85fe1474f04920db919f7f8",
       "render": { "family": "piano", "midi": 33, "velocity": 90, "note_seconds": 6.0, "total_seconds": 10.0, "sample_rate": 48000, "lead_seconds": 0.03 },
       "analysis": { "profile": "pitched", "required_axes": ["mr_stft", "attack", "decay", "partials", "lufs"], "partial_model": { "type": "proximity_harmonic", "search_cents": 90.0 } }
     },
@@ -16,8 +16,8 @@
       "id": "c4-pp",
       "role": "tune",
       "reference": "references/piano-salamander/canonical/C4-pp.wav",
-      "reference_contract_id": "ref.legacy.piano.c4-pp.v1",
-      "reference_sha256": null,
+      "reference_contract_id": "ref.salamander.grand-v3.c4-v2.attack-canon-v1",
+      "reference_sha256": "3884d4936969f254a9756618cd0e8bb2b795ce62183a2ea465f5199fa6614b3c",
       "render": { "family": "piano", "midi": 60, "velocity": 30, "note_seconds": 5.0, "total_seconds": 8.0, "sample_rate": 48000, "lead_seconds": 0.03 },
       "analysis": { "profile": "pitched", "required_axes": ["mr_stft", "attack", "decay", "partials", "lufs"], "partial_model": { "type": "proximity_harmonic", "search_cents": 90.0 } }
     },
@@ -25,8 +25,8 @@
       "id": "c4-ff",
       "role": "tune",
       "reference": "references/piano-salamander/canonical/C4-ff.wav",
-      "reference_contract_id": "ref.legacy.piano.c4-ff.v1",
-      "reference_sha256": null,
+      "reference_contract_id": "ref.salamander.grand-v3.c4-v16.attack-canon-v1",
+      "reference_sha256": "14ac208246645106af9eb5cc10a3d3eb39c1ac577d5e05c9425b4de6e1509d7b",
       "render": { "family": "piano", "midi": 60, "velocity": 122, "note_seconds": 5.0, "total_seconds": 8.0, "sample_rate": 48000, "lead_seconds": 0.03 },
       "analysis": { "profile": "pitched", "required_axes": ["mr_stft", "attack", "decay", "partials", "lufs"], "partial_model": { "type": "proximity_harmonic", "search_cents": 90.0 } }
     },
@@ -34,8 +34,8 @@
       "id": "cs5-mf",
       "role": "held_out",
       "reference": "references/piano-salamander/canonical/Cs5-mf.wav",
-      "reference_contract_id": "ref.legacy.piano.cs5-mf.v1",
-      "reference_sha256": null,
+      "reference_contract_id": "ref.salamander.grand-v3.c5-v12.cs5-attack-canon-v1",
+      "reference_sha256": "c572f0601cfd4114a430b5b21079bcdcdecbf4b372c2d1cbc08cb07f2db98e83",
       "render": { "family": "piano", "midi": 73, "velocity": 90, "note_seconds": 4.0, "total_seconds": 7.0, "sample_rate": 48000, "lead_seconds": 0.03 },
       "analysis": { "profile": "pitched", "required_axes": ["mr_stft", "attack", "decay", "partials", "lufs"], "partial_model": { "type": "proximity_harmonic", "search_cents": 90.0 } }
     }
