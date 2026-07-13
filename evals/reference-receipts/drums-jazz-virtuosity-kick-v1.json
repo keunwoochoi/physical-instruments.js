@@ -9,6 +9,8 @@
     "snapshot_id": "d41b734e9ce5edce1be375c262b2644de4387061",
     "fetched_date": "2026-07-12",
     "license": "CC0-1.0",
+    "license_path": "LICENSE",
+    "license_sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
     "license_owner": "agentic-docs/licensing.md#reference-audio-match-reference-loop"
   },
   "canonical_format": {
