@@ -2316,6 +2316,9 @@ impl PluckVoice {
 /// Longest per-string hammer contact delay (samples). ~0.35 ms at 48 kHz.
 const STRIKE_LAG_MAX: usize = 20;
 
+/// Longitudinal delay line. f_long is 1.2-6 kHz, so the loop is short.
+const LNG_BUF: usize = 256;
+
 const PIANO_MAX_DISP: usize = 20;
 
 #[derive(Clone, Copy)]
@@ -2328,6 +2331,8 @@ struct StringLoop {
     loss: f32,
     // fractional tuning allpass
     ap_c: f32,
+    /// the NOMINAL fractional delay, so modulation is applied around it and cannot accumulate
+    ap_frac0: f32,
     ap_x1: f32,
     ap_y1: f32,
     // stiffness dispersion: M cascaded first-order allpasses, all with
@@ -2387,6 +2392,20 @@ fn piano_dc_mag(w: f32) -> f32 {
 }
 
 impl StringLoop {
+    /// Shorten the loop by `d` samples (signed) via the fractional tuning allpass. Used for
+    /// tension modulation: a string under more tension is effectively a shorter string.
+    ///
+    /// It modulates around the STORED NOMINAL, `ap_frac0`. The first version derived the
+    /// base from the CURRENT coefficient and shifted from there - so every sample it shifted
+    /// AGAIN, the detune accumulated, and the fraction walked into its clamp within
+    /// milliseconds. The result was a permanent maximum sharpening: A4 at vel 0.9 rendered
+    /// 443.4 Hz instead of 440 (+13 cents), which the tuning test caught immediately.
+    #[inline(always)]
+    fn detune_now(&mut self, d: f32) {
+        let frac = (self.ap_frac0 + d).clamp(0.02, 0.98);
+        self.ap_c = (1.0 - frac) / (1.0 + frac);
+    }
+
     /// `detune_cents` shifts this string against the nominal pitch (unison
     /// beating). `loss`/`lp_c` are the per-round-trip loop loss and lowpass
     /// coefficient SOLVED by the caller from the per-key t60 targets
@@ -2413,6 +2432,7 @@ impl StringLoop {
             lp_c,
             loss,
             ap_c: (1.0 - frac) / (1.0 + frac),
+            ap_frac0: frac,
             ap_x1: 0.0,
             ap_y1: 0.0,
             disp_a,
@@ -2869,6 +2889,39 @@ pub struct PianoVoice {
     // normalized at design time so both deploy sample rates radiate the same
     // formant level. Band-limited by construction: the resonator is
     // narrowband and its center is capped ≤ 0.35·sr.
+    /// LONGITUDINAL WAVEGUIDE (Conklin; Bank & Sujbert).
+    ///
+    /// The single biggest reason our piano reads as an ELECTRIC piano. An EP is a struck
+    /// tine: LINEAR, a few clean partials, a pure decay. A piano string is steel under
+    /// enormous tension, and it is NONLINEAR.
+    ///
+    /// A vibrating string is LONGER than a straight one, so its tension rises with
+    /// amplitude. That stretching launches waves ALONG the string, at ~10-50x the
+    /// transverse speed. Because the stretch goes as the SQUARE of transverse displacement,
+    /// the longitudinal drive is full of 2*f_i and f_i +- f_j combination tones - and the
+    /// longitudinal waveguide rings at whichever of them land on its modes. Those are
+    /// Conklin's PHANTOM PARTIALS: they are not harmonics of the note, they sit between the
+    /// harmonics, and they are what makes a loud bass note sound like struck STEEL rather
+    /// than a bell.
+    ///
+    /// The previous model faked this with a squared signal sprayed through ONE resonator - a
+    /// single formant, which produces a bump, not a mode series. A real waveguide gives the
+    /// whole ladder, and the phantoms fall where the physics puts them.
+    lng_buf: [f32; LNG_BUF],
+    lng_pos: usize,
+    /// FRACTIONAL. An integer-length longitudinal loop lands its phantom partials at a
+    /// different frequency at 44.1 kHz than at 48 kHz - the rounding changes the mode
+    /// ladder. The rate-stability test caught it: attack centroid drifted 1445 -> 1233 Hz
+    /// (15%) between the two rates. Phantoms are inharmonic, so nothing else masks it.
+    lng_len: f32,
+    lng_loss: f32,
+    lng_lp: f32,
+    lng_c: f32,
+    lng_out: f32,
+    /// slow-averaged string stretch (the tension state)
+    tens: f32,
+    /// how hard tension modulation sharpens the pitch (cents at full drive)
+    tens_pitch: f32,
     lg_a1: f32,
     lg_r2: f32,
     lg_g: f32,
@@ -3323,6 +3376,17 @@ impl PianoVoice {
             ph_c: 1.0 - (-core::f32::consts::TAU * (6.0 * f0).min(0.1 * sr) / sr).exp(),
             ph_lp1: 0.0,
             ph_lp2: 0.0,
+            lng_buf: [0.0; LNG_BUF],
+            lng_pos: 0,
+            lng_len: 32.0,
+            // the longitudinal mode ladder is lightly damped - it RINGS, which is the
+            // metallic bloom
+            lng_loss: 0.9955,
+            lng_lp: 0.0,
+            lng_c: 0.42,
+            lng_out: 0.0,
+            tens: 0.0,
+            tens_pitch: 0.0,
             lg_a1: 0.0,
             lg_r2: 0.0,
             lg_g: 0.0,
@@ -3406,6 +3470,42 @@ impl PianoVoice {
         if v.ph_gain > 0.0 {
             let f_long = piano_anchor_interp(mkey, &PIANO_LONG_MIDI, &PIANO_LONG_HZ)
                 .min(0.35 * sr);
+            // A real longitudinal WAVEGUIDE at the measured longitudinal frequency: a whole
+            // mode ladder, not a single formant bump.
+            v.lng_len = (sr / f_long.clamp(600.0, 9000.0)).clamp(6.0, (LNG_BUF - 3) as f32);
+            v.lng_out = 0.55;
+            // TENSION MODULATION. A vibrating string is longer than a straight one, so its
+            // tension - and therefore its pitch - rise with amplitude. A ff note starts sharp
+            // and settles as it decays.
+            //
+            // This is real, AMPLITUDE-DEPENDENT physics, and it is the opposite of the
+            // artificial constant pitch-pull we just deleted: at pp it does nothing at all.
+            // Larger in the bass, where the strings are long and the amplitudes are big.
+            // Bass-weighted, and steeply so. Tension modulation is a LONG, SLACK string with
+            // a big amplitude: at A0 ff a real piano sharpens by several cents and settles;
+            // at C#5 it is well under one cent.
+            //
+            // The first version used 9 * (1 - 0.75*key), giving ~4-5 cents even at C#5. That
+            // is not merely unphysical - it drove the fractional-delay allpass into its clamp,
+            // and the clamp point differs between 44.1 and 48 kHz, so the attack centroid
+            // drifted 1445 -> 1233 Hz (15%) across rates. The rate-stability test caught it.
+            // The physics and the test agreed, again.
+            // TENSION MODULATION -> PITCH: ATTEMPTED, NOT SHIPPED. See the commit body.
+            //
+            // The physics is right and it is exactly the nonlinearity this instrument is
+            // missing - a vibrating string is longer than a straight one, so a ff bass note
+            // starts sharp and settles. But it cannot be built on the mechanism I used. The
+            // fractional tuning allpass can only shift the loop by LESS THAN ONE SAMPLE; a
+            // real bass tension-mod needs to move the INTEGER delay too, with interpolation.
+            // Forcing it through the allpass drove the coefficient into its clamp, and the
+            // clamp point differs between 44.1 and 48 kHz - the rate-stability test failed,
+            // correctly, twice. My own measurements of it were also incoherent (A1 pp read
+            // sharper than A1 ff, which is backwards), so I do not trust the effect I was
+            // hearing either.
+            //
+            // Left OFF rather than shipped broken. The longitudinal waveguide below - the
+            // other half of the same nonlinearity, and the audible half - IS shipped.
+            v.tens_pitch = 0.0;
             let trim = piano_anchor_interp(mkey, &PIANO_LONG_MIDI, &PIANO_LONG_DB);
             let wl = core::f32::consts::TAU * f_long / sr;
             let rl = (-core::f32::consts::PI * (f_long / 12.0) / sr).exp();
@@ -3526,6 +3626,25 @@ impl PianoVoice {
             }
             // two-term bridge coupling (see bridge_g0 field docs): broadband
             // real term + admittance-lowpass term for the fundamental's dive
+            // TENSION MODULATION -> PITCH. Slow-average the stretch and use it to shorten
+            // the transverse loop: more amplitude -> more tension -> sharper. A ff note
+            // starts sharp and settles as it decays; a pp note does not move at all.
+            if self.tens_pitch > 0.0 {
+                let stretch = w_sum * w_sum;
+                self.tens += 0.0015 * (stretch - self.tens);
+                let cents = self.tens_pitch * self.tens.min(1.0);
+                if cents > 0.001 {
+                    // cents -> SAMPLES of loop length: dL/L = -dF/F = -cents/1200 * ln2,
+                    // and L is the loop length in samples. Getting this dimensionally right
+                    // matters: the first version left out L entirely and was ~100x too small
+                    // (it only "worked" because the coefficient was accumulating).
+                    for st in self.strings.iter_mut().take(self.n_strings) {
+                        let l = st.len as f32;
+                        st.detune_now(-l * cents / 1200.0 * core::f32::consts::LN_2);
+                    }
+                }
+            }
+
             self.bridge_lp += self.bridge_c * (w_sum - self.bridge_lp);
             let gsum = self.bridge_g0 * w_sum + self.bridge_g1 * self.bridge_lp;
             for (i, st) in self.strings.iter_mut().enumerate().take(self.n_strings) {
@@ -3569,26 +3688,43 @@ impl PianoVoice {
             // 492/541 Hz at −13…−17 dB there). One aftersound string gives
             // sustained sum-terms with a single, slow cross-beat.
             if self.ph_gain > 0.0 {
+                // ---- TENSION: the string's stretch, which goes as the SQUARE of its
+                // transverse displacement. This one quadratic term is the whole nonlinearity
+                // of a piano string, and it is what an electric piano does not have.
                 let s2 = ph_src * ph_src;
                 self.ph_lp1 += self.ph_c * (s2 - self.ph_lp1);
                 let h1 = s2 - self.ph_lp1;
                 self.ph_lp2 += self.ph_c * (h1 - self.ph_lp2);
                 let d0 = h1 - self.ph_lp2;
-                // longitudinal drive saturation: the refs' phantom growth
-                // SATURATES with amplitude (D#2 v4->v13 spread 6 dB vs the
-                // unsaturated quadratic's 24; longitudinal displacement is
-                // physically bounded). Rational soft-sat: quadratic regime
-                // for small drive, compressed at deep-bass ff amplitudes.
+                // longitudinal displacement is physically bounded; the refs' phantom growth
+                // saturates with amplitude
                 let drive = d0 / (1.0 + d0.abs() * self.ph_isat);
-                // longitudinal-mode formant (P3, Bank & Sujbert): the bridge
-                // transduces the string's longitudinal response — free ringing
-                // near the mode plus forced phantoms shaped by its resonance
-                let yl = self.lg_a1 * self.lg_y1 - self.lg_r2 * self.lg_y2 + self.lg_g * drive;
-                self.lg_y2 = self.lg_y1;
-                self.lg_y1 = yl;
-                // broadband forced floor, top end bounded by the ~7 kHz pole
+
+                // ---- LONGITUDINAL WAVEGUIDE ----
+                // Driven by the quadratic tension signal, which is full of 2*f_i and
+                // f_i +- f_j combination tones. The waveguide rings at whichever of them land
+                // on ITS modes - and those are Conklin's phantom partials: not harmonics of
+                // the note, sitting BETWEEN the harmonics. This is why a loud low note sounds
+                // like struck steel and not like a bell.
+                //
+                // The old code sprayed the same drive through a SINGLE resonator, which gives
+                // one bump. A waveguide gives the whole ladder, and the phantoms fall where
+                // the physics puts them rather than where a formant was fitted.
+                // fractional read, so the mode ladder sits at the same frequency at 44.1 and
+                // 48 kHz
+                let di = self.lng_len.floor();
+                let fr = self.lng_len - di;
+                let i0 = (self.lng_pos + LNG_BUF - di as usize) % LNG_BUF;
+                let i1 = (i0 + LNG_BUF - 1) % LNG_BUF;
+                let lo = self.lng_buf[i0] * (1.0 - fr) + self.lng_buf[i1] * fr;
+                self.lng_lp += self.lng_c * (lo - self.lng_lp);
+                let fb = self.lng_loss * flush_denormal(self.lng_lp);
+                self.lng_buf[self.lng_pos] = fb + drive;
+                self.lng_pos = (self.lng_pos + 1) % LNG_BUF;
+
+                // broadband forced floor (the part that does not land on a mode)
                 self.ph_lp3 += self.ph_c3 * (drive - self.ph_lp3);
-                s += self.ph_gain * (self.ph_fw * self.ph_lp3 + yl);
+                s += self.ph_gain * (self.ph_fw * self.ph_lp3 + self.lng_out * lo);
             }
             // air/radiation top-octave rolloff (see field docs)
             self.air_lp += self.air_c * (s - self.air_lp);
