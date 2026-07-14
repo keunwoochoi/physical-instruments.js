@@ -235,7 +235,9 @@ Verified against `crates/dsp/src/kernels.rs` at the baseline. This branch contai
 
 Literature: Weinreich (1977) on coupled strings and the prompt/aftersound split; Conklin (1996) on
 soundboard and duplex; Askenfelt & Jansson, and Giordano, on measured bridge driving-point mobility;
-Bank (2003) for the nonlinear-hammer + coupled-string + shared-soundboard recipe; Chabassier and
+**Bank & Karjalainen, DAFx-10, for the passive admittance construction and the `Y_i + z⁻¹Y_p` closure
+that removes the delay-free loop *without* inserting a delay** — this is the load-bearing reference for
+A1 and A3; Bank (2003) for the nonlinear-hammer + coupled-string + shared-soundboard recipe; Chabassier and
 Bilbao for the full-PDE comparison in B; Smith & Van Duyne for the dispersion-allpass technique
 already shipped. **Skudrzyk's mean-value method gives the *mean* driving-point impedance and an
 asymptotic modal density — it is *not* a modal-damping law** (r1 misapplied it); mode dampings need a
@@ -338,9 +340,60 @@ costed and proved neither. Outside the loop it is cheap, and the passivity argum
 → **R1**, **R4**.
 
 **A3 — Close the loop.** Board port velocity returns into each string's termination as a two-port
-wave-scattering junction (WDF-style, passive by construction, unit delay in the loop). The board
-becomes a shared coupling medium: every undamped string is re-excited by what every other string put
-into it.
+wave-scattering junction, **passive by construction and with no artificial delay**. The board becomes
+a shared coupling medium: every undamped string is re-excited by what every other string put into it.
+
+**How the loop is closed — and revision 3 got this wrong.** r3 said the junction carried a *unit delay
+in the loop*, inserted to break the circular dependency (the string needs the board's output to compute
+its own, and the board needs the string's). **That is a bug, not a technique**, and it would have been a
+slow, horrible one to find:
+
+- **It detunes every string, note-dependently.** One extra sample is a far larger fraction of a treble
+  string's period than a bass string's, so the error is a *register-dependent* mistuning.
+- **It destroys the very passivity proof it was there to enable.** A `z⁻¹` multiplying the whole
+  reflectance adds linear phase, so `Re{Y(e^{jω})} ⪰ 0` no longer holds across the band. The proof would
+  have been about a filter we were not running.
+- It is the classic mechanism for **slow energy growth** in coupled modal systems — inaudible at first,
+  surfacing only on long pedal-down passages. The worst possible failure mode to debug.
+
+**The correct closure is exact, and it is free** (Bank & Karjalainen, *"Passive Admittance Matrix
+Modeling for Guitar Synthesis"*, DAFx-10, §4). Split the admittance into its **instantaneous** and
+**strictly-causal** parts:
+
+```
+Y(z) = Y_i + z⁻¹ · Y_p(z)          where   Y_i = Σ_r Y_r   (a constant matrix)
+```
+
+The delay then sits **only on the part of the response that is already strictly causal** — it is exact,
+not an approximation. The reflectance becomes
+
+```
+v⁻ = (Y_i + Y₀)⁻¹ · [ z⁻¹ Y_p(z)·(v⁺ − v⁻) + (Y_i − Y₀)·v⁺ ]
+```
+
+so there is **no delay-free loop and no artificial delay**, and only the **constant** matrix `(Y_i + Y₀)`
+is ever inverted — never a frequency-dependent one. Choosing `Y₀ = Y_i` makes the port reflection-free.
+
+Two conditions make this work, and both are already required by the design:
+
+1. **`Y_r` must be positive-semidefinite.** With mode shapes from a *conservative* (undamped) plate
+   solve, `Y_r = φ_r φ_rᵀ` is real, symmetric and rank-1 — PSD by construction. Damping is then added
+   **diagonally** (proportional), which is exactly what A2 already specifies. If we ever fit
+   non-proportional damping, the mode shapes go complex, `Y_r` stops being real-PSD, and this whole
+   argument collapses. *Do not do that.*
+2. **The modal terms must be discretised by the bilinear transform**, not impulse invariance:
+   `H_r(z) = (1 − z⁻²) / [(1 − p_r z⁻¹)(1 − p_r* z⁻¹)]`. **The bilinear transform preserves
+   positive-realness; impulse invariance does not.**
+
+`Re{Y} = Σ_r Y_r · Re{H_r} ⪰ 0` then holds automatically — a non-negatively-weighted sum of PSD matrices
+— **and it holds even if the admittance was fitted from noisy measurements.** That is the whole point:
+passivity stops being something we test for and becomes something the structure cannot violate.
+
+*(The alternative, if the port count ever makes the constant-matrix inverse awkward: Chabassier's
+coupling — bridge forces as Lagrange multipliers, centred discretisation chosen so the coupling terms
+cancel exactly in the discrete energy balance, then a Schur complement to decouple the per-subsystem
+update. Exact, reciprocal, and with no additional stability condition. It is the gold standard; it is
+also more machinery than we need if the Bank & Karjalainen split closes.)*
 
 → **R3**: sympathetic resonance and pedal bloom become **emergent and correctly tuned to whatever is
 actually held**. The fixed C-major bank is **deleted, not tuned**, freeing 792 KB.
@@ -350,9 +403,12 @@ actually held**. The fixed C-major bank is **deleted, not tuned**, freeing 792 K
 **The risks, stated plainly.**
 
 1. A3 creates a feedback loop between 64 strings and one board. Done naively it is a delay-free loop
-   and it will blow up. It must be an energy-passive scattering junction with a unit delay, proven
-   passive offline. The unit delay itself detunes the coupling by one sample per round trip — small,
-   but systematic, and it belongs in the passivity write-up rather than being discovered later.
+   and it will blow up. **It is closed by the `Y_i + z⁻¹Y_p` split above — exactly, with no artificial
+   delay** — and passivity is then structural rather than tested-for. The two conditions that make it
+   structural (PSD `Y_r` from a conservative solve; bilinear-transformed modal terms) are **hard
+   requirements on A2, not preferences**, and P4 must assert them at init rather than assume them.
+   *Do not "fix" a delay-free loop by inserting a delay.* That was r3's error and it would have
+   detuned the treble and quietly voided the passivity proof.
 2. **A3 requires a render-loop restructure that does not exist.** A sample-synchronous string↔board
    loop cannot live inside a block-serial, voice-at-a-time render loop. This is the single largest
    unknown in the plan, and **P1 measures it before anything is built on top of it.**
@@ -469,7 +525,9 @@ So:
 - **physics check:** the note-to-note mobility **spread** matches the reference corpus. Too *smooth* fails.
 
 **P4 — Close the loop.** A3; retire `SympBank`.
-*Gate:* an offline energy test **proves passivity**; a 10-minute stability soak at 64 voices with the
+*Gate:* passivity is **asserted structurally at init, not tested for**: every `Y_r` is PSD (rank-1 from a
+conservative plate solve) and every modal term is bilinear-transformed (impulse invariance does **not**
+preserve positive-realness). An offline energy test then **confirms** it; a 10-minute stability soak at 64 voices with the
 pedal down, **at both rates**, shows zero NaN and no runaway; **shared cost ≤ 270 µs/quantum** (measured
 257 µs at 6×200) with a **degradation ladder to 4 ports × 96 modes (89 µs) for mobile**; and
 **sympathetic bloom provably tracks held notes** — render an F# minor chord pedal-down and show the
