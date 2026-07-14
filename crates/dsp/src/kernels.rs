@@ -2367,6 +2367,10 @@ const DC_POLE: f32 = 0.9999;
 /// Lip contact: how much stiffer the lips are when pressed together than when free, and how
 /// much of the collision the tissue absorbs. Brass players call it "the lips beating".
 const LIP_CONTACT: f32 = 4.0;
+/// Bell radiation tilt (one-zero highpass): 0 = no tilt, ->1 = +6 dB/oct.
+const RAD_TILT: f32 = 0.0;
+/// Viscothermal wall loss, one pole per pass. Lower = darker bore.
+const WALL_C: f32 = 0.060;
 const LIP_CONTACT_D: f32 = 0.003;
 
 /// One-pole loop-lowpass H(z) = c/(1 − (1−c)z⁻¹): exact phase delay at ω, in
@@ -8737,6 +8741,8 @@ pub struct BrassVoice {
 
     rdc_x1: f32,
     rdc_y1: f32,
+    rad_x1: f32,
+    wall_lp: f32,
     dc_x1: f32,
     dc_y1: f32,
     level: f32,
@@ -8807,6 +8813,8 @@ impl BrassVoice {
             beta: 0.0,
             rdc_x1: 0.0,
             rdc_y1: 0.0,
+            rad_x1: 0.0,
+            wall_lp: 0.0,
             dc_x1: 0.0,
             dc_y1: 0.0,
             level: 0.0,
@@ -8888,7 +8896,7 @@ impl BrassVoice {
         //
         // So firm it PARTIALLY. The lips still open a little as he leans in - which is what
         // keeps the dynamics - but never so far that they stop beating.
-        const Y_EQ: f32 = 0.012;
+        const Y_EQ: f32 = 0.008;
         const PM_REF: f32 = 1.02; // a mezzo-forte blow
         const FIRM: f32 = 0.75; // how much of the extra pressure the embouchure takes up
         let pm_emb = PM_REF * (1.0 - FIRM) + v.pm * FIRM;
@@ -8900,8 +8908,26 @@ impl BrassVoice {
         v.y = Y_EQ;
         v.yv = 0.006 + 0.005 * vv;
 
-        // brassiness: how much the local pressure speeds the wave up
-        v.beta = 35.0;
+        // BRASSINESS, NOW FITTED TO A REAL TROMBONE INSTEAD OF TO A NUMBER I MADE UP.
+        //
+        // This was 2.4 (did nothing), then I raised it to 35 chasing a "real trombone sits at
+        // ~1500 Hz" target that I had INVENTED FROM MEMORY. Measured against 31 sustained
+        // notes of a real tenor trombone (VSCO-2-CE, CC0), the truth was the exact opposite:
+        // at pp the real instrument's harmonic centroid is 436 Hz and OURS WAS 1507 - we were
+        // 3.5x TOO BRIGHT and I spent a whole session pushing it brighter.
+        //
+        // What beta really does is make the SHOCK, and a shock makes harmonics across the
+        // whole band. Turn it down and the 320-1300 Hz brass formant collapses with it; turn
+        // it up alone and it manufactures a wall of hash (the shipped beta=35 measured
+        // +49.6 dB of excess at 2-5 kHz - THAT is what "so bad" sounded like). The thing that
+        // stops a real shock going infinitely sharp is WALL LOSS, which is what we did not
+        // have. Steepen hard, damp hard: beta 40 + WALL_C 0.060.
+        //
+        // 40, not 55: above ~45 the extra steepening pushes the lip off its partial and the
+        // note wolfs onto the neighbouring bore mode (m58 went to -7 dB purity). Verified by
+        // the RAW-VOICE test, not the engine path - the engine's limiter and reverb were
+        // masking the wolf and reported 26 dB when the voice itself was at -7.
+        v.beta = 40.0;
 
         v.dbg_fbore = f_bore;
         v.dbg_n = n_sel;
@@ -8940,7 +8966,7 @@ impl BrassVoice {
         //     flattering the slot and inflating nothing - but it could easily have gone the
         //     other way, and for a while every claim here rested on distorted audio.
         // Worst peak over EVERY note m40-m65 x 3 velocities is now 0.739.
-        v.level = 0.50 * reg_g * dyn_g;
+        v.level = 2.20 * reg_g * dyn_g;
         v
     }
 
@@ -9065,11 +9091,36 @@ impl BrassVoice {
             let radiated = p_bell - refl_raw; // the bell is a HIGH-PASS in transmission
 
             // ---- write and advance ----
-            self.fwd[self.pos] = p_plus;
+            // VISCOTHERMAL WALL LOSS. A real bore loses energy to friction and heat
+            // conduction at the wall, and the loss GROWS WITH FREQUENCY (~sqrt(f)). This is
+            // why a trombone has almost nothing above 2 kHz: measured against a real one, our
+            // 2-5 kHz band was 16-26 dB TOO LOUD - a tail of hash the instrument does not
+            // have - while 320-1300 Hz, the band that actually makes it sound like brass, was
+            // 12-18 dB TOO QUIET. Our loop loss was flat, so the wave steepening had nothing
+            // to damp it and the radiation highpass then amplified exactly the junk it made.
+            // One-pole per pass; the cascade around the loop gives the frequency dependence.
+            self.wall_lp += WALL_C * (p_plus - self.wall_lp);
+            self.fwd[self.pos] = flush_denormal(self.wall_lp);
             self.bwd[self.pos] = refl;
             self.pos = (self.pos + 1) % BORE_BUF;
 
-            let y = radiated;
+            // BELL RADIATION TILT. A bell is a poor radiator at low frequency and an
+            // efficient one high up (radiation resistance rises with ka), so the sound that
+            // LEAVES the instrument is tilted upward relative to the pressure inside it.
+            // Without this the fundamental dominates the radiated field, and the tone comes
+            // out h1-heavy with a thin, weak harmonic series - measured against a real tenor
+            // trombone, our h2..h6 were 9-13 dB too quiet while the real instrument's h1..h4
+            // sit within 2 dB of EACH OTHER (a flat-topped spectrum, then a cliff).
+            let tilted = radiated - RAD_TILT * self.rad_x1;
+            self.rad_x1 = radiated;
+
+            // A 2-POLE RESONANT BELL WAS TRIED HERE AND MEASURED WORSE. The idea was that a
+            // bell's radiation peak IS the brass formant and its fall IS the HF cliff, so one
+            // object would explain both measured errors. Fitted over fc = 500/800/1200 Hz x
+            // Q = 0.7/1.4, EVERY setting was worse than no resonator at all (ladder error
+            // 10.4-20.4 dB vs 9.2 dB baseline). It is left recorded, not left in.
+            let y = tilted;
+
             let hp = y - self.dc_x1 + DC_POLE * self.dc_y1;
             self.dc_x1 = y;
             self.dc_y1 = flush_denormal(hp);
