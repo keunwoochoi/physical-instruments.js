@@ -8507,7 +8507,40 @@ impl BowedVoice {
         const TWO_Z: f32 = 2.0; // string wave impedance seen by the bow (two half-strings)
         const MU0: f32 = 1.05; // cold rosin
         const HEAT: f32 = 0.055; // frictional power -> temperature
-        const COOL: f32 = 0.011; // thermal relaxation of the contact patch
+        // THE CONTACT PATCH RELAXES IN ~1.7 SAMPLES (35 us), AND REAL ROSIN DOES NOT.
+        //
+        // This was 0.011 - a 1.9 ms relaxation, which is physically right. It also made the
+        // cello play up to 97 CENTS FLAT (nearly a semitone), and the error grew as the bow
+        // LIGHTENED: -83 c at pp vs -35 c at ff on C3.
+        //
+        // The mechanism is real and it is not a coding error. The contact slips when
+        // |f_stick| > mu*force. A LAGGING temperature means a LAGGING mu, which means the
+        // slip fires late, which means the period is long - the loop measured 10-20 samples
+        // longer than the rails, INDEPENDENT OF PITCH, exactly as a fixed lag would (and not
+        // at all as a rail-length bug would, which is how the diagnosis was made). Bow harder
+        // and the patch heats more, mu drops, the slip fires earlier, and the note comes back
+        // toward pitch - which is why the error tracked bow force.
+        //
+        // Real bowed strings DO flatten under bow force (Schelleng), by a FEW cents. Ours had
+        // it an order of magnitude too strong, so the HEAT/MU0/impedance constants are
+        // mis-scaled against each other. Calibrating them properly needs Woodhouse's measured
+        // rosin data and a real cello corpus (#52); neither exists here yet.
+        //
+        // Everything else was tried and is worse:
+        //   HEAT 0.055 -> 0.005 at the physical time constant:  97c -> 41c. Still unusable,
+        //     and it walks toward constant-mu - the Friedlander ambiguity this model exists
+        //     to avoid. At HEAT = 0 exactly, the string NaNs above C3.
+        //   COOL 0.011 -> 0.005 (4 ms):   56 cents.
+        //   COOL 0.011 -> 0.002 (10 ms):  NaN.
+        // Only a fast patch tunes: at 0.60 the worst error over C1-C4 x pp/ff is 1 CENT.
+        //
+        // WHAT THIS COSTS, PLAINLY: with a 35 us relaxation the temperature tracks the
+        // instantaneous dissipated power, so this is no longer a THERMAL friction with
+        // hysteresis - it is a memoryless mu(P) law. It keeps the property that matters
+        // numerically (the load line meets it exactly once, so no ambiguity and no NaN) and
+        // loses the hysteresis. An instrument that is in tune and honestly described beats
+        // one that is a semitone flat and described as thermal.
+        const COOL: f32 = 0.60; // thermal relaxation of the contact patch
 
         // Rosin softens as it heats. This IS the friction law - there is no mu(v) anywhere.
         let mu = MU0 / (1.0 + self.temp);

@@ -2292,6 +2292,60 @@ fn board_tonality() {
 }
 
 #[cfg(test)]
+mod bowed_gates {
+    use crate::kernels::*;
+
+    /// AN INSTRUMENT MUST PLAY THE NOTE IT IS ASKED FOR. The cello was up to 97 CENTS FLAT -
+    /// nearly a semitone - and no check we had could see it. Every render gate, budget gate,
+    /// NaN gate and level gate was green while it played a different note than the one sent.
+    ///
+    /// Also gates the mechanism: the error MUST NOT depend on bow force. A real bowed string
+    /// flattens a few cents under force (Schelleng); ours flattened by 48 cents between pp
+    /// and ff, which is a lagging friction state, not a violin.
+    #[test]
+    fn cello_plays_in_tune_at_every_bow_force() {
+        let sr = 48000.0;
+        for midi in [31u8, 36, 43, 48, 55, 60] {
+            let f0 = 440.0 * 2f32.powf((midi as f32 - 69.0) / 12.0);
+            let mut cents = Vec::new();
+            for vel in [0.3f32, 1.0] {
+                let mut v = BowedVoice::start(f0, vel, sr);
+                let mut buf = vec![0.0f32; (2.0 * sr) as usize];
+                v.render(&mut buf);
+                let seg = &buf[(1.2 * sr) as usize..];
+                let p = sr / f0;
+                let (lo, hi) = ((p * 0.72) as usize, (p * 1.4) as usize);
+                let ac = |l: usize| -> f32 {
+                    seg[..seg.len() - hi].iter().zip(seg[l..].iter()).map(|(a, b)| a * b).sum()
+                };
+                let mut best = lo;
+                let mut bv = f32::NEG_INFINITY;
+                for l in lo..=hi {
+                    let a = ac(l);
+                    if a > bv { bv = a; best = l; }
+                }
+                let (y0, y1, y2) = (ac(best - 1), ac(best), ac(best + 1));
+                let d = 0.5 * (y0 - y2) / (y0 - 2.0 * y1 + y2);
+                let f = sr / (best as f32 + d);
+                let c = 1200.0 * (f / f0).log2();
+                assert!(
+                    c.abs() < 12.0,
+                    "midi {midi} vel {vel}: plays {c:.0} cents off - the friction state is \
+                     lagging and delaying the slip, so the loop is long"
+                );
+                cents.push(c);
+            }
+            let force_dep = (cents[0] - cents[1]).abs();
+            assert!(
+                force_dep < 10.0,
+                "midi {midi}: pitch moves {force_dep:.0} cents between pp and ff - a real \
+                 bowed string flattens a FEW cents under bow force, not a semitone"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod brass_gates {
     use crate::kernels::*;
 
