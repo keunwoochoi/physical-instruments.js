@@ -188,7 +188,56 @@ pub fn pickup_defaults(inst: Instrument) -> (f32, f32) {
     }
 }
 
-pub const MAX_BODY_MODES: usize = 16;
+pub const MAX_BODY_MODES: usize = 160;
+
+/// Synthesize a real piano soundboard, in place of the 8-mode token body.
+///
+/// The owner's diagnosis, by ear: "there is a similarity between this piano model sound
+/// and the electric guitar sound ... those twang". He is exactly right, and it is not a
+/// coincidence - an electric guitar is a string with a pickup and NO BODY, and our piano
+/// was a string with a fake body. The 12-mode "board" was fired by a synthetic click and
+/// no string energy ever passed through it; the string reached the output through an EQ,
+/// 75% dry. A raw string IS a twang. Same object, same sound.
+///
+/// A real board is not a handful of resonances. Ege & Boutillon measured an asymptotic
+/// modal density of 1/19.5 modes per Hz on a strung upright - about FIFTY modes below
+/// 1 kHz - with a mean loss factor around 2%. That density, and the way the modes overlap,
+/// is what turns a string into a piano.
+///
+/// Above the modal-overlap crossover (mu = n*eta*f = 1, i.e. ~975 Hz) individual modes are
+/// no longer resolvable and a dense deterministic bank is the wrong estimator, so the modes
+/// thin out and a broadband tail carries the top.
+pub fn piano_board(sr: f32, out: &mut [(f32, f32, f32)]) -> usize {
+    const DENSITY: f32 = 1.0 / 19.5; // modes per Hz (Ege & Boutillon, strung upright)
+    const ETA: f32 = 0.021; // mean loss factor
+    let mut n = 0;
+    let mut f = 48.0f32;
+    let mut seed = 0x9E3779B9u32;
+    let mut rnd = || {
+        seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+        (seed >> 8) as f32 / 16_777_216.0
+    };
+    while n < out.len() && f < 5200.0 {
+        // t60 from the loss factor: decay rate = pi*f*eta
+        let t60 = 6.907755 / (core::f32::consts::PI * f * ETA);
+        // amplitude: the board radiates best in the 150-800 Hz region and rolls off either
+        // side. The +-30% scatter is the point - a board whose modes are evenly weighted
+        // sounds synthetic, and its notes all decay identically.
+        let lf = (f / 260.0).ln();
+        let shape = (-0.5 * lf * lf / 1.5).exp();
+        let g = shape * (0.7 + 0.6 * rnd());
+        out[n] = (f, t60.clamp(0.05, 2.5), g);
+        n += 1;
+        // spacing from the modal density, jittered. Above the modal-overlap crossover
+        // (~975 Hz) individual modes stop being resolvable, so thin them out.
+        let mut step = 1.0 / DENSITY;
+        if f > 975.0 {
+            step *= 1.0 + (f - 975.0) / 700.0;
+        }
+        f += step * (0.55 + 0.9 * rnd());
+    }
+    n
+}
 
 /// Instrument body as a parallel modal resonator bank on the track bus
 /// (Karjalainen/Smith commuted-body lineage: string+body are ~linear, so the body
@@ -327,7 +376,7 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
         Instrument::EPiano => 1.17,       // EP r2 tine/pickup rebuild, reverb-flat re-bake 2026-07-13 (×1.05)
         Instrument::Drums => 0.58,        // drums r4 0.61 x room 0.95 (verify by sweep)
         Instrument::SynthPad => 0.51,     // reverb pre-delay re-bake 2026-07-13 (x1.08)
-        Instrument::Piano => 0.066, // P1 per-key calibration re-bake (per-key LUFS trims raised the mid; was -14.9 LUFS at 0.130, x0.51 per measure-loudness)
+        Instrument::Piano => 0.0319, // P1 per-key calibration re-bake (per-key LUFS trims raised the mid; was -14.9 LUFS at 0.130, x0.51 per measure-loudness)
         Instrument::GuitarSteel => 0.364,   // body-round 0.387 x room 0.94 (verify by sweep)
         Instrument::GuitarElectric => 0.416, // reverb pre-delay re-bake 2026-07-13 (x1.08)
         Instrument::GuitarDistorted => 0.135, // reverb pre-delay re-bake 2026-07-13 (x1.06)
@@ -2840,6 +2889,7 @@ impl PianoVoice {
         // r2/r3 anchor laws. The two-point solve fixes the r3 imbalance where
         // the singing range's mid partials died ~2× fast while p1 lingered.
         let f_hi = (8.0 * f0).min(4000.0);
+
         let (loss, lp_c) = solve_piano_loss(f0, sr, t60, t60_hi, f_hi);
         // Stiffness (inharmonicity): per-note-solved allpass cascade from the
         // per-key measured B (see design_piano_dispersion). Replaces the r3
@@ -2876,7 +2926,12 @@ impl PianoVoice {
         let kb = (key / 0.31).min(1.0);
         let gap_cap = 3.0 + 60.0 * kb * kb;
         let rate_gap = (60.0 / t60_prompt - 60.0 / t60).max(0.0).min(gap_cap);
-        let bridge_g0 = rate_gap / (8.686 * n_strings as f32 * f0);
+        // GAP_BOOST: how strongly the in-phase (prompt) unison mode drains into the bridge
+        // relative to the anti-phase (aftersound) modes. This gap IS the two-stage decay -
+        // a piano's fast bloom then long singing tail - and it is the single biggest thing
+        // separating a piano's sustain from a plucked string's.
+        const GAP_BOOST: f32 = 4.0;
+        let bridge_g0 = GAP_BOOST * rate_gap / (8.686 * n_strings as f32 * f0);
         // g1 — through the admittance lowpass: gives the FUNDAMENTAL its extra
         // dive while upper partials keep ~the broadband rate. P1: the dive is
         // a per-key MEASURED quantity (strong only around C3–G3 — C3 p1 dives

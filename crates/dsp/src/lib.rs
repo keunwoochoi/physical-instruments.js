@@ -567,7 +567,16 @@ impl Engine {
             t.wdf_on = kernels::WDF_AMP_DEFAULT && t.wdf_voiced;
             // body resonator bank (acoustics)
             let sr = self.sample_rate;
-            let (dry, modes) = body_defaults(instrument);
+            // The piano gets a real soundboard; everything else keeps its token body.
+            let mut pb = [(0.0f32, 0.0f32, 0.0f32); MAX_BODY_MODES];
+            let (dry, modes): (f32, &[(f32, f32, f32)]) = if instrument == Instrument::Piano {
+                let n = kernels::piano_board(sr, &mut pb);
+                // and the string is heard THROUGH it, not 75% around it
+                (0.30, &pb[..n])
+            } else {
+                let (d, m) = body_defaults(instrument);
+                (d, m)
+            };
             t.body_dry = dry;
             t.body_n = modes.len().min(MAX_BODY_MODES);
             for (i, &(f, t60, g)) in modes.iter().take(t.body_n).enumerate() {

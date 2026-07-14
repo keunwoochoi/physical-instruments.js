@@ -18,6 +18,26 @@
 - paid or quota-consuming external resources: **off**
 - public posts (Show HN, social, docs deploys): **off**
 
+## Commit messages own the engineering record
+
+**This is not style guidance. It is the primary research output of this project.**
+
+The diff shows *what* changed. It can never show what was wrong, how we knew, what we measured, what we tried that failed, or what caught the error — and that is the part that is unrecoverable once the session ends. A commit message is the only artifact that carries that reasoning **permanently attached to the code it explains**. Issues get closed, PRs get squashed out of memory, chat transcripts vanish. `git log` does not.
+
+This work will be written up. **Write every commit as if the technical report is being drafted from `git log` alone, because it will be.**
+
+Every non-trivial commit body records, in prose:
+
+1. **The defect, and how it was actually found.** By ear? By a metric? By a persona review? By the owner? Say so, and quote the owner verbatim if that is what happened — *"there is a similarity between this piano model sound and the electric guitar sound … those twang"* is worth more than any paraphrase.
+2. **The measurement, before and after, with units.** Not "improved the decay" — *"two-stage decay ratio 1.57× → 3.10×; a real piano is 2–4×; our own electric guitar measured 2.16×."* A number with no comparator is not evidence.
+3. **The root cause, named.** Not the symptom. Why the code did the wrong thing.
+4. **What was tried and abandoned, and why.** Including — *especially* including — fixes that made things **worse**, diagnoses that turned out to be **wrong**, and measurements that were themselves **broken**. These are the most valuable lines in the repository and they exist nowhere else. Do not quietly drop a failed attempt.
+5. **The cost.** CPU, memory, bundle. A quality claim without a cost is half a claim.
+
+If a commit changes how something sounds and the body does not contain a number, it is not finished.
+
+The same discipline governs the PR body's **Agentic process trace** (below) and the engineering journey log (#51). The commit is the finest-grained surface and the one that never gets detached from the code; the journey log is the narrative across sessions. Neither replaces the other.
+
 ## GitHub workflow
 
 - Search existing issues and pull requests before creating a new work item.
