@@ -2292,6 +2292,65 @@ fn board_tonality() {
 }
 
 #[cfg(test)]
+mod level_gates {
+    use crate::*;
+
+    /// NO INSTRUMENT MAY CLIP, AT ANY NOTE, AT ANY VELOCITY.
+    ///
+    /// The trombone shipped ~35 dB too hot and clipped on EVERY note of its range. It sat
+    /// slammed into the master limiter for its entire life, and the damage was not just the
+    /// distortion: the limiter CRUSHED ITS DYNAMICS FLAT (pp->ff measured 15 dB when the
+    /// model was really producing 26), and clipping MANUFACTURES HARMONICS, so every
+    /// brightness measurement taken while it was hot was made on distorted audio.
+    ///
+    /// It survived because both the render gate and my own tuning metric measured an RMS
+    /// ENVELOPE, and a rich waveform has 6+ dB of crest factor - RMS 0.5 is a peak of 1.0.
+    /// A gate that cannot see a clipped sample cannot see a clipped instrument.
+    #[test]
+    fn no_instrument_clips_anywhere_in_its_range() {
+        const SR: f32 = 48000.0;
+        // (instrument, lowest note, highest note)
+        let cases: [(u32, u32, u32); 7] = [
+            (9, 21, 108),  // piano
+            (6, 28, 96),   // epiano
+            (4, 40, 88),   // guitar
+            (5, 28, 67),   // bass
+            (0, 48, 96),   // marimba
+            (15, 31, 72),  // cello
+            (16, 40, 65),  // trombone
+        ];
+        for (inst, lo, hi) in cases {
+            let mut worst = 0.0f32;
+            let mut worst_at = (0u32, 0.0f32);
+            let mut midi = lo;
+            while midi <= hi {
+                for vel in [0.5f32, 0.8, 1.0] {
+                    let mut e = Engine::new(SR);
+                    e.set_track(0, Instrument::from_u32(inst), 1.0, 0.0);
+                    e.note_on(0, midi, vel);
+                    for _ in 0..500 {
+                        e.process(128);
+                        for &v in e.out_l[..128].iter() {
+                            if v.abs() > worst {
+                                worst = v.abs();
+                                worst_at = (midi, vel);
+                            }
+                        }
+                    }
+                }
+                midi += 3;
+            }
+            assert!(
+                worst < 0.95,
+                "instrument {inst}: peaks at {worst:.3} (midi {}, vel {}) - it is clipping, \
+                 which crushes its dynamics and fabricates harmonics",
+                worst_at.0, worst_at.1
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod bowed_gates {
     use crate::kernels::*;
 

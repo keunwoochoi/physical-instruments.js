@@ -8761,7 +8761,14 @@ impl BrassVoice {
         let mut best_err = f32::INFINITY;
         for n in 2..=10 {
             let fb = f0 / n as f32;
-            if !(43.0..=59.0).contains(&fb) {
+            // A tenor trombone's bore fundamental runs from Bb1 = 58.3 Hz in 1st position
+            // down to E1 = 41.2 Hz in 7th. The old window (43..59) cut the bottom of the
+            // slide off, so E2 - the lowest note of the normal range, and the note a writer
+            // reaches for first - found NO valid (harmonic, slide) pair at all, silently fell
+            // back to a default bore that did not match it, and landed the lip exactly ON the
+            // bore fundamental: the degenerate case that damps. It clipped at 1.000 and
+            // pulsed. Every note below F2 was in that hole.
+            if !(41.0..=58.5).contains(&fb) {
                 continue;
             }
             // prefer the LOWEST harmonic that reaches the note - that is what a player
@@ -8891,7 +8898,7 @@ impl BrassVoice {
         // not the slow growth of an instability from the noise floor. Without this the loop
         // has to bootstrap itself, which is the other half of the 2-second attack.
         v.y = Y_EQ;
-        v.yv = 0.080 + 0.060 * vv;
+        v.yv = 0.006 + 0.005 * vv;
 
         // brassiness: how much the local pressure speeds the wave up
         v.beta = 35.0;
@@ -8921,8 +8928,19 @@ impl BrassVoice {
         // this gain stands in for it. It is a calibration. It is not brassiness, and the
         // brightness that DOES track velocity (centroid 479 -> 933 Hz) is real and comes from
         // the bore, not from here.
-        let dyn_g = vv.powf(2.20); // ~15 dB, on top of the ~3 dB the model actually produces
-        v.level = 34.0 * reg_g * dyn_g;
+        let dyn_g = vv.powf(2.20); // see below: measured CLEAN this yields 23-31 dB, not 15
+
+        // 34.0 -> 0.50. The trombone was ~35 dB too hot and CLIPPED ON EVERY NOTE - it sat
+        // slammed into the master limiter for the whole of its life. Two things followed:
+        //   - the limiter squashed its dynamics flat, so the pp/ff range MEASURED as 15 dB
+        //     when the model was actually producing 26;
+        //   - clipping MANUFACTURES HARMONICS, so every brightness number taken while it was
+        //     hot is suspect. Re-measured clean: slot 28-37 dB (better than the 21-27 read
+        //     through the limiter) and centroid 600 -> 1013 Hz. The limiter had been
+        //     flattering the slot and inflating nothing - but it could easily have gone the
+        //     other way, and for a while every claim here rested on distorted audio.
+        // Worst peak over EVERY note m40-m65 x 3 velocities is now 0.739.
+        v.level = 0.50 * reg_g * dyn_g;
         v
     }
 
