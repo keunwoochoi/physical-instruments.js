@@ -8034,7 +8034,11 @@ impl BowedVoice {
             v.body_g[i] = *g * 0.06;
         }
 
-        v.level = 0.0045; // provisional; NOT a measured LUFS bake (spike)
+        // Loudness across the register was 15 dB uneven (low notes far hotter), which makes
+        // the instrument unplayable in a mix. Compensate against f0. This is a provisional
+        // bake, NOT the measured BS.1770 one the other instruments have - see measure-loudness.
+        let reg_g = (f0 / 130.0).powf(0.55).clamp(0.55, 2.4);
+        v.level = 0.0013 * reg_g; // provisional; NOT a measured LUFS bake (spike)
         v
     }
 
@@ -8399,7 +8403,11 @@ impl BrassVoice {
 
         v.dbg_fbore = f_bore;
         v.dbg_n = n_sel;
-        v.level = 4.0; // provisional; NOT a measured LUFS bake (spike)
+        // The trombone came out ~22 dB below the cello and 17 dB uneven across the register
+        // (low slots much quieter). Both make it useless next to anything else. Provisional
+        // bake, NOT the measured BS.1770 one.
+        let reg_g = (110.0 / f0.max(40.0)).powf(0.85).clamp(0.35, 2.2);
+        v.level = 34.0 * reg_g; // provisional; NOT a measured LUFS bake (spike)
         v
     }
 
