@@ -8842,9 +8842,16 @@ struct BrassVoicing {
     n_max: u32,
     /// f0 floor to keep slot() out of the degenerate sub-bass.
     f0_floor: f32,
-    /// Lip resonance as a fraction of the played pitch. Below 1 so the outward-striking
-    /// valve sits below the bore mode and speaks (Fletcher).
+    /// Fixed lip placement as a fraction of f0 (used when lip_k == 0). The trombone plays
+    /// only low slots and was reference-matched at a fixed 0.70; keep it exactly.
     lip_ratio: f32,
+    /// n-scaled lip placement: when > 0, the lip sits at f0*(1 - lip_k/n) for harmonic n -
+    /// a fraction of the way from bore mode n-1 up to the target mode n, so the
+    /// outward-striking valve slots correctly at HIGH n (trumpet, horn). 0 disables it.
+    lip_k: f32,
+    /// Lip resonance damping (1/2Q). Lower = higher-Q = locks more tightly to ONE mode and
+    /// pulls the pitch less - which is what widely-spaced high-n slotting needs.
+    lip_damp: f32,
     /// Nonlinear wave steepening (brassiness). Higher = brighter at ff, but too high wolfs.
     beta: f32,
     /// Bell transmission split - lower reflects more (darker, more back into the loop).
@@ -8862,18 +8869,18 @@ fn brass_voicing(inst: Instrument) -> BrassVoicing {
         // Bb trumpet: short bore (~1.48 m), high fundamental, bright bell, plays low slots.
         Instrument::Trumpet => BrassVoicing {
             bore_lo: 78.0, bore_hi: 120.0, n_max: 10, f0_floor: 150.0,
-            lip_ratio: 0.92, beta: 40.0, bell_c: 0.20, bell_loss: 0.986, wall_c: 0.060, level_k: 1.5,
+            lip_ratio: 0.0, lip_k: 0.56, lip_damp: 0.05, beta: 40.0, bell_c: 0.20, bell_loss: 0.986, wall_c: 0.060, level_k: 1.5,
         },
         // F horn: long bore (~3.7 m), low fundamental, lives HIGH in the harmonic series,
         // mellow dark bell (it points backward). Its signature is a strong 2nd harmonic.
         Instrument::FrenchHorn => BrassVoicing {
             bore_lo: 33.0, bore_hi: 50.0, n_max: 16, f0_floor: 95.0,
-            lip_ratio: 0.70, beta: 26.0, bell_c: 0.50, bell_loss: 0.987, wall_c: 0.060, level_k: 1.7,
+            lip_ratio: 0.0, lip_k: 0.56, lip_damp: 0.05, beta: 26.0, bell_c: 0.50, bell_loss: 0.987, wall_c: 0.060, level_k: 1.7,
         },
         // Tenor trombone and anything else: the measured, reference-matched values.
         _ => BrassVoicing {
             bore_lo: 41.0, bore_hi: 58.5, n_max: 10, f0_floor: 60.0,
-            lip_ratio: 0.70, beta: 40.0, bell_c: 0.28, bell_loss: 0.985, wall_c: 0.060, level_k: 2.2,
+            lip_ratio: 0.70, lip_k: 0.0, lip_damp: 0.05, beta: 40.0, bell_c: 0.28, bell_loss: 0.985, wall_c: 0.060, level_k: 2.2,
         },
     }
 }
@@ -8964,16 +8971,28 @@ impl BrassVoice {
         v.wall_c = voicing.wall_c;
         v.bell_loss = voicing.bell_loss;
 
-        // Lip resonance sits AT the target pitch. Blowing harder does not change it -
-        // the player's embouchure does. Because the lip is outward-striking, it locks
-        // onto whichever bore mode is nearest, which is exactly slotting.
-        // Fletcher's valve classification: an OUTWARD-STRIKING valve oscillates when the
-        // air-column mode is ABOVE the lip resonance. Put the lip exactly ON the bore mode
-        // (as the first version did) and the loop is a positive resistance - it damps, and
-        // the instrument sits silent at equilibrium. Sit it slightly below and the phase
-        // rotates, the effective resistance goes negative, and it speaks.
-        v.lip_w = core::f32::consts::TAU * (f0 * voicing.lip_ratio) / sr;
-        v.lip_damp = 0.05;
+        // Lip resonance sits JUST BELOW the target pitch, and HOW FAR below must scale with
+        // the harmonic number - this is the fix that made the trumpet and horn slot.
+        //
+        // Fletcher's valve classification: an OUTWARD-STRIKING valve oscillates on the bore
+        // mode ABOVE the lip resonance, so the lip must sit below the target mode n but ABOVE
+        // the neighbouring mode n-1, or it locks to the wrong one. Mode n-1 sits at
+        // (n-1)/n * f0. A FIXED ratio (0.72*f0, which is all the trombone ever needed because
+        // it plays n=2-4) falls BELOW (n-1)/n once n>=4: at n=4, mode n-1 is at 0.75*f0, above
+        // a 0.72 lip, so the lip locked a fourth flat - measured -452 cents on the trumpet,
+        // exactly (n-1)/n. The horn, living up at n=16, was hopeless.
+        //
+        // So place the lip a fixed FRACTION of the way from mode n-1 up to mode n:
+        //   lip = f0 * (1 - k/n),  k in (0,1)
+        // k=0.5 is the midpoint; smaller k sits closer to the target mode. This is 0.72-ish
+        // for the trombone's low slots by construction and tracks upward as the note climbs.
+        let lip_frac = if voicing.lip_k > 0.0 {
+            (1.0 - voicing.lip_k / n_sel.max(2.0)).clamp(0.5, 0.985)
+        } else {
+            voicing.lip_ratio
+        };
+        v.lip_w = core::f32::consts::TAU * (f0 * lip_frac) / sr;
+        v.lip_damp = voicing.lip_damp;
         v.lip_area = 2.0;
         v.lip_gain = 0.05;
 
