@@ -8306,6 +8306,8 @@ impl Rail {
     }
 }
 
+const VIB_BUF: usize = 64;
+
 #[derive(Clone, Copy)]
 pub struct BowedVoice {
     nb: Rail, // nut  -> bow
@@ -8349,6 +8351,14 @@ pub struct BowedVoice {
 
     dc_x1: f32,
     dc_y1: f32,
+    // per-instrument vibrato: a modulated fractional delay on the output
+    vib_buf: [f32; VIB_BUF],
+    vib_pos: usize,
+    vib_phase: f32,
+    vib_inc: f32,
+    vib_amp: f32,  // delay swing, samples
+    vib_base: f32, // base delay, samples
+    vib_env: f32,  // depth ramp 0 -> 1
     level: f32,
     age: u64,
     releasing: bool,
@@ -8374,15 +8384,24 @@ struct BowedVoicing {
     br_c: f32,
     /// Per-note loudness bake (provisional spike level, NOT a measured LUFS bake).
     level_k: f32,
+    /// Bow speak time (s): how long the bow takes to set the string into Helmholtz motion.
+    /// A light violin string speaks fast; a heavy contrabass string is slow to answer.
+    speak: f32,
+    /// Vibrato rate (Hz) and depth (cents). MEASURED off the VSCO references, which are
+    /// vibrato takes: violin/viola vibrate ~+/-9 cents, the contrabass barely (~+/-4). This
+    /// is the clearest per-instrument difference in the real recordings and the one the ear
+    /// uses to tell them apart - the model played dead straight before this.
+    vib_rate: f32,
+    vib_depth: f32,
 }
 
 fn bowed_voicing(inst: Instrument) -> BowedVoicing {
     match inst {
-        Instrument::Violin => BowedVoicing { body_scale: 2.70, beta: 0.090, br_c: 0.78, level_k: 0.0016 },
-        Instrument::Viola => BowedVoicing { body_scale: 1.65, beta: 0.105, br_c: 0.70, level_k: 0.0015 },
-        Instrument::Contrabass => BowedVoicing { body_scale: 0.62, beta: 0.150, br_c: 0.55, level_k: 0.0011 },
+        Instrument::Violin => BowedVoicing { body_scale: 2.70, beta: 0.090, br_c: 0.78, level_k: 0.0016, speak: 0.030, vib_rate: 5.0, vib_depth: 9.0 },
+        Instrument::Viola => BowedVoicing { body_scale: 1.65, beta: 0.105, br_c: 0.70, level_k: 0.0015, speak: 0.040, vib_rate: 5.2, vib_depth: 9.0 },
+        Instrument::Contrabass => BowedVoicing { body_scale: 0.62, beta: 0.150, br_c: 0.55, level_k: 0.0011, speak: 0.070, vib_rate: 4.0, vib_depth: 4.0 },
         // Cello and anything else: the original, measured values.
-        _ => BowedVoicing { body_scale: 1.00, beta: 0.127, br_c: 0.62, level_k: 0.0013 },
+        _ => BowedVoicing { body_scale: 1.00, beta: 0.127, br_c: 0.62, level_k: 0.0013, speak: 0.050, vib_rate: 4.8, vib_depth: 7.0 }, // cello
     }
 }
 
@@ -8401,6 +8420,8 @@ impl BowedVoice {
             body_a1: [0.0; 8], body_r2: [0.0; 8], body_g: [0.0; 8],
             body_y1: [0.0; 8], body_y2: [0.0; 8],
             dc_x1: 0.0, dc_y1: 0.0,
+            vib_buf: [0.0; VIB_BUF], vib_pos: 0, vib_phase: 0.0,
+            vib_inc: 0.0, vib_amp: 0.0, vib_base: 0.0, vib_env: 0.0,
             level: 0.0, age: 0, releasing: false,
             dbg_slip: 0.0, dbg_vin: 0.0, dbg_vinj: 0.0, dbg_n: 0.0,
         };
@@ -8483,7 +8504,7 @@ impl BowedVoice {
         v.env_target = 1.0;
         // a bow takes tens of ms to speak - this is why bowed notes cannot be
         // driven by an impulse
-        v.env_rate = 1.0 - (-1.0 / (0.035 * sr)).exp();
+        v.env_rate = 1.0 - (-1.0 / (voicing.speak * sr)).exp();
 
         // Cello body: measured-ish low modes (A0 ~ 220, main wood ~ 300, bridge hill).
         // A cello body is not a bank of sharp peaks - a high-Q low mode makes a WOLF,
@@ -8521,6 +8542,16 @@ impl BowedVoice {
         // bake, NOT the measured BS.1770 one the other instruments have - see measure-loudness.
         let reg_g = (f0 / 130.0).powf(0.55).clamp(0.55, 2.4);
         v.level = voicing.level_k * reg_g; // provisional; NOT a measured LUFS bake (spike)
+
+        // vibrato: a sinusoidally modulated delay of A samples produces a pitch swing of
+        // A*omega (fractional), so for a target depth in cents,
+        //   A = depth_cents * ln2 * sr / (1200 * 2*pi * rate).
+        // Base delay keeps the read strictly in the past even at the trough.
+        v.vib_inc = core::f32::consts::TAU * voicing.vib_rate / sr;
+        v.vib_amp = voicing.vib_depth * core::f32::consts::LN_2 * sr
+            / (1200.0 * core::f32::consts::TAU * voicing.vib_rate.max(0.5));
+        v.vib_amp = v.vib_amp.min((VIB_BUF as f32) * 0.4);
+        v.vib_base = v.vib_amp + 3.0;
         v
     }
 
@@ -8706,7 +8737,25 @@ impl BowedVoice {
             self.dbg_vinj = 0.98 * self.dbg_vinj + v_inj.abs();
             self.dbg_n = 0.98 * self.dbg_n + 1.0;
 
-            *s = hp * self.level;
+            // ---- vibrato: modulated fractional delay on the output ----
+            // Zero-mean, so the AVERAGE pitch is unchanged (the tuning gate still holds); the
+            // depth ramps in over ~0.25 s so the attack speaks straight, the way a player
+            // sets the note before rocking into it.
+            self.vib_env += (1.0 - self.vib_env) * 0.00008;
+            self.vib_buf[self.vib_pos] = hp;
+            self.vib_phase += self.vib_inc;
+            if self.vib_phase > core::f32::consts::TAU {
+                self.vib_phase -= core::f32::consts::TAU;
+            }
+            let d = self.vib_base + self.vib_amp * self.vib_env * self.vib_phase.sin();
+            let di = d.floor();
+            let fr = d - di;
+            let i0 = (self.vib_pos + VIB_BUF - di as usize) % VIB_BUF;
+            let i1 = (i0 + VIB_BUF - 1) % VIB_BUF;
+            let vib_out = self.vib_buf[i0] * (1.0 - fr) + self.vib_buf[i1] * fr;
+            self.vib_pos = (self.vib_pos + 1) % VIB_BUF;
+
+            *s = vib_out * self.level;
             self.age += 1;
         }
 
