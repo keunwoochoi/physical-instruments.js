@@ -54,6 +54,8 @@ pub enum Instrument {
     Trumpet = 20,
     /// French horn - `BrassVoice` at a long bore, high harmonics (#50 family).
     FrenchHorn = 21,
+    /// Saxophone - single-reed woodwind, `ReedVoice` (#50 family).
+    Saxophone = 22,
 }
 
 impl Instrument {
@@ -80,6 +82,7 @@ impl Instrument {
             19 => Self::Contrabass,
             20 => Self::Trumpet,
             21 => Self::FrenchHorn,
+            22 => Self::Saxophone,
             _ => Self::Marimba,
         }
     }
@@ -416,6 +419,7 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
         Instrument::Contrabass => 1.0,
         Instrument::Trumpet => 1.0,
         Instrument::FrenchHorn => 1.0,
+        Instrument::Saxophone => 1.0,
         Instrument::Marimba => 2.1,       // reference
         Instrument::Vibraphone => 4.9,    // was -30.5 LUFS
         Instrument::Glockenspiel => 30.6, // reverb pre-delay re-bake 2026-07-13 (x1.11)
@@ -444,6 +448,7 @@ pub fn room_send(inst: Instrument) -> f32 {
         Instrument::Contrabass => 0.10,
         Instrument::Trombone | Instrument::Trumpet => 0.13,
         Instrument::FrenchHorn => 0.15, // the horn lives on its room; it plays into the wall
+        Instrument::Saxophone => 0.12,
         Instrument::Drums | Instrument::DrumsRock => 0.16,
         Instrument::DrumsJazz => 0.18, // brushes/jazz kits are recorded roomier
         Instrument::Piano => 0.09,
@@ -6347,6 +6352,7 @@ pub enum Kernel {
     Off,
     Bowed(BowedVoice),
     Brass(BrassVoice),
+    Reed(ReedVoice),
     Modal(ModalVoice),
     Pluck(PluckVoice),
     EPluck(ElectricVoice),
@@ -6714,6 +6720,7 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
         Instrument::Trombone
         | Instrument::Trumpet
         | Instrument::FrenchHorn => Kernel::Brass(BrassVoice::start(inst, f0, vel, sr)),
+        Instrument::Saxophone => Kernel::Reed(ReedVoice::start(inst, f0, vel, sr)),
         Instrument::GuitarSteel => {
             // steel: darker loop than nylon in RELATIVE terms (h12/h1 t60 ratio
             // ~1/3 in ref 015) but a much brighter pick excitation near the
@@ -9409,5 +9416,235 @@ impl BrassVoice {
 
     pub fn probe(&self) -> (f32, f32, f32, f32) {
         (self.y, self.yv, self.dbg_u, self.dbg_pmp)
+    }
+}
+
+/// STATUS (WIP, dormant - not in the facade or playground). Two of the three original
+/// blockers are now SOLVED:
+///   1. It self-oscillates at f0 (closed-open quarter-wave topology + inverting bell).
+///   2. TIMBRE: it now has the sax's FULL harmonic series (h2 -9, h3 -11, h4 -16, matching a
+///      real tenor sax), not the clarinet's odd-only. A true conical bore was not needed - the
+///      nonlinear bore steepening (beta = 8) generates the even harmonics a cone would, and a
+///      one-pole wall loss (wall_c = 0.12) gives the correct rolloff. Fitted to VCSL.
+/// REMAINING, and it is the hard one: the oscillation is WEAK (rms ~0.004) and speaks only at
+/// ff; below ~vel 0.9 and above ~m67 it does not start. The loop gain is only marginally >1
+/// and does not scale with blowing pressure, so there is no dynamic range. This is the
+/// reed-bore COUPLING (the flow<->pressure impedance, normalised to 1 here) and the operating
+/// point being dragged out of the negative-resistance region by the bore DC pressure. That is
+/// the last blocker before the sax is playable, and it wants a real coupling/impedance model,
+/// not another parameter sweep.
+/// Single-reed woodwind (saxophone). A cousin of BrassVoice - same bore waveguide, bell and
+/// viscothermal wall loss - but the valve is a REED, not a lip, and that flips two things:
+///
+///  1. The reed is INWARD-striking: blowing pushes it SHUT (a lip is pushed open). So the
+///     reed forcing carries +dp where the lip carried -dp. This is the whole difference in
+///     the self-oscillation, and it is why a clarinet speaks BELOW the reed resonance while a
+///     brass instrument speaks above the lip resonance (Fletcher's valve classification).
+///
+///  2. There is NO SLOTTING. A sax plays the FUNDAMENTAL of the current tube length (the tone
+///     holes set the length), so the bore round trip is simply one period of f0 and the reed
+///     beats at that fundamental. None of the brass lip/harmonic selection problem exists here.
+///
+/// A saxophone bore is CONICAL, so like the brass it radiates the full harmonic series
+/// (odd+even); we get that by construction from a non-inverting round trip, same as brass.
+#[derive(Clone, Copy)]
+pub struct ReedVoice {
+    fwd: [f32; BORE_BUF],
+    bwd: [f32; BORE_BUF],
+    pos: usize,
+    len: f32,
+
+    bell_lp: f32,
+    bell_c: f32,
+    bell_loss: f32,
+    wall_lp: f32,
+    wall_c: f32,
+
+    // reed: inward-striking valve
+    y: f32,    // opening (>=0; 0 == beating shut)
+    yv: f32,
+    y0: f32,   // rest opening
+    reed_w: f32,
+    reed_damp: f32,
+    reed_k: f32,   // how hard pressure closes the reed
+    reed_area: f32,
+    dp_prev: f32,  // last-sample reed pressure, for the one-sample-delayed quasi-static reed
+
+    pm: f32,   // mouth pressure
+    env: f32,
+    env_target: f32,
+    env_rate: f32,
+
+    beta: f32,
+    rdc_x1: f32,
+    rdc_y1: f32,
+    rad_x1: f32,
+    dc_x1: f32,
+    dc_y1: f32,
+    level: f32,
+    releasing: bool,
+    age: u64,
+    rms: f32,
+    dbg_u: f32,
+    dbg_pmp: f32,
+}
+
+impl ReedVoice {
+    pub fn start(_inst: Instrument, f0: f32, vel: f32, sr: f32) -> Self {
+        let mut v = ReedVoice {
+            fwd: [0.0; BORE_BUF], bwd: [0.0; BORE_BUF], pos: 0, len: 1.0,
+            bell_lp: 0.0, bell_c: 0.0, bell_loss: 0.0, wall_lp: 0.0, wall_c: 0.06,
+            y: 0.0, yv: 0.0, y0: 0.0, reed_w: 0.0, reed_damp: 0.0, reed_k: 0.0, reed_area: 0.0, dp_prev: 0.0,
+            pm: 0.0, env: 0.0, env_target: 1.0, env_rate: 0.0,
+            beta: 0.0, rdc_x1: 0.0, rdc_y1: 0.0, rad_x1: 0.0, dc_x1: 0.0, dc_y1: 0.0,
+            level: 0.0, releasing: false, age: 0, rms: 0.0, dbg_u: 0.0, dbg_pmp: 0.0,
+        };
+
+        // Bore round trip = one period of f0 (the fundamental the reed plays).
+        // CLOSED-OPEN (clarinet) topology: reed end closed (non-inverting), bell open
+        // (inverting). That is the configuration that self-oscillates. Closed-open is a
+        // QUARTER-wave resonator, so the tube is period/4 and the round trip is half a period;
+        // the inverting bell supplies the sign flip that makes the full round trip one period.
+        let period = sr / f0.max(30.0);
+        v.len = (period * 0.25).clamp(4.0, (BORE_BUF - 4) as f32);
+
+        // bell / open end: reflect lows, radiate highs (a sax bell is small; the tone holes
+        // do most of the radiating, but the same lowpass-split models the net effect).
+        v.bell_c = 0.5;
+        v.bell_loss = 0.995;
+        v.wall_c = 0.12;
+
+        // reed: rest OPEN; pressure pushes it shut. Resonance high above the note and heavily
+        // damped - a sax reed is a fast beating valve, not a pitch selector.
+        v.reed_w = core::f32::consts::TAU * 2600.0 / sr;
+        v.reed_damp = 0.5;
+        v.y0 = 1.0;
+        v.reed_k = 1.0;
+        v.reed_area = 0.4;
+
+        // breath: harder = more pressure = brighter + louder. A sax has a wide dynamic range.
+        let vv = vel.clamp(0.05, 1.0);
+        v.pm = 0.28 + 0.20 * vv;
+        v.env_rate = 1.0 - (-1.0 / (0.020 * sr)).exp();
+
+        v.beta = 8.0; // bore steepening -> even harmonics (the conical-bore full series, approximated) (a sax gets brassy when pushed, but less than brass)
+
+        // provisional spike level (NOT a measured LUFS bake); register-compensated
+        let reg_g = (150.0 / f0.max(40.0)).powf(0.5).clamp(0.4, 2.0);
+        v.level = 0.9 * reg_g;
+
+        // A tongued attack: seed the bore with a short pressure pulse so the oscillation has
+        // something to grow FROM. A reed self-oscillator sits at a DC operating point until
+        // perturbed; from perfect silence it never starts. (The brass has the same need - it
+        // kicks the lip velocity.)
+        for i in 0..(v.len as usize).min(BORE_BUF - 1) {
+            v.fwd[i] = 0.05 * vv;
+        }
+        v
+    }
+
+    #[inline(always)]
+    fn read(buf: &[f32; BORE_BUF], pos: usize, d: f32) -> f32 {
+        let di = d.floor();
+        let fr = d - di;
+        let i = (pos + BORE_BUF - di as usize - 1) % BORE_BUF;
+        let j = (i + BORE_BUF - 1) % BORE_BUF;
+        buf[i] * (1.0 - fr) + buf[j] * fr
+    }
+
+    pub fn render(&mut self, out: &mut [f32]) -> bool {
+        for s in out.iter_mut() {
+            self.env += (self.env_target - self.env) * self.env_rate;
+            let pm = self.pm * self.env;
+
+            // nonlinear bore propagation (brassiness), same as brass
+            let p_bell_lin = Self::read(&self.fwd, self.pos, self.len);
+            let p_lip_lin = Self::read(&self.bwd, self.pos, self.len);
+            let p_tot = p_bell_lin + p_lip_lin;
+            let d = (self.len - self.beta * p_tot).clamp(4.0, self.len + 8.0);
+            let p_bell = Self::read(&self.fwd, self.pos, d);
+            let p_minus = Self::read(&self.bwd, self.pos, d);
+
+            // ---- reed scattering junction (closed form) ----
+            // Mouthpiece pressure if no flow is p = 2*p_minus; the pressure available across
+            // the reed is D = pm - 2*p_minus. The Bernoulli flow through the reed slit is
+            // u = a*sqrt(|dp|)*sign(dp) with a set by the reed opening, and dp = D - u. That
+            // is one quadratic in sqrt(|dp|): s^2 + a*s - |D| = 0 (Bilbao/Smith).
+            // ---- reed junction: IMPLICIT solve, inward-striking ----
+            // The reed opening y and the flow u must be solved TOGETHER at this sample. That
+            // simultaneity IS the self-oscillation: y = y0 - k*dp shrinks as pressure rises,
+            // so the flow u = area*y*sqrt(dp) first grows then FALLS with dp - a region of
+            // NEGATIVE differential resistance, and that is what pumps the bore. My first
+            // version used last sample's dp for y (a one-sample delay), which decoupled them,
+            // destroyed the instantaneous negative resistance, and the reed never oscillated -
+            // it sat at a stable DC operating point and the instrument was silent. Newton on
+            //   f(dp) = dp + u(dp) - dd = 0,   dd = pm - 2*p_minus
+            // converges in a few steps; warm-started from last sample.
+            // Fixed-point on the CLOSED-FORM flow, not Newton. The flow u ~ y*sqrt(|dp|) has
+            // INFINITE slope at dp=0, so a Newton step started from rest pins dp at zero, the
+            // flow never opens, and the reed stays silent (it did). Instead: for a FIXED
+            // opening y the junction is the same quadratic the brass solves in closed form
+            //   s = (-a + sqrt(a^2 + 4|dd|)) / 2,   a = area*y,   u = a*s,  dp = s^2
+            // so iterate {solve flow given y; update y from the new dp} a few times. Stable,
+            // and it keeps the instantaneous y<->dp coupling that makes the reed oscillate.
+            let close = if self.releasing { self.env } else { 1.0 };
+            let dd = pm - 2.0 * p_minus;
+            let y0c = self.y0 * close;
+            let mut dp = self.dp_prev;
+            let mut u = 0.0f32;
+            for _ in 0..3 {
+                let y = (y0c - self.reed_k * dp).max(0.0);
+                let a = self.reed_area * y;
+                let s = 0.5 * (-a + (a * a + 4.0 * dd.abs()).sqrt());
+                u = a * s * dd.signum();
+                dp = s * s * dd.signum();
+            }
+            let y = (y0c - self.reed_k * dp).max(0.0);
+            self.dp_prev = flush_denormal(dp);
+            self.y = y;
+            self.yv = 0.0;
+            let _ = self.reed_w;
+            let _ = self.reed_damp;
+            let p_plus = p_minus + u;
+            let p_mp = p_plus + p_minus;
+
+            // ---- bell: reflect lows, radiate highs (non-inverting -> full harmonics) ----
+            let loss = self.bell_loss * (0.90 + 0.10 * self.env);
+            self.bell_lp += self.bell_c * (p_bell - self.bell_lp);
+            let refl_raw = loss * flush_denormal(self.bell_lp);
+            let refl = refl_raw - self.rdc_x1 + DC_POLE * self.rdc_y1;
+            self.rdc_x1 = refl_raw;
+            self.rdc_y1 = flush_denormal(refl);
+            let radiated = p_bell - refl_raw;
+
+            // wall loss inside the loop, then write & advance
+            self.wall_lp += self.wall_c * (p_plus - self.wall_lp);
+            self.fwd[self.pos] = flush_denormal(self.wall_lp);
+            self.bwd[self.pos] = -refl; // open bell inverts (closed-open resonator)
+            self.pos = (self.pos + 1) % BORE_BUF;
+
+            let y = radiated;
+            let hp = y - self.dc_x1 + DC_POLE * self.dc_y1;
+            self.dc_x1 = y;
+            self.dc_y1 = flush_denormal(hp);
+
+            self.dbg_u = u;
+            self.dbg_pmp = p_mp;
+            self.rms = 0.999 * self.rms + 0.001 * hp.abs();
+            *s = hp * self.level;
+            self.age += 1;
+        }
+        !(self.releasing && self.env < 1.0e-3 && self.rms < 2.0e-4)
+    }
+
+    pub fn damp(&mut self, sr: f32) {
+        self.releasing = true;
+        self.env_target = 0.0;
+        self.env_rate = 1.0 - (-1.0 / (0.040 * sr)).exp();
+    }
+
+    /// (reed opening y, last dp, last flow u, mouthpiece pressure) - diagnostics only.
+    pub fn reed_probe(&self) -> (f32, f32, f32, f32) {
+        (self.y, self.dp_prev, self.dbg_u, self.dbg_pmp)
     }
 }

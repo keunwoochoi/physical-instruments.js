@@ -717,7 +717,8 @@ impl Engine {
             | Instrument::Viola
             | Instrument::Contrabass
             | Instrument::Trumpet
-            | Instrument::FrenchHorn => true,
+            | Instrument::FrenchHorn
+            | Instrument::Saxophone => true,
         };
         if !damps {
             return;
@@ -769,8 +770,10 @@ impl Engine {
                         Kernel::Piano(p) => p.damp(),
                     Kernel::Bowed(b) => b.damp(sr),
                     Kernel::Brass(b) => b.damp(sr),
+                    Kernel::Reed(b) => b.damp(sr),
                         Kernel::Bowed(b) => b.damp(sr),
                     Kernel::Brass(b) => b.damp(sr),
+                    Kernel::Reed(b) => b.damp(sr),
                         _ => {}
                     }
                 }
@@ -813,6 +816,7 @@ impl Engine {
                     Kernel::Piano(p) => p.damp(),
                     Kernel::Bowed(b) => b.damp(sr),
                     Kernel::Brass(b) => b.damp(sr),
+                    Kernel::Reed(b) => b.damp(sr),
                     _ => {}
                 }
             }
@@ -832,6 +836,7 @@ impl Engine {
                     Kernel::Piano(p) => p.damp(),
                     Kernel::Bowed(b) => b.damp(sr),
                     Kernel::Brass(b) => b.damp(sr),
+                    Kernel::Reed(b) => b.damp(sr),
                     Kernel::Drum(_) => {} // short one-shots; let them ring out
                     Kernel::Off => {}
                 }
@@ -872,6 +877,7 @@ impl Engine {
                     Kernel::Piano(pn) => pn.render(&mut self.voice_buf[..frames]),
                     Kernel::Bowed(b) => b.render(&mut self.voice_buf[..frames]),
                     Kernel::Brass(b) => b.render(&mut self.voice_buf[..frames]),
+                    Kernel::Reed(b) => b.render(&mut self.voice_buf[..frames]),
                     Kernel::Off => false,
                 };
                 let th = (v.pan.clamp(-1.0, 1.0) + 1.0) * core::f32::consts::FRAC_PI_4;
@@ -2570,6 +2576,4 @@ mod brass_gates {
         }
     }
 }
-
-
 
