@@ -2315,7 +2315,7 @@ mod level_gates {
     fn no_instrument_clips_anywhere_in_its_range() {
         const SR: f32 = 48000.0;
         // (instrument, lowest note, highest note)
-        let cases: [(u32, u32, u32); 10] = [
+        let cases: [(u32, u32, u32); 11] = [
             (9, 21, 108),  // piano
             (6, 28, 96),   // epiano
             (4, 40, 88),   // guitar
@@ -2326,6 +2326,7 @@ mod level_gates {
             (17, 55, 96),  // violin
             (18, 48, 88),  // viola
             (19, 28, 60),  // contrabass
+            (20, 53, 84),  // trumpet
         ];
         for (inst, lo, hi) in cases {
             let mut worst = 0.0f32;
@@ -2467,6 +2468,38 @@ mod bowed_gates {
 mod brass_gates {
     use crate::kernels::*;
 
+    /// THE TRUMPET MUST PLAY IN TUNE ACROSS ITS RANGE. The n-scaled lip fixed gross
+    /// mis-slotting (notes were up to 450 cents off); the residual was a systematic lip-bore
+    /// PULL, sharpest at the n=3 slot (+44 cents), cancelled by pre-flattening the bore per
+    /// slot (brass_slot_pull_cents). This gate covers F3-Ab5 (n<=8), where autocorrelation is
+    /// reliable; the top n=9 notes read as octave errors in the analyzer, not the synthesis
+    /// (the band error stays 11 dB, which a real 3400-cent miss could not).
+    #[test]
+    fn trumpet_plays_in_tune_across_range() {
+        let sr = 48000.0;
+        let mut m = 53u8;
+        while m <= 80 {
+            let f0 = 440.0 * 2f32.powf((m as f32 - 69.0) / 12.0);
+            let mut v = BrassVoice::start(Instrument::Trumpet, f0, 0.8, sr);
+            let mut buf = vec![0.0f32; (2.0 * sr) as usize];
+            v.render(&mut buf);
+            let seg = &buf[(1.2 * sr) as usize..];
+            let p = sr / f0;
+            let (l0, l1) = ((p * 0.72) as usize, (p * 1.4) as usize);
+            let ac = |l: usize| -> f32 {
+                seg[..seg.len() - l1].iter().zip(seg[l..].iter()).map(|(a, b)| a * b).sum()
+            };
+            let mut best = l0;
+            let mut bv = f32::NEG_INFINITY;
+            for l in l0..=l1 { let a = ac(l); if a > bv { bv = a; best = l; } }
+            let (y0, y1, y2) = (ac(best - 1), ac(best), ac(best + 1));
+            let d = 0.5 * (y0 - y2) / (y0 - 2.0 * y1 + y2);
+            let c = 1200.0 * ((sr / (best as f32 + d)) / f0).log2();
+            assert!(c.abs() < 25.0, "trumpet midi {m}: plays {c:.0} cents off");
+            m += 1;
+        }
+    }
+
     /// A brass instrument that does not BEAT ITS LIPS is not a brass instrument - it is a
     /// sine wave. This is the check that would have caught the original model, and did not
     /// exist: every other gate (render, budget, NaN, level) was green while the lips sat
@@ -2537,4 +2570,5 @@ mod brass_gates {
         }
     }
 }
+
 

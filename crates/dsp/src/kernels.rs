@@ -8928,12 +8928,27 @@ struct BrassVoicing {
     level_k: f32,
 }
 
+/// Measured lip-bore detuning per slot: the outward-striking lip pulls the sounding pitch
+/// sharp of the bore mode, most at n=3 (+44 cents) and tapering with n. A single lip
+/// placement cannot zero it across the whole harmonic series (the pull is a resonance in
+/// lip-to-mode distance), so the bore length is PRE-FLATTENED by the measured pull, the way a
+/// real bore's register/end corrections vary per slot. Trumpet only for now; the trombone is
+/// reference-matched and gated without it, and the horn needs its own table.
+fn brass_slot_pull_cents(inst: Instrument, n: f32) -> f32 {
+    match inst {
+        Instrument::Trumpet => match n as u32 {
+            2 => -6.0, 3 => 44.0, 4 => 29.0, 5 => 16.0, 6 => 5.0, 7 => -3.0, _ => -10.0,
+        },
+        _ => 0.0,
+    }
+}
+
 fn brass_voicing(inst: Instrument) -> BrassVoicing {
     match inst {
         // Bb trumpet: short bore (~1.48 m), high fundamental, bright bell, plays low slots.
         Instrument::Trumpet => BrassVoicing {
             bore_lo: 78.0, bore_hi: 120.0, n_max: 10, f0_floor: 150.0,
-            lip_ratio: 0.0, lip_k: 0.56, lip_damp: 0.05, beta: 40.0, bell_c: 0.20, bell_loss: 0.986, wall_c: 0.060, level_k: 1.5,
+            lip_ratio: 0.0, lip_k: 0.56, lip_damp: 0.05, beta: 40.0, bell_c: 0.20, bell_loss: 0.986, wall_c: 0.060, level_k: 5.0,
         },
         // F horn: long bore (~3.7 m), low fundamental, lives HIGH in the harmonic series,
         // mellow dark bell (it points backward). Its signature is a strong 2nd harmonic.
@@ -8985,6 +9000,8 @@ impl BrassVoice {
     pub fn start(inst: Instrument, f0: f32, vel: f32, sr: f32) -> Self {
         let voicing = brass_voicing(inst);
         let (n_sel, f_bore) = Self::slot(f0.max(voicing.f0_floor), &voicing);
+        // flatten the bore by the measured lip pull so the sounding pitch lands on f0
+        let f_bore = f_bore * 2f32.powf(-brass_slot_pull_cents(inst, n_sel) / 1200.0);
 
         let mut v = Self {
             fwd: [0.0; BORE_BUF],
