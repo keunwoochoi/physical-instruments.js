@@ -8351,6 +8351,9 @@ pub struct BowedVoice {
 
     dc_x1: f32,
     dc_y1: f32,
+    // radiation brightness tilt (one-zero highpass)
+    tilt: f32,
+    tilt_x1: f32,
     // per-instrument vibrato: a modulated fractional delay on the output
     vib_buf: [f32; VIB_BUF],
     vib_pos: usize,
@@ -8384,6 +8387,10 @@ struct BowedVoicing {
     br_c: f32,
     /// Per-note loudness bake (provisional spike level, NOT a measured LUFS bake).
     level_k: f32,
+    /// Radiation brightness tilt (one-zero highpass coefficient, 0..1). The bridge/body
+    /// radiates high frequencies more efficiently than low (radiation resistance rises with
+    /// frequency); this lifts the upper harmonics the dark Helmholtz corner leaves too weak.
+    tilt: f32,
     /// Bow speak time (s): how long the bow takes to set the string into Helmholtz motion.
     /// A light violin string speaks fast; a heavy contrabass string is slow to answer.
     speak: f32,
@@ -8397,11 +8404,11 @@ struct BowedVoicing {
 
 fn bowed_voicing(inst: Instrument) -> BowedVoicing {
     match inst {
-        Instrument::Violin => BowedVoicing { body_scale: 2.70, beta: 0.090, br_c: 0.78, level_k: 0.0016, speak: 0.030, vib_rate: 5.0, vib_depth: 9.0 },
-        Instrument::Viola => BowedVoicing { body_scale: 1.65, beta: 0.105, br_c: 0.70, level_k: 0.0015, speak: 0.040, vib_rate: 5.2, vib_depth: 9.0 },
-        Instrument::Contrabass => BowedVoicing { body_scale: 0.62, beta: 0.150, br_c: 0.55, level_k: 0.0011, speak: 0.070, vib_rate: 4.0, vib_depth: 4.0 },
+        Instrument::Violin => BowedVoicing { body_scale: 2.70, beta: 0.075, br_c: 0.95, level_k: 0.0016, tilt: 0.55, speak: 0.030, vib_rate: 5.0, vib_depth: 9.0 },
+        Instrument::Viola => BowedVoicing { body_scale: 1.65, beta: 0.085, br_c: 0.92, level_k: 0.0015, tilt: 0.50, speak: 0.040, vib_rate: 5.2, vib_depth: 9.0 },
+        Instrument::Contrabass => BowedVoicing { body_scale: 0.62, beta: 0.110, br_c: 0.80, level_k: 0.0011, tilt: 0.35, speak: 0.070, vib_rate: 4.0, vib_depth: 4.0 },
         // Cello and anything else: the original, measured values.
-        _ => BowedVoicing { body_scale: 1.00, beta: 0.127, br_c: 0.62, level_k: 0.0013, speak: 0.050, vib_rate: 4.8, vib_depth: 7.0 }, // cello
+        _ => BowedVoicing { body_scale: 1.00, beta: 0.080, br_c: 0.90, level_k: 0.0010, tilt: 0.45, speak: 0.050, vib_rate: 4.8, vib_depth: 7.0 }, // cello
     }
 }
 
@@ -8420,6 +8427,7 @@ impl BowedVoice {
             body_a1: [0.0; 8], body_r2: [0.0; 8], body_g: [0.0; 8],
             body_y1: [0.0; 8], body_y2: [0.0; 8],
             dc_x1: 0.0, dc_y1: 0.0,
+            tilt: 0.0, tilt_x1: 0.0,
             vib_buf: [0.0; VIB_BUF], vib_pos: 0, vib_phase: 0.0,
             vib_inc: 0.0, vib_amp: 0.0, vib_base: 0.0, vib_env: 0.0,
             level: 0.0, age: 0, releasing: false,
@@ -8547,6 +8555,7 @@ impl BowedVoice {
         // A*omega (fractional), so for a target depth in cents,
         //   A = depth_cents * ln2 * sr / (1200 * 2*pi * rate).
         // Base delay keeps the read strictly in the past even at the trough.
+        v.tilt = voicing.tilt;
         v.vib_inc = core::f32::consts::TAU * voicing.vib_rate / sr;
         v.vib_amp = voicing.vib_depth * core::f32::consts::LN_2 * sr
             / (1200.0 * core::f32::consts::TAU * voicing.vib_rate.max(0.5));
@@ -8642,7 +8651,7 @@ impl BowedVoice {
         // numerically (the load line meets it exactly once, so no ambiguity and no NaN) and
         // loses the hysteresis. An instrument that is in tune and honestly described beats
         // one that is a semitone flat and described as thermal.
-        const COOL: f32 = 0.60; // thermal relaxation of the contact patch
+        const COOL: f32 = 1.2; // thermal relaxation of the contact patch
 
         // Rosin softens as it heats. This IS the friction law - there is no mu(v) anywhere.
         let mu = MU0 / (1.0 + self.temp);
@@ -8727,7 +8736,13 @@ impl BowedVoice {
                 body += y;
             }
 
-            let y = 0.7 * body + 0.3 * drive;
+            // radiation brightness tilt: lift the highs the dark corner leaves weak, and cut
+            // the relative bass so the tone is not boomy. A one-zero highpass mixed back so
+            // tilt=0 is flat, tilt->1 is +6 dB/oct.
+            let ybody = 0.7 * body + 0.3 * drive;
+            // high-shelf: y = (1+t)*x - t*x1, flat at DC, +~20log10(1+2t) dB at Nyquist.
+            let y = ybody + self.tilt * (ybody - self.tilt_x1);
+            self.tilt_x1 = flush_denormal(ybody);
             let hp = y - self.dc_x1 + DC_POLE * self.dc_y1;
             self.dc_x1 = y;
             self.dc_y1 = flush_denormal(hp);
