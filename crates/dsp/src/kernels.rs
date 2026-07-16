@@ -8939,6 +8939,9 @@ fn brass_slot_pull_cents(inst: Instrument, n: f32) -> f32 {
         Instrument::Trumpet => match n as u32 {
             2 => -6.0, 3 => 44.0, 4 => 29.0, 5 => 16.0, 6 => 5.0, 7 => -3.0, _ => -10.0,
         },
+        Instrument::FrenchHorn => match n as u32 {
+            2 => 24.0, 3 => 48.0, 4 => 36.0, 5 => 26.0, 6 => 40.0, _ => 40.0,
+        },
         _ => 0.0,
     }
 }
@@ -8950,10 +8953,18 @@ fn brass_voicing(inst: Instrument) -> BrassVoicing {
             bore_lo: 78.0, bore_hi: 120.0, n_max: 10, f0_floor: 150.0,
             lip_ratio: 0.0, lip_k: 0.56, lip_damp: 0.05, beta: 40.0, bell_c: 0.20, bell_loss: 0.986, wall_c: 0.060, level_k: 5.0,
         },
-        // F horn: long bore (~3.7 m), low fundamental, lives HIGH in the harmonic series,
-        // mellow dark bell (it points backward). Its signature is a strong 2nd harmonic.
+        // F horn: DORMANT, not shippable yet. A real horn's long bore forces it onto high
+        // harmonics (n up to 16) where the lip mis-selects the mode (locked +474c sharp,
+        // nearly a mode too high, on every note). Raising the bore so it plays LOW harmonics
+        // (n=2-5, like the trumpet) plus the per-slot pull correction below fixes the STABLE
+        // MIDDLE of each slot (within +/-15c), but the notes at slot BOUNDARIES still jump to
+        // the wrong mode (+200-340c) - the lip is ambiguous there and no single Q or placement
+        // resolves it (higher Q measured WORSE). That boundary mode-selection is the horn's
+        // real remaining problem and wants a different selector (hysteresis in the slot, or an
+        // explicit harmonic lock). Left dormant with the diagnosis; the bore/correction here
+        // are the progress, not the answer.
         Instrument::FrenchHorn => BrassVoicing {
-            bore_lo: 33.0, bore_hi: 50.0, n_max: 16, f0_floor: 95.0,
+            bore_lo: 58.0, bore_hi: 100.0, n_max: 9, f0_floor: 100.0,
             lip_ratio: 0.0, lip_k: 0.56, lip_damp: 0.05, beta: 26.0, bell_c: 0.50, bell_loss: 0.987, wall_c: 0.060, level_k: 1.7,
         },
         // Tenor trombone and anything else: the measured, reference-matched values.
