@@ -58,6 +58,8 @@ The same discipline governs the PR body's **Agentic process trace** (below) and 
 | Public API / packaging | `packages/core/README.md` | `demos/bundler-matrix/README.md` |
 | Any instrument/API/packaging PR | `skills/finalize-pr/SKILL.md` | `skills/panel-review/SKILL.md` (required before merge) |
 | Evaluating sound | `skills/run-evals/SKILL.md` | `evals/README.md` |
+| Improving an instrument's quality | `skills/instrument-quality-matrix/SKILL.md` | the aspect skills: `audit-{stability,headroom,tune,envelope,dynamics,voice}` — run in that order |
+| Iterating a model toward real references | `skills/match-reference/SKILL.md` | `skills/audit-voice/SKILL.md` for the "pick one, don't average" method |
 | Porting third-party code | `skills/port-audit/SKILL.md` | — |
 | New feature > 1 PR | `skills/new-design-doc/SKILL.md` | `agentic-docs/design/TEMPLATE.md` |
 | Progressive or stacked session wrap | `skills/wrap-session/SKILL.md` | `skills/finalize-pr/SKILL.md` for any potentially merge-ready PR |
