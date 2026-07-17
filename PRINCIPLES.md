@@ -25,6 +25,7 @@ Every developer who needs instrument sounds on the web should reach for instrume
 ## Engineering principles
 
 - **Eval before trust.** Listening tests and benchmarks decide, not intuition. Numbers accompany every quality claim.
+- **Every instrument is held to the quality matrix.** Instrument quality is not a vibe; it is six measurable aspects — **stability, headroom, tune, envelope, dynamics, voice** — each owned by a skill (`skills/audit-*`) and run in that dependency order (a clipping or NaN-ing voice corrupts every timbre and dynamics number, so those come first; tuning comes before voice, because a mis-slotted note fabricates brightness). No instrument ships until it is green on stability/headroom/tune and honestly graded on the rest. `skills/instrument-quality-matrix` is the canonical methodology; `skills/match-reference` is its research loop; `skills/audit-voice` carries the rule that we **pick one target tone and commit — never tune to the washed-out average.**
 - **The audio thread is sacred.** Allocation-free, lock-free, GC-free, denormal-flushed. Violations are bugs even when inaudible today.
 - **Degradation is acceptable; corruption is not.** Under load we shed voices gracefully; we never glitch, crackle, or go silent without a diagnostic.
 - **No silent errors, no silent fallbacks.** Loud on failure, silent on success.
