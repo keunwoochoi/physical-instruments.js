@@ -4788,7 +4788,7 @@ impl OrganVoice {
             phase: [0.0; 9], dphase: [0.0; 9], amp: [0.0; 9],
             env: 0.0, env_rate: 1.0 - (-1.0 / (0.006 * sr)).exp(),
             releasing: false, click: 0.0, click_lp: 0.0,
-            click_c: 1.0 - (-1.0 / (0.0016 * sr)).exp(), rng: seed | 1, level: 0.0, age: 0,
+            click_c: 1.0 - (-1.0 / (0.0006 * sr)).exp(), rng: seed | 1, level: 0.0, age: 0,
         };
         let mut norm = 0.0f32;
         for b in BAR.iter() { norm += b; }
@@ -4806,7 +4806,7 @@ impl OrganVoice {
             v.amp[i] = (BAR[i] / norm) * hf;
         }
         let vv = vel.clamp(0.05, 1.0);
-        v.click = 0.5 + 0.5 * vv; // harder press -> louder click
+        v.click = 0.16 + 0.14 * vv; // subtle - a key TICK, not a hit
         v.level = 0.32 * (0.55 + 0.45 * vv); // chord headroom: organs play chords
         v
     }
@@ -4822,7 +4822,7 @@ impl OrganVoice {
                 let n = (self.rng >> 9) as f32 * (2.0 / 8_388_608.0) - 1.0;
                 self.click_lp += self.click_c * (n - self.click_lp);
                 sig += self.click * (n - self.click_lp); // highpassed = bright click
-                self.click *= 0.9985;
+                self.click *= 0.965; // ~2 ms tick, not a 14 ms brush
             }
             for i in 0..9 {
                 self.phase[i] += self.dphase[i];
@@ -9293,6 +9293,9 @@ struct BrassVoicing {
     wall_c: f32,
     /// Per-note loudness bake (provisional spike level, NOT a measured LUFS bake).
     level_k: f32,
+    /// Within-slot pitch drift correction (cents per Hz of bore frequency): cancels the flat
+    /// drift across a slot so the pitch does not JUMP at each slot boundary.
+    slot_drift: f32,
 }
 
 /// Measured lip-bore detuning per slot: the outward-striking lip pulls the sounding pitch
@@ -9317,8 +9320,8 @@ fn brass_voicing(inst: Instrument) -> BrassVoicing {
     match inst {
         // Bb trumpet: short bore (~1.48 m), high fundamental, bright bell, plays low slots.
         Instrument::Trumpet => BrassVoicing {
-            bore_lo: 78.0, bore_hi: 120.0, n_max: 10, f0_floor: 150.0,
-            lip_ratio: 0.0, lip_k: 0.56, lip_damp: 0.05, beta: 40.0, bell_c: 0.20, bell_loss: 0.986, wall_c: 0.060, level_k: 5.0,
+            bore_lo: 78.0, bore_hi: 125.0, n_max: 10, f0_floor: 150.0,
+            lip_ratio: 0.0, lip_k: 0.56, lip_damp: 0.05, beta: 40.0, bell_c: 0.20, bell_loss: 0.986, wall_c: 0.060, level_k: 5.0, slot_drift: 0.64,
         },
         // F horn: DORMANT, not shippable yet. A real horn's long bore forces it onto high
         // harmonics (n up to 16) where the lip mis-selects the mode (locked +474c sharp,
@@ -9332,12 +9335,12 @@ fn brass_voicing(inst: Instrument) -> BrassVoicing {
         // are the progress, not the answer.
         Instrument::FrenchHorn => BrassVoicing {
             bore_lo: 58.0, bore_hi: 100.0, n_max: 9, f0_floor: 100.0,
-            lip_ratio: 0.0, lip_k: 0.56, lip_damp: 0.05, beta: 26.0, bell_c: 0.50, bell_loss: 0.987, wall_c: 0.060, level_k: 1.7,
+            lip_ratio: 0.0, lip_k: 0.56, lip_damp: 0.05, beta: 26.0, bell_c: 0.50, bell_loss: 0.987, wall_c: 0.060, level_k: 1.7, slot_drift: 0.0,
         },
         // Tenor trombone and anything else: the measured, reference-matched values.
         _ => BrassVoicing {
             bore_lo: 41.0, bore_hi: 58.5, n_max: 10, f0_floor: 60.0,
-            lip_ratio: 0.70, lip_k: 0.0, lip_damp: 0.05, beta: 40.0, bell_c: 0.28, bell_loss: 0.985, wall_c: 0.060, level_k: 2.2,
+            lip_ratio: 0.70, lip_k: 0.0, lip_damp: 0.05, beta: 40.0, bell_c: 0.28, bell_loss: 0.985, wall_c: 0.060, level_k: 2.2, slot_drift: 0.0,
         },
     }
 }
@@ -9378,8 +9381,11 @@ impl BrassVoice {
     pub fn start(inst: Instrument, f0: f32, vel: f32, sr: f32) -> Self {
         let voicing = brass_voicing(inst);
         let (n_sel, f_bore) = Self::slot(f0.max(voicing.f0_floor), &voicing);
-        // flatten the bore by the measured lip pull so the sounding pitch lands on f0
-        let f_bore = f_bore * 2f32.powf(-brass_slot_pull_cents(inst, n_sel) / 1200.0);
+        // flatten the bore by the measured lip pull (per-harmonic base) PLUS a within-slot
+        // slope so the pitch does not drift across a slot and jump at its boundary.
+        let fbore_mid = 0.5 * (voicing.bore_lo + voicing.bore_hi);
+        let pull = brass_slot_pull_cents(inst, n_sel) + voicing.slot_drift * (fbore_mid - f_bore);
+        let f_bore = f_bore * 2f32.powf(-pull / 1200.0);
 
         let mut v = Self {
             fwd: [0.0; BORE_BUF],
