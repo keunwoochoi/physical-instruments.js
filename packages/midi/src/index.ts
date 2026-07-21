@@ -51,8 +51,11 @@ export function gmProgramToGroup(program: number): string {
     if (program - 40 < solo.length) return solo[program - 40]!;
     return "strings"; // ensemble / choir -> placeholder
   }
-  if (program < 64) return "brass";
-  if (program < 80) return "woodwind"; // reeds + pipes
+  if (program < 64) {
+    // brass family, GM 56-63. french horn is dormant -> trombone; synth brass -> synth.
+    return ["trumpet", "trombone", "trombone", "trumpet", "trombone", "trumpet", "synth", "synth"][program - 56]!;
+  }
+  if (program < 80) return "woodwind"; // reeds + pipes -> organ stand-in until real winds land
   if (program < 104) return "synth"; // leads, pads, fx
   if (program < 112) return "guitar"; // "ethnic" plucked: sitar/banjo/koto…
   return "percussion";

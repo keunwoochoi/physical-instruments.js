@@ -143,8 +143,8 @@ const GROUP_TO_INSTRUMENT: Record<InstrumentGroup, number> = {
   "bass-electric": INST.bass,
   "electric-bass": INST.bass,
   strings: INST.synthpad, // (placeholder — bowed string is Q3)
-  brass: INST.synthpad, // (placeholder — winds are Q3)
-  woodwind: INST.glockenspiel, // (placeholder)
+  brass: INST.trumpet, // GM brass now maps to trumpet/trombone individually; this is the fallback
+  woodwind: INST.organ, // flute/reed stand-in (a sustained sine-ish voice) until real winds land
   voice: INST.synthpad, // (placeholder)
   synth: INST.synthpad,
   percussion: INST.drums,
