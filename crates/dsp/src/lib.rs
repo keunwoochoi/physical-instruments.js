@@ -718,7 +718,8 @@ impl Engine {
             | Instrument::Contrabass
             | Instrument::Trumpet
             | Instrument::FrenchHorn
-            | Instrument::Saxophone => true,
+            | Instrument::Saxophone
+            | Instrument::Organ => true,
         };
         if !damps {
             return;
@@ -771,9 +772,11 @@ impl Engine {
                     Kernel::Bowed(b) => b.damp(sr),
                     Kernel::Brass(b) => b.damp(sr),
                     Kernel::Reed(b) => b.damp(sr),
+                    Kernel::Organ(o) => o.release(),
                         Kernel::Bowed(b) => b.damp(sr),
                     Kernel::Brass(b) => b.damp(sr),
                     Kernel::Reed(b) => b.damp(sr),
+                    Kernel::Organ(o) => o.release(),
                         _ => {}
                     }
                 }
@@ -817,6 +820,7 @@ impl Engine {
                     Kernel::Bowed(b) => b.damp(sr),
                     Kernel::Brass(b) => b.damp(sr),
                     Kernel::Reed(b) => b.damp(sr),
+                    Kernel::Organ(o) => o.release(),
                     _ => {}
                 }
             }
@@ -837,6 +841,7 @@ impl Engine {
                     Kernel::Bowed(b) => b.damp(sr),
                     Kernel::Brass(b) => b.damp(sr),
                     Kernel::Reed(b) => b.damp(sr),
+                    Kernel::Organ(o) => o.release(),
                     Kernel::Drum(_) => {} // short one-shots; let them ring out
                     Kernel::Off => {}
                 }
@@ -878,6 +883,7 @@ impl Engine {
                     Kernel::Bowed(b) => b.render(&mut self.voice_buf[..frames]),
                     Kernel::Brass(b) => b.render(&mut self.voice_buf[..frames]),
                     Kernel::Reed(b) => b.render(&mut self.voice_buf[..frames]),
+                    Kernel::Organ(o) => o.render(&mut self.voice_buf[..frames]),
                     Kernel::Off => false,
                 };
                 let th = (v.pan.clamp(-1.0, 1.0) + 1.0) * core::f32::consts::FRAC_PI_4;
@@ -2325,7 +2331,7 @@ mod level_gates {
         // coarse grid - the matrix scorecard found guitar-steel/bass/marimba clipping on
         // notes the old every-3rd-semitone gate stepped over, and the steel/electric/distorted
         // guitars were not covered at all).
-        let cases: [(u32, u32, u32); 17] = [
+        let cases: [(u32, u32, u32); 18] = [
             (9, 21, 108),  // piano
             (6, 28, 96),   // epiano
             (4, 40, 88),   // guitar nylon
@@ -2343,6 +2349,7 @@ mod level_gates {
             (18, 48, 88),  // viola
             (19, 28, 60),  // contrabass
             (20, 53, 84),  // trumpet
+            (23, 36, 96),  // organ
         ];
         for (inst, lo, hi) in cases {
             let mut worst = 0.0f32;

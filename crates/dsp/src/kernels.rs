@@ -56,6 +56,8 @@ pub enum Instrument {
     FrenchHorn = 21,
     /// Saxophone - single-reed woodwind, `ReedVoice` (#50 family).
     Saxophone = 22,
+    /// Tonewheel drawbar organ - additive (fills GM 16-23).
+    Organ = 23,
 }
 
 impl Instrument {
@@ -83,6 +85,7 @@ impl Instrument {
             20 => Self::Trumpet,
             21 => Self::FrenchHorn,
             22 => Self::Saxophone,
+            23 => Self::Organ,
             _ => Self::Marimba,
         }
     }
@@ -420,6 +423,7 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
         Instrument::Trumpet => 1.0,
         Instrument::FrenchHorn => 1.0,
         Instrument::Saxophone => 1.0,
+        Instrument::Organ => 1.0,
         Instrument::Marimba => 1.70,       // reference
         Instrument::Vibraphone => 4.9,    // was -30.5 LUFS
         Instrument::Glockenspiel => 30.6, // reverb pre-delay re-bake 2026-07-13 (x1.11)
@@ -449,6 +453,7 @@ pub fn room_send(inst: Instrument) -> f32 {
         Instrument::Trombone | Instrument::Trumpet => 0.13,
         Instrument::FrenchHorn => 0.15, // the horn lives on its room; it plays into the wall
         Instrument::Saxophone => 0.12,
+        Instrument::Organ => 0.10,
         Instrument::Drums | Instrument::DrumsRock => 0.16,
         Instrument::DrumsJazz => 0.18, // brushes/jazz kits are recorded roomier
         Instrument::Piano => 0.09,
@@ -4724,6 +4729,105 @@ impl SynthVoice {
     }
 }
 
+/// Tonewheel (Hammond-style) drawbar ORGAN. Purely ADDITIVE - nine sine "tonewheels" at the
+/// classic drawbar ratios, summed at a fixed registration. No physical loop, so it is tiny and
+/// cheap, and it fills the biggest GM gap (programs 16-23 were a placeholder). The character is
+/// in three details a real Hammond has and a naive sine bank does not: (1) the tonewheels are
+/// slightly INHARMONIC (the real gear ratios are off by <0.1%, which beats and warms); (2) a
+/// bright KEY CLICK transient at note-on (the physical key contacts); (3) the whole thing
+/// sustains flat while held and cuts fast - an organ does not decay.
+#[derive(Clone, Copy)]
+pub struct OrganVoice {
+    phase: [f32; 9],
+    dphase: [f32; 9],
+    amp: [f32; 9],
+    env: f32,
+    env_rate: f32,
+    releasing: bool,
+    // key click: a short bright noise burst
+    click: f32,
+    click_lp: f32,
+    click_c: f32,
+    rng: u32,
+    level: f32,
+    age: u64,
+}
+
+impl OrganVoice {
+    pub fn start(f0: f32, vel: f32, sr: f32, seed: u32) -> Self {
+        // drawbar ratios: 16', 5 1/3', 8', 4', 2 2/3', 2', 1 3/5', 1 1/3', 1'
+        const RATIO: [f32; 9] = [0.5, 1.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0];
+        // a warm, versatile registration (drawbar 0-8): fundamental-led, gently tapering.
+        const BAR: [f32; 9] = [8.0, 3.0, 8.0, 6.0, 4.0, 3.0, 2.0, 2.0, 1.0];
+        let mut v = OrganVoice {
+            phase: [0.0; 9], dphase: [0.0; 9], amp: [0.0; 9],
+            env: 0.0, env_rate: 1.0 - (-1.0 / (0.006 * sr)).exp(),
+            releasing: false, click: 0.0, click_lp: 0.0,
+            click_c: 1.0 - (-1.0 / (0.0016 * sr)).exp(), rng: seed | 1, level: 0.0, age: 0,
+        };
+        let mut norm = 0.0f32;
+        for b in BAR.iter() { norm += b; }
+        for i in 0..9 {
+            // tonewheel detune: a tiny per-note, per-wheel offset for the Hammond beat/warmth
+            v.rng = v.rng.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let det = 1.0 + ((v.rng >> 9) as f32 * (2.0 / 8_388_608.0) - 1.0) * 0.0008;
+            let f = f0 * RATIO[i] * det;
+            v.dphase[i] = core::f32::consts::TAU * f / sr;
+            // random start phase so notes do not all click in phase
+            v.rng = v.rng.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            v.phase[i] = (v.rng >> 9) as f32 * (core::f32::consts::TAU / 8_388_608.0);
+            // roll off the very top tonewheels (a real one loses level up there)
+            let hf = (1.0 - 0.06 * (f / 4000.0)).clamp(0.4, 1.0);
+            v.amp[i] = (BAR[i] / norm) * hf;
+        }
+        let vv = vel.clamp(0.05, 1.0);
+        v.click = 0.5 + 0.5 * vv; // harder press -> louder click
+        v.level = 0.32 * (0.55 + 0.45 * vv); // chord headroom: organs play chords
+        v
+    }
+
+    pub fn render(&mut self, out: &mut [f32]) -> bool {
+        for s in out.iter_mut() {
+            let target = if self.releasing { 0.0 } else { 1.0 };
+            self.env += (target - self.env) * self.env_rate;
+            // key click: a decaying bright noise burst, only at the very onset
+            let mut sig = 0.0;
+            if self.click > 1e-4 {
+                self.rng = self.rng.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let n = (self.rng >> 9) as f32 * (2.0 / 8_388_608.0) - 1.0;
+                self.click_lp += self.click_c * (n - self.click_lp);
+                sig += self.click * (n - self.click_lp); // highpassed = bright click
+                self.click *= 0.9985;
+            }
+            for i in 0..9 {
+                self.phase[i] += self.dphase[i];
+                if self.phase[i] > core::f32::consts::TAU { self.phase[i] -= core::f32::consts::TAU; }
+                sig += self.amp[i] * fast_sin(self.phase[i]);
+            }
+            *s = sig * self.env * self.level;
+            self.age += 1;
+        }
+        !(self.releasing && self.env < 1e-4)
+    }
+
+    pub fn release(&mut self) {
+        self.releasing = true;
+    }
+}
+
+/// Cheap sine, ~1e-3 accurate, for the additive organ (9 per sample per voice). Bhaskara-style
+/// on [0, tau); input already wrapped to [0, tau).
+#[inline(always)]
+fn fast_sin(x: f32) -> f32 {
+    use core::f32::consts::{PI, TAU};
+    let x = x - PI; // [-pi, pi)
+    let b = 4.0 / PI;
+    let c = -4.0 / (PI * PI);
+    let y = b * x + c * x * x.abs();
+    let _ = TAU;
+    -(0.775 * y + 0.225 * y * y.abs()) // sign flip: we shifted by pi
+}
+
 // ---------------------------------------------------------------------------
 // Cymbals — banded-noise resonator bank with post-attack bloom
 // ---------------------------------------------------------------------------
@@ -6366,6 +6470,7 @@ pub enum Kernel {
     Bowed(BowedVoice),
     Brass(BrassVoice),
     Reed(ReedVoice),
+    Organ(OrganVoice),
     Modal(ModalVoice),
     Pluck(PluckVoice),
     EPluck(ElectricVoice),
@@ -6734,6 +6839,7 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
         | Instrument::Trumpet
         | Instrument::FrenchHorn => Kernel::Brass(BrassVoice::start(inst, f0, vel, sr)),
         Instrument::Saxophone => Kernel::Reed(ReedVoice::start(inst, f0, vel, sr)),
+        Instrument::Organ => Kernel::Organ(OrganVoice::start(f0, vel, sr, seed)),
         Instrument::GuitarSteel => {
             // steel: darker loop than nylon in RELATIVE terms (h12/h1 t60 ratio
             // ~1/3 in ref 015) but a much brighter pick excitation near the
