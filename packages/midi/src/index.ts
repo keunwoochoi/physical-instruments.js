@@ -45,7 +45,12 @@ export function gmProgramToGroup(program: number): string {
   if (program < 29) return "guitar-electric"; // jazz/clean/muted
   if (program < 32) return "guitar-distorted"; // overdriven/distortion/harmonics
   if (program < 40) return "bass";
-  if (program < 56) return "strings"; // strings + ensemble + choir
+  if (program < 56) {
+    // strings family, GM 40-55
+    const solo = ["violin", "viola", "cello", "contrabass", "strings", "pizzicato", "harp", "percussion"];
+    if (program - 40 < solo.length) return solo[program - 40]!;
+    return "strings"; // ensemble / choir -> placeholder
+  }
   if (program < 64) return "brass";
   if (program < 80) return "woodwind"; // reeds + pipes
   if (program < 104) return "synth"; // leads, pads, fx

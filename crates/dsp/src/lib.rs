@@ -705,6 +705,8 @@ impl Engine {
             | Instrument::GuitarSteel
             | Instrument::GuitarElectric
             | Instrument::GuitarDistorted
+            | Instrument::Harp
+            | Instrument::Pizzicato
             | Instrument::Bass
             | Instrument::EPiano
             | Instrument::SynthPad
@@ -2332,7 +2334,7 @@ mod level_gates {
         // coarse grid - the matrix scorecard found guitar-steel/bass/marimba clipping on
         // notes the old every-3rd-semitone gate stepped over, and the steel/electric/distorted
         // guitars were not covered at all).
-        let cases: [(u32, u32, u32); 21] = [
+        let cases: [(u32, u32, u32); 23] = [
             (9, 21, 108),  // piano
             (6, 28, 96),   // epiano
             (4, 40, 88),   // guitar nylon
@@ -2354,6 +2356,8 @@ mod level_gates {
             (24, 65, 108), // xylophone
             (25, 48, 89),  // tubular bells
             (26, 60, 108), // celesta
+            (27, 24, 103), // harp
+            (28, 36, 84),  // pizzicato
         ];
         for (inst, lo, hi) in cases {
             let mut worst = 0.0f32;

@@ -64,6 +64,10 @@ pub enum Instrument {
     TubularBells = 25,
     /// Celesta - soft struck steel bars, modal (GM 9).
     Celesta = 26,
+    /// Concert harp - clean long-ringing plucked string (GM 46).
+    Harp = 27,
+    /// Pizzicato strings - short punchy plucked bowed-string (GM 45).
+    Pizzicato = 28,
 }
 
 impl Instrument {
@@ -95,6 +99,8 @@ impl Instrument {
             24 => Self::Xylophone,
             25 => Self::TubularBells,
             26 => Self::Celesta,
+            27 => Self::Harp,
+            28 => Self::Pizzicato,
             _ => Self::Marimba,
         }
     }
@@ -436,6 +442,8 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
         Instrument::Xylophone => 5.2,
         Instrument::TubularBells => 8.3,
         Instrument::Celesta => 8.0,
+        Instrument::Harp => 0.42,
+        Instrument::Pizzicato => 0.34,
         Instrument::Marimba => 1.70,       // reference
         Instrument::Vibraphone => 4.9,    // was -30.5 LUFS
         Instrument::Glockenspiel => 30.6, // reverb pre-delay re-bake 2026-07-13 (x1.11)
@@ -469,6 +477,8 @@ pub fn room_send(inst: Instrument) -> f32 {
         Instrument::Xylophone => 0.10,
         Instrument::TubularBells => 0.14,
         Instrument::Celesta => 0.12,
+        Instrument::Harp => 0.12,
+        Instrument::Pizzicato => 0.11,
         Instrument::Drums | Instrument::DrumsRock => 0.16,
         Instrument::DrumsJazz => 0.18, // brushes/jazz kits are recorded roomier
         Instrument::Piano => 0.09,
@@ -6665,6 +6675,170 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
             0.0,
             seed,
         )),
+        Instrument::Harp => {
+            let key = (((midi as f32) - 24.0) / 60.0).clamp(0.0, 1.0);
+            let p = AcPluck {
+                f0,
+                vel,
+                // refs split by source: 010 ≈ 6–15 s early t60, 014 ≈ 22–27 s;
+                // round-1's 8+4·key sat at the floor of both (render −20 dB vs
+                // 014 at the 3 s mark). Compromise law raised round 2.
+                // superseded by the damping law (eta_f > 0); kept as doc of the
+                // r2 hand fit the law replaces
+                t60_f0: 18.0 + 9.0 * key,
+                lp_c: 0.990 - 0.05 * key + 0.01 * vel,
+                hf_floor_t60: 0.0,
+                hf_knee_hz: 2400.0,
+                pick_pos: 0.33,
+                // r2's 0.045 band-limited the excitation to ~n=22 (1.8 kHz at
+                // E2); the refs keep 1.7-3.4 kHz attack content +17..+31 dB
+                // above the render (pooled envdelta r3). Woodhouse 2012 uses a
+                // ~7.5 mm contact on a 650 mm string = 0.0115 - our wider value
+                // also stood in for the missing radiation tilt, now present.
+                // Velocity-steepened: soft tirando is all flesh (wide patch),
+                // hard plucks release nearer the nail.
+                contact: 0.024 - 0.008 * vel,
+                snap: 0.5,
+                scrape: 0.06,
+                // fingertip/nail release tick (r3): at the nylon transient
+                // scale (tr_lvl = p.level, no differencer renorms) this is
+                // subtle - metrics prefer it slightly over 0 and single-note
+                // peaks are unchanged (0.042)
+                click: 5.0,
+                // fingertip/nail contact: lower band than a pick, and only a
+                // light slide component (ref mf scrape/body sits 13 dB below
+                // the old render's — tirando is mostly flesh)
+                click_slow: 0.8,
+                click_hz: 2000.0,
+                // fingertip flesh: slow contact (soft strokes slower still)
+                click_ramp: 0.012 - 0.006 * vel,
+                // nylon refs' post-off slopes (68-171 dB/s) are contaminated
+                // by the NSynth release fade/gate (014 mids are hard-gated;
+                // steel 015's 31-51 dB/s proves slower decays survive the
+                // pipeline, so nylon's true damp is ≥ ~70 dB/s). A 0.55-0.75 s
+                // law overshot (tail logmel 1.29→1.45, it2); 0.30 s keeps an
+                // audible finger-damp ring without ringing past the refs.
+                rel_t60: 0.45 - 0.08 * vel,
+                rel_click: 0.25,
+                rel_ramp: 0.0, // legacy instant damp (bit-identical; see AcPluck)
+                pol_mix: 0.35,
+                pol_detune_cents: 2.2,
+                pol_t60_ratio: 0.55,
+                // nylon source 014 measures B ≈ 4.6e-5 (E2) → 5.2e-5 (C4), h10
+                // ≈ +5 cents; source 010 is near-flexible. Split the difference
+                // low — nylon stretch is subtle but real (bfit 2026-07-11 r2).
+                stiff_b: 3.5e-5,
+                // no tension glide: nylon refs show none, and the glide beat
+                // against the polarization detune measurably hurt C5
+                tm_cents: 0.0,
+                // Woodhouse 2004 II Table 1 (D'Addario Pro Arte): monofilament
+                // trebles eta_f 14-40e-5, wound basses 2-7e-5 (key-interp);
+                // eta_a ~1.2. eta_b fit to the NSynth sources instead of the
+                // table's 2e-2 polymer value: refs keep 2-3.4 kHz ringing
+                // through the mid window (t60(2k) ~5-7 s), implying ~2.5e-3 —
+                // the table value killed HF 50 dB below ref (it2d, 2026-07-12).
+                // couple sized so eta at A0 roughly doubles intrinsic loss.
+                eta_f: 0.0, // BISECT: legacy path
+                eta_b: 2.5e-3,
+                eta_a: 1.2,
+                couple: 4.0e-3,
+                // displacement tap: the NSynth nylon sources are fundamental-
+                // dominant in mid/high register; low-register h2 emphasis comes
+                // from the body's T1 mode, not a global force tilt
+                br_rho: 0.0,
+                acc_rho: 0.0, // body-round radiation design (bass-merge silently reverted this; drift-check caught it)
+                // radiated sound only: monopole HP (Woodhouse 2012 f_c ~250 Hz)
+                rad_hz: 250.0,
+                thump: 0.0,
+                thump_hz: 110.0,
+                // register slope ~12 dB/key (within-source NSynth slope is
+                // ~9 dB/key; cross-source fits inflate it); mild velocity curve
+                level: 0.42 * (0.55 + 0.45 * vel) * (1.1 * key.min(0.9)).exp(),
+            };
+            Kernel::Pluck(PluckVoice::start_acoustic(&p, sr, seed))
+        }
+        Instrument::Pizzicato => {
+            let key = (((midi as f32) - 36.0) / 48.0).clamp(0.0, 1.0);
+            let p = AcPluck {
+                f0,
+                vel,
+                // refs split by source: 010 ≈ 6–15 s early t60, 014 ≈ 22–27 s;
+                // round-1's 8+4·key sat at the floor of both (render −20 dB vs
+                // 014 at the 3 s mark). Compromise law raised round 2.
+                // superseded by the damping law (eta_f > 0); kept as doc of the
+                // r2 hand fit the law replaces
+                t60_f0: 0.9 + 0.6 * key,
+                lp_c: 0.90 - 0.06 * key,
+                hf_floor_t60: 0.0,
+                hf_knee_hz: 2400.0,
+                pick_pos: 0.16,
+                // r2's 0.045 band-limited the excitation to ~n=22 (1.8 kHz at
+                // E2); the refs keep 1.7-3.4 kHz attack content +17..+31 dB
+                // above the render (pooled envdelta r3). Woodhouse 2012 uses a
+                // ~7.5 mm contact on a 650 mm string = 0.0115 - our wider value
+                // also stood in for the missing radiation tilt, now present.
+                // Velocity-steepened: soft tirando is all flesh (wide patch),
+                // hard plucks release nearer the nail.
+                contact: 0.030 - 0.010 * vel,
+                snap: 0.5,
+                scrape: 0.06,
+                // fingertip/nail release tick (r3): at the nylon transient
+                // scale (tr_lvl = p.level, no differencer renorms) this is
+                // subtle - metrics prefer it slightly over 0 and single-note
+                // peaks are unchanged (0.042)
+                click: 5.0,
+                // fingertip/nail contact: lower band than a pick, and only a
+                // light slide component (ref mf scrape/body sits 13 dB below
+                // the old render's — tirando is mostly flesh)
+                click_slow: 0.8,
+                click_hz: 2000.0,
+                // fingertip flesh: slow contact (soft strokes slower still)
+                click_ramp: 0.012 - 0.006 * vel,
+                // nylon refs' post-off slopes (68-171 dB/s) are contaminated
+                // by the NSynth release fade/gate (014 mids are hard-gated;
+                // steel 015's 31-51 dB/s proves slower decays survive the
+                // pipeline, so nylon's true damp is ≥ ~70 dB/s). A 0.55-0.75 s
+                // law overshot (tail logmel 1.29→1.45, it2); 0.30 s keeps an
+                // audible finger-damp ring without ringing past the refs.
+                rel_t60: 0.20,
+                rel_click: 0.25,
+                rel_ramp: 0.0, // legacy instant damp (bit-identical; see AcPluck)
+                pol_mix: 0.35,
+                pol_detune_cents: 2.2,
+                pol_t60_ratio: 0.55,
+                // nylon source 014 measures B ≈ 4.6e-5 (E2) → 5.2e-5 (C4), h10
+                // ≈ +5 cents; source 010 is near-flexible. Split the difference
+                // low — nylon stretch is subtle but real (bfit 2026-07-11 r2).
+                stiff_b: 8.0e-5,
+                // no tension glide: nylon refs show none, and the glide beat
+                // against the polarization detune measurably hurt C5
+                tm_cents: 0.0,
+                // Woodhouse 2004 II Table 1 (D'Addario Pro Arte): monofilament
+                // trebles eta_f 14-40e-5, wound basses 2-7e-5 (key-interp);
+                // eta_a ~1.2. eta_b fit to the NSynth sources instead of the
+                // table's 2e-2 polymer value: refs keep 2-3.4 kHz ringing
+                // through the mid window (t60(2k) ~5-7 s), implying ~2.5e-3 —
+                // the table value killed HF 50 dB below ref (it2d, 2026-07-12).
+                // couple sized so eta at A0 roughly doubles intrinsic loss.
+                eta_f: 0.0, // BISECT: legacy path
+                eta_b: 2.5e-3,
+                eta_a: 1.2,
+                couple: 4.0e-3,
+                // displacement tap: the NSynth nylon sources are fundamental-
+                // dominant in mid/high register; low-register h2 emphasis comes
+                // from the body's T1 mode, not a global force tilt
+                br_rho: 0.0,
+                acc_rho: 0.0, // body-round radiation design (bass-merge silently reverted this; drift-check caught it)
+                // radiated sound only: monopole HP (Woodhouse 2012 f_c ~250 Hz)
+                rad_hz: 250.0,
+                thump: 0.0,
+                thump_hz: 110.0,
+                // register slope ~12 dB/key (within-source NSynth slope is
+                // ~9 dB/key; cross-source fits inflate it); mild velocity curve
+                level: 0.55 * (0.5 + 0.5 * vel) * (1.0 * key.min(0.9)).exp(),
+            };
+            Kernel::Pluck(PluckVoice::start_acoustic(&p, sr, seed))
+        }
         Instrument::Guitar => {
             // nylon: near-lossless bright loop (refs 010/014: all harmonics decay
             // at similar slow rates at E2); darkness comes from the finger-release

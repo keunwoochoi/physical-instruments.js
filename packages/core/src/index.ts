@@ -60,6 +60,8 @@ export type InstrumentGroup =
   | "xylophone"
   | "tubularbells"
   | "celesta"
+  | "harp"
+  | "pizzicato"
   // naming aliases (Keunwoo 2026-07-12): resolve to the same engines
   | "guitar-acoustic"
   | "guitar-acoustic-nylon"
@@ -95,6 +97,8 @@ const INST = {
   xylophone: 24,
   tubularBells: 25,
   celesta: 26,
+  harp: 27,
+  pizzicato: 28,
 } as const;
 
 /**
@@ -130,6 +134,8 @@ const GROUP_TO_INSTRUMENT: Record<InstrumentGroup, number> = {
   xylophone: INST.xylophone,
   tubularbells: INST.tubularBells,
   celesta: INST.celesta,
+  harp: INST.harp,
+  pizzicato: INST.pizzicato,
   // "acoustic"/"electric bass" naming aliases (Keunwoo 2026-07-12) — canonical names above stay
   "guitar-acoustic": INST.guitar,
   "guitar-acoustic-nylon": INST.guitar,
