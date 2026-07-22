@@ -402,6 +402,12 @@ export async function createEngine(options: EngineOptions = {}): Promise<Engine>
    * `resolve` maps a family key to a track index, appending the track-config
    * event to `events` on first use.
    */
+  // A drum note routes to the kit named by its group when it names a real kit
+  // (so an arrangement can pick the jazz or rock kit), else the default kit.
+  const DRUM_KITS = new Set(["drums", "drums-rock", "drums-jazz"]);
+  const drumGroup = (g?: string): InstrumentGroup =>
+    (g && DRUM_KITS.has(g) ? g : "drums") as InstrumentGroup;
+
   function buildSchedule(
     notes: readonly NoteEvent[],
     options: PlayOptions,
@@ -412,7 +418,7 @@ export async function createEngine(options: EngineOptions = {}): Promise<Engine>
     const events: WorkletEvent[] = [];
     let end = t0;
     for (const n of notes) {
-      const group = (n.isDrum ? "drums" : (n.instrumentGroup ?? "unknown")) as InstrumentGroup;
+      const group = (n.isDrum ? drumGroup(n.instrumentGroup) : (n.instrumentGroup ?? "unknown")) as InstrumentGroup;
       const idx = resolve(group, events);
       const vel = Math.min(127, Math.max(1, n.velocity)) / 127;
       events.push({ type: "event", when: t0 + n.startSeconds, kind: "on", track: idx, midi: Math.round(n.midiPitch), vel });
