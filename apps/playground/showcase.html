@@ -422,6 +422,14 @@ document.addEventListener("keydown",(e)=>{
   else if(e.code==="ArrowLeft"){ e.preventDefault(); seek(playOffset-10); }
   else if(e.code==="ArrowRight"){ e.preventDefault(); seek(playOffset+10); }
 });
+// Be polite on mobile: stop playback when the page is backgrounded (app switch,
+// screen lock) so audio doesn't linger — iOS auto-suspends the context, but
+// Android can keep a hidden tab playing. Desktop keeps playing in a background
+// tab (music-player-like). On real close the browser tears down the context +
+// worklet anyway, so nothing leaks; this just freezes the playhead cleanly.
+const touchPrimary = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+document.addEventListener("visibilitychange", ()=>{ if(document.hidden && playing && touchPrimary) stop(); });
+window.addEventListener("pagehide", ()=>{ if(playing) stop(); });
 function fmtTime(s){ s=Math.max(0,Math.round(s)); const m=Math.floor(s/60),ss=s%60; return `${m}:${ss<10?"0":""}${ss}`; }
 function updateTransport(){ timeEl.textContent=`${fmtTime(playOffset)} / ${fmtTime(dur)}`; }
 function updateYtLink(){ if(current?.youtube){ ytlinkEl.href=current.youtube; ytlinkEl.hidden=false; } else ytlinkEl.hidden=true; }
