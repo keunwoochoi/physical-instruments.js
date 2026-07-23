@@ -321,7 +321,8 @@ function applyLoadedNotes(){
   computeKeyboard();
   dur=notes.length?Math.max(...notes.map(n=>n.endSeconds)):0;
   playOffset=0;
-  if(hasDrums){ drumKitSel=songKit(); kitSel.value=drumKitSel; if(previewDrum) previewDrum.setInstrument(drumKitSel); }
+  // genre-optimal kit chosen per demo (demos.mjs `kit`); fall back to detection
+  if(hasDrums){ drumKitSel=DRUM_KIT_OPTS.some(o=>o[0]===current.kit) ? current.kit : songKit(); kitSel.value=drumKitSel; if(previewDrum) previewDrum.setInstrument(drumKitSel); }
   kitCtl.hidden=!hasDrums;
   hint.hidden=true; // title/metadata live in the top-right legend — no duplicate under the play button
   updateTransport(); updateYtLink(); updateCombo(); draw(0);

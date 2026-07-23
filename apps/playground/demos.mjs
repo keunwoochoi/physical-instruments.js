@@ -18,7 +18,10 @@
  *     latin/folk instrumentals. These are third-party works, demo-only.
  *
  * A demo entry: { id, name, genre, combo, midi, instrument (null = keep the
- * MIDI's own per-part instruments), excerpt (seconds), mix, stretch? }. The
+ * MIDI's own per-part instruments), excerpt (seconds), mix, stretch?, kit? }.
+ * `kit` is the genre-optimal drum kit ("drums" | "drums-rock" | "drums-jazz" —
+ * distinct physical models: jazz is brushed/light, rock is punchy/roomy); the
+ * showcase preselects it and re-voices the drums. The
  * browser fetches `midi`, the Node harness reads it; both call
  * parseMidi()+processMidi(). Provenance + sha + licence are in
  * agentic-docs/licensing.md ("Demo music").
@@ -26,7 +29,7 @@
 
 export const DEMOS = [
   { id: "windup", name: "Windup", genre: "Hayoung Lyou - jazz piano trio",
-    combo: "piano / bass / drums", midi: "./midi/hayoung.mid",
+    combo: "piano / bass / drums", kit: "drums-jazz", midi: "./midi/hayoung.mid",
     instrument: null, excerpt: 60,
     youtube: "https://www.youtube.com/watch?v=vdV1UEqv5CA",
     mix: {
@@ -35,7 +38,7 @@ export const DEMOS = [
     } },
   { id: "you-and-i", name: "you and i", genre: "keunwoo.OOO - the best music in the world",
     combo: "piano / drums / strings / bass / guitar / woodwind",
-    midi: "./midi/you-and-i.mid", instrument: null, excerpt: 60,
+    kit: "drums", midi: "./midi/you-and-i.mid", instrument: null, excerpt: 60,
     youtube: "https://www.youtube.com/watch?v=Am-8_vyIJf0",
     mix: {
       piano: { gain: 0.36, pan: 0.12 }, drums: { gain: 0.18, pan: 0 },
@@ -43,7 +46,7 @@ export const DEMOS = [
       guitar: { gain: 0.30, pan: -0.18 }, woodwind: { gain: 0.26, pan: 0.22 },
     } },
   { id: "yyz", name: "YYZ", genre: "Rush - instrumental prog rock",
-    combo: "synth / bass / drums", midi: "./midi/yyz-rush.mid",
+    combo: "synth / bass / drums", kit: "drums-rock", midi: "./midi/yyz-rush.mid",
     youtube: "https://www.youtube.com/watch?v=LxI6kO2gxpM",
     instrument: null, excerpt: 60,
     mix: {
@@ -59,7 +62,7 @@ export const DEMOS = [
     } },
   { id: "wave", name: "Wave", genre: "Antônio Jobim - bossa nova",
     combo: "nylon guitar / bass / drums / piano / strings",
-    midi: "./midi/wave-jobim.mid", instrument: null, excerpt: 60,
+    kit: "drums-jazz", midi: "./midi/wave-jobim.mid", instrument: null, excerpt: 60,
     youtube: "https://www.youtube.com/watch?v=Af0Cdw7v3aI",
     mix: {
       guitar: { gain: 0.42, pan: -0.15 }, piano: { gain: 0.32, pan: 0.10 },
@@ -82,7 +85,7 @@ export const DEMOS = [
     } },
   { id: "axel-f", name: "Axel F", genre: "Harold Faltermeyer - 80s synth theme",
     combo: "synth / bass / drums / strings / mallets / woodwind",
-    midi: "./midi/axel-f.mid", instrument: null, excerpt: 60,
+    kit: "drums", midi: "./midi/axel-f.mid", instrument: null, excerpt: 60,
     youtube: "https://www.youtube.com/watch?v=NgIYqLrTqDI",
     mix: {
       synth: { gain: 0.40, pan: 0 }, drums: { gain: 0.22, pan: 0 },
@@ -91,7 +94,7 @@ export const DEMOS = [
       woodwind: { gain: 0.24, pan: 0.10 },
     } },
   { id: "tico-tico", name: "Tico Tico no Fubá", genre: "Zequinha de Abreu - latin choro",
-    combo: "piano / bass / drums",
+    combo: "piano / bass / drums", kit: "drums-jazz",
     midi: "./midi/tico-tico.mid", instrument: null, excerpt: 60,
     youtube: "https://www.youtube.com/watch?v=JzGS7OSDzW4",
     mix: {
