@@ -72,8 +72,8 @@ assert.equal(gmProgramToGroup(24), "guitar");
 assert.equal(gmProgramToGroup(27), "guitar-electric");
 assert.equal(gmProgramToGroup(30), "guitar-distorted");
 assert.equal(gmProgramToGroup(33), "bass");
-assert.equal(gmProgramToGroup(41), "strings");
-assert.equal(gmProgramToGroup(57), "brass");
+assert.equal(gmProgramToGroup(41), "viola");    // GM 41 = Viola (string family split into solo voices)
+assert.equal(gmProgramToGroup(57), "trombone"); // GM 57 = Trombone (brass family split into trumpet/trombone)
 assert.equal(gmProgramToGroup(74), "woodwind");
 
 console.log("midi parser: all assertions passed");
