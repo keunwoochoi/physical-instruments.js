@@ -47,7 +47,8 @@
 </head>
 <body>
   <h1>instruments.js <span class="badge" id="size-badge">…</span></h1>
-  <p class="sub">Physical-modeled instruments in your browser. No samples were harmed — none exist.</p>
+  <p class="sub">Physical-modeled instruments in your browser. No samples were harmed — none exist.
+    &nbsp;·&nbsp; <a href="./showcase.html" style="color:#f5b544">🎹 Showcase →</a> (falling-notes demos across genres)</p>
 
   <div class="row">
     <button class="primary" id="play-song">▶ Play demo arrangement</button>
@@ -69,6 +70,7 @@
         <optgroup label="Keys">
           <option value="piano" selected>Piano (acoustic)</option>
           <option value="epiano">Electric piano</option>
+          <option value="organ">Organ (drawbar)</option>
         </optgroup>
         <optgroup label="Guitars">
           <option value="guitar">Acoustic guitar (nylon)</option>
@@ -88,11 +90,24 @@
           <option value="marimba">Marimba</option>
           <option value="vibraphone">Vibraphone</option>
           <option value="glockenspiel">Glockenspiel</option>
+          <option value="xylophone">Xylophone</option>
+          <option value="celesta">Celesta</option>
+          <option value="tubularbells">Tubular bells</option>
           <option value="musicbox">Music box</option>
         </optgroup>
+        <optgroup label="Strings">
+          <option value="violin">Violin (bowed)</option>
+          <option value="viola">Viola (bowed)</option>
+          <option value="cello">Cello (bowed)</option>
+          <option value="contrabass">Contrabass (bowed)</option>
+          <option value="pizzicato">Pizzicato strings</option>
+          <option value="harp">Harp</option>
+        </optgroup>
+        <optgroup label="Brass">
+          <option value="trumpet">Trumpet</option>
+          <option value="trombone">Trombone</option>
+        </optgroup>
         <optgroup label="Synth">
-          <option value="cello">Cello (bowed) [spike]</option>
-          <option value="trombone">Trombone [spike]</option>
           <option value="synthpad">Synth pad</option>
         </optgroup>
       </select>
@@ -141,12 +156,26 @@
     });
 
     let engine = null;
-    let tracks = new Map(); // instrument name -> Track
-
-    function track(name) {
-      if (!tracks.has(name)) tracks.set(name, engine.createTrack(name, { gain: 0.85 }));
-      return tracks.get(name);
+    // The live keyboard and drum pads are mutually exclusive in the UI (only the
+    // selected instrument sounds at a time), so the whole surface runs on ONE
+    // engine track that we re-point via setInstrument. Creating a track per
+    // instrument NAME used to leak a slot on every selector change and crash with
+    // "track limit (16) reached" after ~16 instruments (Keunwoo, play-testing:
+    // "track limit 16"). Held voices keep their old instrument; the next note uses
+    // the newly selected one.
+    let liveTrack = null;
+    function live(group) {
+      if (!liveTrack) liveTrack = engine.createTrack(group, { gain: 0.85 });
+      // Only re-point when nothing is sounding. A voice released after its track
+      // has been re-pointed is matched by the engine on the TRACK's current
+      // instrument, so re-pointing under a held self-oscillating note (cello, horn)
+      // would drop its note-off and leave it ringing forever. The selector-change
+      // handler flushes held notes before re-pointing, so this stays a no-op guard.
+      else if (liveTrack.instrument !== group && down.size === 0) liveTrack.setInstrument(group);
+      return liveTrack;
     }
+    let stressTracks = null; // the stress test's 8 concurrent tracks, allocated once
+    let midiDrumTrack = null; // Web MIDI channel-10 drums, so it can sound alongside `live`
 
     (async () => {
       status("compiling WASM…");
@@ -206,6 +235,10 @@
       bass: -24, // C3-C5 -> C1-C3: the register a bass guitar actually occupies
       cello: -12, // cello sits an octave below the keyboard as drawn
       trombone: -12, // tenor trombone: Bb2-Bb4 territory
+      trumpet: 0, // Bb trumpet: F3-Bb5, roughly the keyboard as drawn
+      violin: +12, // violin sits an octave above the keyboard as drawn (G3-E7)
+      viola: 0, // viola: C3-E6, roughly the keyboard as drawn
+      contrabass: -24, // contrabass is the lowest orchestral string (E1-G3)
     };
     const xpose = (inst) => PREVIEW_TRANSPOSE[inst] ?? 0;
 
@@ -218,7 +251,7 @@
       const inst = $("inst").value;
       const played = midi + xpose(inst);
       sounding.set(midi, { inst, played });
-      track(inst).noteOn(played, vel);
+      live(inst).noteOn(played, vel);
     }
     function noteOff(midi) {
       if (!down.delete(midi)) return;
@@ -227,7 +260,9 @@
       // switching instrument while a key is held leaves a stuck note.
       const s = sounding.get(midi);
       sounding.delete(midi);
-      if (s) track(s.inst).noteOff(s.played);
+      // Release on the single live track by the pitch we actually sent; the voice
+      // still rings on whatever instrument it started with, matched by track+midi.
+      if (s && liveTrack) liveTrack.noteOff(s.played);
     }
 
     // pointer Y within the key = velocity (top ≈ pp, bottom edge ≈ ff)
@@ -251,7 +286,7 @@
         e.preventDefault();
         if (!pedalDown && engine) {
           pedalDown = true;
-          track($("inst").value).pedal(true);
+          live($("inst").value).pedal(true);
           status("sustain pedal DOWN (space)");
         }
         return;
@@ -273,8 +308,8 @@
     window.addEventListener("keyup", (e) => {
       if (e.code === "Space") {
         pedalDown = false;
-        if (engine) {
-          track($("inst").value).pedal(false);
+        if (engine && liveTrack) {
+          liveTrack.pedal(false);
           status("engine live — pedal up");
         }
         return;
@@ -299,9 +334,14 @@
     function hitPad(note) {
       if (!engine) return;
       const kit = $("inst").value.startsWith("drums") ? $("inst").value : "drums";
-      track(kit).noteOn(note, Number($("vel").value));
+      live(kit).noteOn(note, Number($("vel").value));
     }
     $("inst").addEventListener("change", () => {
+      // Release anything still held on the OLD instrument before re-pointing the
+      // shared live track — otherwise its note-off would be judged against the new
+      // instrument and a self-oscillating voice could hang. Flush, then re-point.
+      for (const m of [...down]) noteOff(+m);
+      if (liveTrack) liveTrack.setInstrument($("inst").value);
       const drums = $("inst").value.startsWith("drums");
       padsEl.style.display = drums ? "grid" : "none";
       keysEl.style.display = drums ? "none" : "flex";
@@ -322,7 +362,11 @@
       if (!engine) return;
       status("stress: 64 voices across 8 tracks for 10 s — watching for dropped quanta…");
       const fams = ["piano", "guitar-steel", "guitar-electric", "guitar-distorted", "bass", "marimba", "synthpad", "drums"];
-      const t = fams.map((f) => track(f));
+      // Allocate the 8 stress tracks ONCE and reuse on repeat clicks — this is a
+      // genuine multi-track burst, not the single live surface. Re-allocating per
+      // click would leak slots toward the 16-track limit.
+      stressTracks ??= fams.map((f) => engine.createTrack(f, { gain: 0.85 }));
+      const t = stressTracks;
       const stop = Date.now() + 10_000;
       (function burst() {
         if (Date.now() > stop) { engine.stop(); status("stress done — check for ⚠ above (none = glitch-free)"); return; }
@@ -373,7 +417,9 @@
             if (!engine) return;
             const [st, d1, d2] = m.data;
             const type = st & 0xf0, ch = st & 0x0f;
-            const target = ch === 9 ? track("drums") : track($("inst").value === "drums" ? "marimba" : $("inst").value);
+            const target = ch === 9
+              ? (midiDrumTrack ??= engine.createTrack("drums", { gain: 0.85 }))
+              : live($("inst").value === "drums" ? "marimba" : $("inst").value);
             if (type === 0x90 && d2 > 0) target.noteOn(d1, d2);
             else if (type === 0x80 || (type === 0x90 && d2 === 0)) target.noteOff(d1);
             else if (type === 0xb0 && d1 === 64) target.pedal(d2 >= 64);

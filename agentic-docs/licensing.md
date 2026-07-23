@@ -44,6 +44,59 @@ The permissive license is part of the product. This file is the single owner of 
 | Greg Sullivan E-Pianos (github.com/sfzinstruments/GregSullivan.E-Pianos, fetched 2026-07-12) | CC-BY-3.0 (verified: repo LICENSE = full CC-BY 3.0 legal code; README attribution statement) | Wurlitzer EP200 4-velocity ladders (bark/attack/harmonic-balance targets) + Pianet T long-decay sanity refs, EP round (scratchpad only). Corpus caveats in evals/reference-manifest.json (peak-normalized, trimmed tails, built-in tremolo on low notes) | not committed; attribute Greg Sullivan if references ever ship |
 | jRhodes3c/3d (sfzinstruments) | CC **BY-NC** 4.0 — NOT usable | none (rejected at license check 2026-07-12; LICENSE grants BY-SA to Strudel only). Best free Rhodes set otherwise; author invites license requests at jjlearman@gmail.com — a human-side email could unlock it | n/a |
 
+## Demo music (bundled MIDI — COMMITTED and shipped in the playground showcase)
+
+Unlike the reference audio above (scratchpad-only), these MIDI files ARE committed to
+the repo (`apps/playground/midi/`) and served by the falling-notes showcase. Two
+clean-permissive families qualify; both verified 2026-07-22:
+
+- **Public-Domain** Bach organ works from the Mutopia Project, whose per-piece page
+  states Public Domain for the sequence itself. (CC-BY-SA Mutopia pieces, e.g. Bach
+  Invention 1, were rejected to keep the demo permissive.)
+- **CC0 1.0** original multitrack pieces (github.com/m-malandro/CC0-midis) were in
+  the set briefly but were removed on 2026-07-22 (owner direction) — the playground
+  is now owner-curated recognisable music, not generic CC0 demos. See the next
+  section.
+
+Rejected on purpose: MAESTRO and similar performance datasets (CC-BY-**NC**-SA — the
+NC bars a shippable library) and any commercial-site MIDI of PD compositions (the
+site claims copyright on its sequence).
+
+### Owner-curated recognisable demos (2026-07-22 policy reversal)
+
+The earlier gate on this surface (commit 56ca64b, "the composition and the MIDI
+sequence are both copyrighted, and a library meant to ship permissively cannot carry
+unlicensed music … cannot go IN the repo") is **superseded by owner direction**.
+Verbatim, 2026-07-22: *"just do it. ignore the commit rule bc i never wanted it."*
+The purpose of the demo page is to show the physical-model instruments sounding
+good on music a listener actually recognises — abstraction does not sell the
+product; "Sad But True" through our distorted-guitar model does. Three owner-named
+transcriptions (MuScriptor medium, MPS, 2026-07-22) are committed under this
+decision. They are NOT under a permissive licence; the policy question of shipping
+copyrighted demo MIDI in a publishable repo is open and named here, not silently
+absorbed. PR / release gating on these files is a separate owner decision.
+
+| file (`apps/playground/midi/`) | work | source | licence | sha256 (first 12) |
+|---|---|---|---|---|
+| you-and-i.mid | "you and i" — keunwoo.OOO (2026) | MuScriptor medium transcript of owner's own recording | TBD — owner work, licence not yet recorded | 3f79e0c52aef |
+| hayoung.mid | "Windup" — Hayoung Lyou | MuScriptor medium transcript | NO licence held — third-party work, demo-only | 0dc378fb921 |
+| yyz-rush.mid | "YYZ" — Rush | github.com/Possibly93/possibly93.github.io | NO licence held — third-party work, demo-only | 152003c25468 |
+| take-five.mid | "Take Five" — Dave Brubeck | github.com/Possibly93/possibly93.github.io | NO licence held — third-party work, demo-only | ae5fa8f9e8aa |
+| wave-jobim.mid | "Wave" — Antônio Jobim | github.com/Possibly93/possibly93.github.io | NO licence held — third-party work, demo-only | 75b85fa65576 |
+| axel-f.mid | "Axel F" — Harold Faltermeyer | github.com/Possibly93/possibly93.github.io | NO licence held — third-party work, demo-only | 82060c2c34ed |
+| tico-tico.mid | "Tico Tico no Fubá" — Zequinha de Abreu | github.com/Possibly93/possibly93.github.io | NO licence held — third-party work, demo-only | e6863924cfd5 |
+| orange-blossom-special.mid | "Orange Blossom Special" — Ervin T. Rouse | github.com/Possibly93/possibly93.github.io | NO licence held — third-party work, demo-only | b74f7e77f5be |
+| beethoven-symphony-5-mvt1.mid | Symphony №5, Op.67, Mvt I — L.v. Beethoven | mutopiaproject.org/ftp/BeethovenLv/O67/Symphony5_1 | Public Domain | 0ce1bca911ba |
+| chopin-nocturne-op9-no2.mid | Nocturne in E♭, Op.9 №2 — F.F. Chopin | mutopiaproject.org/ftp/ChopinFF/O9/chopin_nocturne_op9_n2 | CC-BY-SA 3.0 (Mutopia, typeset 2014) | e202d3941ce5 |
+| bach-toccata-fugue-dm.mid | Toccata & Fugue in D minor, BWV 565 — J.S. Bach | mutopiaproject.org/ftp/BachJS/BWV565 | Public Domain | 1aabd00967ad |
+| bach-invention-2.mid | Invention No. 2, BWV 773 — J.S. Bach | mutopiaproject.org/ftp/BachJS/BWV773 | Public Domain | b61e1e4d4a42 |
+
+The Bach pieces and the Beethoven Symphony are re-voiced onto the engine's
+strings/woodwind/percussion groups via gmProgramToGroup. The Chopin Nocturne
+is solo-piano as-typeset. The "＋ Your MIDI" client-side path (commit 56ca64b)
+stays as the no-commit escape hatch for any listener who wants to hear their
+own copyrighted file through the engine without the repo carrying it.
+
 ## Port ledger
 
 Every ported file: `| path | origin file | origin license | date | PR | notes |`

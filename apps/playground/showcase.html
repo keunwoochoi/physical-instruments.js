@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>instruments.js</title>
+<style>
+  :root{
+    --bg:#0b0d12; --panel:#141821; --line:#242b38; --tx:#e7ecf5; --tx2:#8b95a8;
+    --accent:#f5b544; --good:#59d499;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--tx);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;overflow:hidden}
+  .app{display:flex;flex-direction:column;height:100%}
+  header{display:flex;align-items:center;gap:12px;padding:8px 18px;border-bottom:1px solid var(--line);flex:none}
+  header h1{font-size:15px;margin:0;font-weight:600;letter-spacing:.02em;white-space:nowrap}
+  .status{margin-left:auto;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--tx2);white-space:nowrap}
+  /* transport bar: centered player + instrument info + youtube link */
+  .transport{display:flex;align-items:center;gap:14px;justify-content:center;flex-wrap:wrap}
+  .tbtn{cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--tx);
+    border-radius:20px;padding:6px 0;font:inherit;font-size:13px;line-height:1;transition:.15s;
+    width:40px;height:32px;display:inline-flex;align-items:center;justify-content:center}
+  .tbtn:hover:not(:disabled){border-color:var(--tx2)}
+  .tbtn:disabled{opacity:.4;cursor:default}
+  .play{cursor:pointer;border:0;background:var(--accent);color:#161307;font-weight:700;
+    border-radius:20px;padding:0;font:inherit;font-size:14px;transition:.15s;
+    width:56px;height:32px;display:inline-flex;align-items:center;justify-content:center}
+  .play:hover:not(:disabled){filter:brightness(1.08)}
+  .play:disabled{opacity:.5;cursor:default}
+  .play.stop{background:var(--panel);color:var(--tx);border:1px solid var(--line)}
+  .scrub{flex:1;min-width:100px;max-width:300px;height:6px;background:var(--line);border-radius:3px;cursor:pointer;position:relative;margin:0 4px}
+  .scrub .fill{position:absolute;left:0;top:0;height:100%;background:var(--accent);border-radius:3px;transition:width .05s linear}
+  .time{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--tx2);white-space:nowrap;min-width:64px;text-align:center}
+  .combo{font-size:11.5px;color:var(--tx);white-space:nowrap;
+    background:#1a1f2e;border-radius:6px;padding:6px 12px}
+  .ytlink{font-size:12px;color:var(--accent);text-decoration:none;
+    border:1px solid var(--accent);background:transparent;border-radius:14px;padding:5px 12px;
+    white-space:nowrap;transition:.15s}
+  .ytlink:hover{background:var(--accent);color:#161307}
+  .ytlink[hidden]{display:none}
+  .bar{display:flex;align-items:center;gap:10px;padding:6px 18px;border-bottom:1px solid var(--line);flex:none;flex-wrap:wrap}
+  .demos{display:flex;gap:6px;flex-wrap:wrap}
+  .demo{cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--tx2);
+    border-radius:8px;padding:7px 12px;font:inherit;font-size:13px;line-height:1.2;text-align:left;transition:.15s}
+  .demo:hover{border-color:var(--tx2)}
+  .demo.sel{border-color:var(--accent);color:var(--tx);background:#1b2030}
+  .demo b{display:block;font-size:13px;font-weight:600}
+  .demo span{font-size:11px;color:var(--tx2)}
+  .demo.sel span{color:var(--accent)}
+  .demo.local{border-style:dashed;border-color:var(--line)}
+  .demo.local b{color:var(--good)}
+  .demo.local.sel{border-style:solid}
+  .stage{flex:1;position:relative;min-height:0}
+  canvas{display:block;width:100%;height:100%}
+  .hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    color:var(--tx2);font-size:15px;pointer-events:none;text-align:center;padding:0 24px}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>instruments.js</h1>
+    <div class="status" id="status"></div>
+  </header>
+  <div class="bar">
+    <div class="demos" id="demos"></div>
+  </div>
+  <div class="bar">
+    <div class="transport">
+      <button class="tbtn" id="back10" title="back 10s" disabled>«10</button>
+      <button class="play" id="play" disabled>▶</button>
+      <button class="tbtn" id="fwd10" title="forward 10s" disabled>10»</button>
+      <div class="scrub" id="scrub"><div class="fill" id="scrubFill"></div></div>
+      <div class="time" id="time">0:00 / 0:00</div>
+      <span class="combo" id="combo"></span>
+      <a class="ytlink" id="ytlink" target="_blank" rel="noopener" title="hear the original" hidden>Listen original on YouTube</a>
+    </div>
+  </div>
+  <div class="stage">
+    <canvas id="cv"></canvas>
+    <div class="hint" id="hint">Pick a tune and press Play — the notes fall onto the keys as they sound.</div>
+  </div>
+</div>
+<script type="module">
+import { createEngine } from "../../packages/core/dist/index.js";
+import { parseMidi } from "../../packages/midi/dist/index.js";
+import { DEMOS, processMidi } from "./demos.mjs";
+const midiCache = new Map(); // demo.id -> processed note list (fetch+parse once)
+
+// ---- per-instrument colours -----------------------------------------------
+const COLORS = {
+  piano:"#f5b544", bass:"#5b8dff", guitar:"#57d1a0", "guitar-steel":"#57d1a0",
+  "guitar-electric":"#38c6c6", "guitar-distorted":"#e0705a", marimba:"#e0b34a",
+  glockenspiel:"#7ad7f0", strings:"#9a8cff", synthpad:"#9a8cff",
+  trumpet:"#ff9d42", violin:"#ff7aa8", viola:"#d98cff", cello:"#b07cff",
+  harp:"#6fe0b4", organ:"#7aa8ff", vibraphone:"#e0b34a", celesta:"#7ad7f0",
+  xylophone:"#e0b34a", tubularbells:"#9a8cff",
+  percussion:"#8b95a8", drums:"#8b95a8", "drums-jazz":"#8b95a8", "drums-rock":"#8b95a8",
+};
+const colorFor = (g) => COLORS[g] || "#8b95a8";
+const DRUM_KITS = new Set(["drums","drums-rock","drums-jazz","percussion"]);
+const kitKey = (g) => (["drums-rock","drums-jazz"].includes(g) ? g : "drums");
+// GM drum lanes we visualise
+const DRUM_LANE = { 36:"Kick", 35:"Kick", 38:"Snare", 40:"Snare", 42:"Hat", 44:"Hat", 46:"Hat", 51:"Ride", 53:"Ride", 49:"Crash", 57:"Crash" };
+const LANES = ["Kick","Snare","Hat","Ride","Crash"];
+// Drum column: falling bars in a left strip, one lane wide each — pitched
+// notes and their keyboard shift right by `drumColW` so drums sit *next to*
+// the piano roll, not as a strip bolted above the keybed.
+const LANE_W = 26;
+let drumColW = 0;
+
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+const statusEl = document.getElementById("status"), hint = document.getElementById("hint");
+const playBtn = document.getElementById("play");
+const back10Btn = document.getElementById("back10");
+const fwd10Btn = document.getElementById("fwd10");
+const scrubEl = document.getElementById("scrub"), scrubFill = document.getElementById("scrubFill");
+const timeEl = document.getElementById("time");
+const ytlinkEl = document.getElementById("ytlink");
+const comboEl = document.getElementById("combo");
+let dpr = 1, W = 0, H = 0;
+
+function resize(){
+  dpr = Math.min(2, window.devicePixelRatio || 1);
+  const r = cv.getBoundingClientRect();
+  W = r.width; H = r.height;
+  cv.width = Math.round(W*dpr); cv.height = Math.round(H*dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+window.addEventListener("resize", resize);
+
+// ---- state ----------------------------------------------------------------
+let engine=null, current=DEMOS[0], notes=[], pitchLo=48, pitchHi=72;
+let playing=false, t0=0, raf=0, dur=0, hasDrums=false;
+const trackCache=new Map();   // group/kit key -> Track (persistent, reused across demos)
+const LOOKAHEAD=2.2, LEAD=0.35;
+
+// keyboard geometry
+const WHITE_PC=new Set([0,2,4,5,7,9,11]);
+const isWhite=(m)=>WHITE_PC.has(((m%12)+12)%12);
+let whiteList=[], whiteIndex=new Map(), KBD_H=104, DRUM_H=34;
+function computeKeyboard(){
+  // pad range to whole octaves for a tidy keyboard
+  let lo=pitchLo, hi=pitchHi;
+  while(!isWhite(lo)) lo--; while(!isWhite(hi)) hi++;
+  lo=Math.max(21,lo-2); hi=Math.min(108,hi+2);
+  whiteList=[]; whiteIndex.clear();
+  for(let m=lo;m<=hi;m++) if(isWhite(m)){ whiteIndex.set(m,whiteList.length); whiteList.push(m); }
+  return {lo,hi};
+}
+function ww(){ return W/Math.max(1,whiteList.length); }
+function xCenter(m){
+  if(isWhite(m)) return whiteIndex.get(m)*ww()+ww()/2;
+  // black key sits between its white neighbours (m-1 and m+1 are white)
+  return (xCenter(m-1)+xCenter(m+1))/2;
+}
+const noteW=(m)=> isWhite(m) ? ww()*0.86 : ww()*0.58;
+
+// ---- demo selector UI -----------------------------------------------------
+const demosEl=document.getElementById("demos");
+DEMOS.forEach((d,i)=>{
+  const b=document.createElement("button");
+  b.className="demo"+(i===0?" sel":""); b.innerHTML=`<b>${d.name}</b><span>${d.genre}</span>`;
+  b.onclick=()=>selectDemo(d,b);
+  demosEl.appendChild(b);
+});
+// "Your MIDI" — load ANY .mid the user has, entirely client-side. Nothing is
+// uploaded, fetched, or committed; the file never leaves this machine. This is
+// how you play a copyrighted song (a pop hit, Michael Jackson, whatever) through
+// the engine without the project ever redistributing it.
+const localBtn=document.createElement("button");
+localBtn.className="demo local"; localBtn.innerHTML=`<b>＋ Your MIDI</b><span>drop a .mid — local only</span>`;
+const fileInput=document.createElement("input");
+fileInput.type="file"; fileInput.accept=".mid,.midi,audio/midi"; fileInput.style.display="none";
+localBtn.onclick=()=>fileInput.click();
+fileInput.onchange=(e)=>{ const f=e.target.files?.[0]; if(f) loadLocalFile(f); };
+demosEl.appendChild(localBtn); demosEl.appendChild(fileInput);
+// drag-and-drop anywhere on the page
+["dragover","drop"].forEach(t=>document.addEventListener(t,(e)=>e.preventDefault()));
+document.addEventListener("drop",(e)=>{ const f=[...(e.dataTransfer?.files||[])].find(f=>/\.midi?$/i.test(f.name)); if(f) loadLocalFile(f); });
+
+async function loadLocalFile(file){
+  if(playing) stop();
+  let buf; try{ buf=await file.arrayBuffer(); }catch{ statusEl.textContent="could not read file"; return; }
+  let parsed; try{ parsed=parseMidi(buf); }
+  catch(err){ statusEl.textContent=`could not parse ${file.name}: ${err.message}`; hint.textContent=`✗ ${file.name} is not a readable MIDI file`; hint.style.display=""; return; }
+  document.querySelectorAll(".demo").forEach(x=>x.classList.remove("sel"));
+  localBtn.classList.add("sel");
+  current={ id:"local:"+file.name, name:file.name.replace(/\.midi?$/i,""), genre:"your MIDI — local only, never committed",
+    instrument:null, excerpt:600, defaultGain:0.34, mix:{ drums:{gain:0.18} } };
+  midiCache.set(current.id, processMidi(parsed, current));
+  notes=midiCache.get(current.id);
+  const pitched=notes.filter(n=>!n.isDrum && !DRUM_KITS.has(n.instrumentGroup));
+  if(!pitched.length){ hint.textContent=`${current.name}: no pitched notes to show`; hint.style.display=""; return; }
+  hasDrums=notes.some(n=>n.isDrum || DRUM_KITS.has(n.instrumentGroup));
+  pitchLo=Math.min(...pitched.map(n=>n.midiPitch)); pitchHi=Math.max(...pitched.map(n=>n.midiPitch));
+  computeKeyboard(); dur=Math.max(...notes.map(n=>n.endSeconds));
+  statusEl.textContent=`loaded "${current.name}" — ${notes.length} notes, ${dur.toFixed(0)}s (local)`;
+  hint.textContent=`${current.name} — press Play`; hint.style.display=""; draw(-1);
+  updateYtLink(); updateCombo();
+}
+async function selectDemo(d,btn){
+  if(playing) stop();
+  current=d;
+  document.querySelectorAll(".demo").forEach(e=>e.classList.remove("sel"));
+  btn.classList.add("sel");
+  await loadDemo();
+}
+async function loadDemo(){
+  if(!midiCache.has(current.id)){
+    hint.textContent=`loading ${current.name}…`; hint.style.display="";
+    const buf=await fetch(current.midi).then(r=>{ if(!r.ok) throw new Error(r.status); return r.arrayBuffer(); });
+    midiCache.set(current.id, processMidi(parseMidi(buf), current));
+  }
+  notes=midiCache.get(current.id);
+  const pitched=notes.filter(n=>!n.isDrum && !DRUM_KITS.has(n.instrumentGroup));
+  hasDrums=notes.some(n=>n.isDrum || DRUM_KITS.has(n.instrumentGroup));
+  pitchLo=Math.min(...pitched.map(n=>n.midiPitch));
+  pitchHi=Math.max(...pitched.map(n=>n.midiPitch));
+  computeKeyboard();
+  dur=Math.max(...notes.map(n=>n.endSeconds));
+  hint.textContent=`${current.name} — ${current.genre}`;
+  hint.style.display="";
+  playOffset=0; updateTransport(); updateYtLink(); updateCombo();
+  draw(-1);
+}
+
+// ---- track management (reuse across demos; never leak toward the 16 limit) --
+let trackLimitHit=false;
+function trackFor(group,isDrum){
+  const key=isDrum?kitKey(group):group;
+  let t=trackCache.get(key);
+  const g=current.mix?.[key]?.gain ?? current.mix?.[group]?.gain ?? current.defaultGain ?? 0.7;
+  const pan=current.mix?.[key]?.pan ?? current.mix?.[group]?.pan ?? 0;
+  if(!t){
+    try{ t=engine.createTrack(key,{gain:g,pan}); trackCache.set(key,t); }
+    catch{ trackLimitHit=true; return null; } // 16-track limit — degrade loudly, not silently
+  } else t.set({gain:g,pan});
+  return t;
+}
+
+// ---- playback (seek-aware) -----------------------------------------------
+// Playback schedules all notes at absolute AudioContext times. Seeking = stop +
+// replay from new offset. `playOffset` is seconds into the demo; `t0` is the
+// AudioContext time at which playOffset maps.
+let playOffset=0;
+async function play(){
+  if(!engine || playing) return;
+  await engine.ready;
+  playing=true; hint.style.display="none"; trackLimitHit=false;
+  playBtn.textContent="■"; playBtn.classList.add("stop");
+  back10Btn.disabled=false; fwd10Btn.disabled=false;
+  t0=engine.context.currentTime+LEAD;
+  const off=playOffset;
+  for(const nt of notes){
+    const ntStart=nt.startSeconds-off; if(ntStart<0) continue; // already passed
+    const isDrum=!!nt.isDrum || DRUM_KITS.has(nt.instrumentGroup);
+    const tr=trackFor(nt.instrumentGroup,isDrum);
+    if(!tr) continue;
+    tr.noteOn(nt.midiPitch, nt.velocity, t0+ntStart);
+    if(!isDrum){ const ntEnd=nt.endSeconds-off; if(ntEnd>0) tr.noteOff(nt.midiPitch, t0+ntEnd); }
+  }
+  if(trackLimitHit) statusEl.textContent="⚠ this file uses more instruments than the 16-track demo limit — some were dropped";
+  loop();
+}
+function stop(){
+  playing=false; cancelAnimationFrame(raf);
+  if(engine) engine.stop();
+  playBtn.textContent="▶"; playBtn.classList.remove("stop");
+  back10Btn.disabled=true; fwd10Btn.disabled=true;
+  draw(playOffset); hint.style.display="";
+}
+function seek(newOff){
+  const wasPlaying=playing;
+  if(wasPlaying) stop();
+  playOffset=Math.max(0,Math.min(dur,newOff));
+  updateTransport();
+  draw(playOffset);
+  if(wasPlaying) play();
+}
+playBtn.onclick=()=> playing?stop():play();
+back10Btn.onclick=()=> seek(playOffset-10);
+fwd10Btn.onclick=()=> seek(playOffset+10);
+scrubEl.addEventListener("click",(ev)=>{
+  const r=scrubEl.getBoundingClientRect();
+  const p=Math.max(0,Math.min(1,(ev.clientX-r.left)/r.width));
+  seek(p*dur);
+});
+document.addEventListener("keydown",(e)=>{
+  if(e.target.tagName==="INPUT") return;
+  if(e.code==="Space"){ e.preventDefault(); playing?stop():play(); }
+  else if(e.code==="ArrowLeft") seek(playOffset-5);
+  else if(e.code==="ArrowRight") seek(playOffset+5);
+});
+function fmtTime(s){ s=Math.max(0,Math.round(s)); const m=Math.floor(s/60),ss=s%60; return `${m}:${ss<10?"0":""}${ss}`; }
+function updateTransport(){
+  const p=dur>0?Math.max(0,Math.min(1,playOffset/dur)):0;
+  scrubFill.style.width=`${p*100}%`;
+  timeEl.textContent=`${fmtTime(playOffset)} / ${fmtTime(dur)}`;
+}
+function updateYtLink(){
+  if(current?.youtube){ ytlinkEl.href=current.youtube; ytlinkEl.hidden=false; }
+  else ytlinkEl.hidden=true;
+}
+function updateCombo(){
+  comboEl.textContent = current?.combo ?? "";
+}
+
+// ---- rendering ------------------------------------------------------------
+function loop(){
+  const e=engine.context.currentTime-t0+playOffset;
+  draw(e); updateTransport();
+  if(e>dur+2.2){ stop(); return; }
+  raf=requestAnimationFrame(loop);
+}
+function draw(e){
+  ctx.clearRect(0,0,W,H);
+  const yKbd=H-KBD_H, drumH=hasDrums?DRUM_H:0, yDrum=yKbd-drumH;
+  // falling-note field background
+  ctx.fillStyle="#0e1119"; ctx.fillRect(0,0,W,yKbd);
+  // subtle octave gridlines (at each C)
+  ctx.strokeStyle="#171c26"; ctx.lineWidth=1;
+  for(const m of whiteList){ if(m%12===0){ const x=xCenter(m)-ww()/2; ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,yKbd); ctx.stroke(); } }
+
+  // drum lane hits (flashes descending into the lane)
+  if(hasDrums && e>=0){
+    for(const n of notes){
+      const isDrum=!!n.isDrum || DRUM_KITS.has(n.instrumentGroup);
+      if(!isDrum) continue;
+      const lane=LANES.indexOf(DRUM_LANE[n.midiPitch]); if(lane<0) continue;
+      const dt=n.startSeconds-e; // seconds until hit
+      if(dt> LOOKAHEAD || dt< -0.25) continue;
+      const laneW=W/LANES.length, lx=lane*laneW+laneW/2;
+      const y=yDrum + (1-dt/LOOKAHEAD)*(yKbd-yDrum) - (yKbd-yDrum); // approach the drum row
+      const hitY=yDrum+DRUM_H/2;
+      const prog=Math.max(0,Math.min(1,1-dt/LOOKAHEAD));
+      const r=dt<=0 ? 10*(1+dt*3) : 4+4*prog;
+      ctx.globalAlpha=dt<=0?Math.max(0,1+dt*3):0.25+0.55*prog;
+      ctx.fillStyle=colorFor("drums");
+      ctx.beginPath(); ctx.arc(lx, hitY, Math.max(2,r), 0, 7); ctx.fill();
+      ctx.globalAlpha=1;
+    }
+    // lane labels
+    ctx.fillStyle="#4a5163"; ctx.font="10px ui-monospace,Menlo,monospace"; ctx.textAlign="center";
+    LANES.forEach((l,i)=>{ const laneW=W/LANES.length; ctx.fillText(l, i*laneW+laneW/2, yDrum-4); });
+  }
+
+  // falling pitched notes
+  const lit=new Map(); // midi -> color of the instrument currently sounding
+  for(const n of notes){
+    if(n.isDrum || DRUM_KITS.has(n.instrumentGroup)) continue;
+    const s=n.startSeconds, en=n.endSeconds;
+    // y where a given note-time reaches: yKbd when time==e, 0 when time-e==LOOKAHEAD
+    const yOf=(t)=> yKbd - ((t-e)/LOOKAHEAD)*yKbd;
+    let yb=yOf(s), yt=yOf(en); // bottom(start), top(end)
+    if(yt>yKbd || yb<0) continue; // fully past or not yet visible
+    const col=colorFor(n.instrumentGroup);
+    const x=xCenter(n.midiPitch), w=noteW(n.midiPitch);
+    const top=Math.max(0,yt), bot=Math.min(yKbd,yb);
+    if(bot-top<1) { /* still draw a sliver */ }
+    ctx.fillStyle=col;
+    const on = e>=s && e<=en;
+    ctx.globalAlpha = on?1 : 0.82;
+    roundRect(x-w/2, top, w, Math.max(2,bot-top), Math.min(5,w/2));
+    ctx.fill();
+    // glow on the leading edge
+    if(yb>=0 && yb<=yKbd){ ctx.globalAlpha=0.5; ctx.fillRect(x-w/2, Math.min(yKbd-2,yb-2), w, 2); }
+    ctx.globalAlpha=1;
+    if(on) lit.set(n.midiPitch, col);
+  }
+
+  drawKeyboard(yKbd, lit);
+  drawProgress(e);
+}
+function roundRect(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+function drawKeyboard(yKbd, lit){
+  const w=ww();
+  // white keys
+  for(let i=0;i<whiteList.length;i++){
+    const m=whiteList[i], x=i*w, on=lit.get(m);
+    ctx.fillStyle= on? on : "#f3f4f7";
+    ctx.fillRect(x+0.5,yKbd,w-1,KBD_H);
+    if(on){ ctx.fillStyle="rgba(255,255,255,.35)"; ctx.fillRect(x+0.5,yKbd,w-1,KBD_H); }
+  }
+  // black keys on top
+  const bw=w*0.62, bh=KBD_H*0.62;
+  for(let m=whiteList[0]; m<=whiteList[whiteList.length-1]; m++){
+    if(isWhite(m)) continue;
+    const x=xCenter(m), on=lit.get(m);
+    ctx.fillStyle= on? on : "#10131a";
+    ctx.fillRect(x-bw/2,yKbd,bw,bh);
+    if(on){ ctx.fillStyle="rgba(255,255,255,.25)"; ctx.fillRect(x-bw/2,yKbd,bw,bh); }
+  }
+  // keybed top edge
+  ctx.fillStyle="#000"; ctx.fillRect(0,yKbd-2,W,2);
+  ctx.fillStyle=lit.size?"#f5b544":"#2a303c"; ctx.fillRect(0,yKbd-2,W,1);
+}
+function drawProgress(e){
+  if(e<0) return;
+  const p=Math.max(0,Math.min(1,e/dur));
+  ctx.fillStyle="#f5b544"; ctx.fillRect(0,0,W*p,2);
+}
+
+// ---- boot -----------------------------------------------------------------
+(async ()=>{
+  resize();
+  try{
+    engine=await createEngine();
+    await engine.ready;
+    playBtn.disabled=false;
+    await loadDemo();
+  }catch(err){ statusEl.textContent="engine failed: "+err.message; }
+})();
+</script>
+</body>
+</html>

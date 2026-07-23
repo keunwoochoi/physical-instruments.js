@@ -35,16 +35,27 @@ export interface ParsedMidi {
 /** GM program number (0-based) → instruments.js family. */
 export function gmProgramToGroup(program: number): string {
   if (program < 8) return "piano";
-  if (program < 16) return program === 8 || program === 11 ? "vibraphone" : "mallet"; // celesta/glock/musicbox/vibes/marimba/xylo/bells/dulcimer
-  if (program < 24) return "epiano"; // organs — placeholder
+  if (program < 16) {
+    // chromatic percussion, GM 8-15
+    return ["celesta", "glockenspiel", "musicbox", "vibraphone", "marimba", "xylophone", "tubularbells", "musicbox"][program - 8]!;
+  }
+  if (program < 24) return "organ"; // drawbar organ
   if (program === 24) return "guitar"; // nylon
   if (program === 25) return "guitar-steel";
   if (program < 29) return "guitar-electric"; // jazz/clean/muted
   if (program < 32) return "guitar-distorted"; // overdriven/distortion/harmonics
   if (program < 40) return "bass";
-  if (program < 56) return "strings"; // strings + ensemble + choir
-  if (program < 64) return "brass";
-  if (program < 80) return "woodwind"; // reeds + pipes
+  if (program < 56) {
+    // strings family, GM 40-55
+    const solo = ["violin", "viola", "cello", "contrabass", "strings", "pizzicato", "harp", "percussion"];
+    if (program - 40 < solo.length) return solo[program - 40]!;
+    return "strings"; // ensemble / choir -> placeholder
+  }
+  if (program < 64) {
+    // brass family, GM 56-63. french horn is dormant -> trombone; synth brass -> synth.
+    return ["trumpet", "trombone", "trombone", "trumpet", "trombone", "trumpet", "synth", "synth"][program - 56]!;
+  }
+  if (program < 80) return "woodwind"; // reeds + pipes -> organ stand-in until real winds land
   if (program < 104) return "synth"; // leads, pads, fx
   if (program < 112) return "guitar"; // "ethnic" plucked: sitar/banjo/koto…
   return "percussion";

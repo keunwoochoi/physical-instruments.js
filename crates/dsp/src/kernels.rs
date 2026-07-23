@@ -44,6 +44,30 @@ pub enum Instrument {
     Cello = 15,
     /// Trombone - lip valve + bore + bell + nonlinear propagation (#50 spike).
     Trombone = 16,
+    /// Bowed violin - `BowedVoice` at violin register + body (#50 family).
+    Violin = 17,
+    /// Bowed viola - `BowedVoice` at viola register + body (#50 family).
+    Viola = 18,
+    /// Bowed contrabass - `BowedVoice` at contrabass register + body (#50 family).
+    Contrabass = 19,
+    /// Trumpet - `BrassVoice` at a short bore, high slots (#50 family).
+    Trumpet = 20,
+    /// French horn - `BrassVoice` at a long bore, high harmonics (#50 family).
+    FrenchHorn = 21,
+    /// Saxophone - single-reed woodwind, `ReedVoice` (#50 family).
+    Saxophone = 22,
+    /// Tonewheel drawbar organ - additive (fills GM 16-23).
+    Organ = 23,
+    /// Xylophone - bright short wooden bars, modal (GM 14).
+    Xylophone = 24,
+    /// Tubular bells / chimes - long inharmonic bell partials, modal (GM 15).
+    TubularBells = 25,
+    /// Celesta - soft struck steel bars, modal (GM 9).
+    Celesta = 26,
+    /// Concert harp - clean long-ringing plucked string (GM 46).
+    Harp = 27,
+    /// Pizzicato strings - short punchy plucked bowed-string (GM 45).
+    Pizzicato = 28,
 }
 
 impl Instrument {
@@ -65,6 +89,18 @@ impl Instrument {
             14 => Self::DrumsJazz,
             15 => Self::Cello,
             16 => Self::Trombone,
+            17 => Self::Violin,
+            18 => Self::Viola,
+            19 => Self::Contrabass,
+            20 => Self::Trumpet,
+            21 => Self::FrenchHorn,
+            22 => Self::Saxophone,
+            23 => Self::Organ,
+            24 => Self::Xylophone,
+            25 => Self::TubularBells,
+            26 => Self::Celesta,
+            27 => Self::Harp,
+            28 => Self::Pizzicato,
             _ => Self::Marimba,
         }
     }
@@ -208,35 +244,62 @@ pub const MAX_BODY_MODES: usize = 160;
 /// no longer resolvable and a dense deterministic bank is the wrong estimator, so the modes
 /// thin out and a broadband tail carries the top.
 pub fn piano_board(sr: f32, out: &mut [(f32, f32, f32)]) -> usize {
-    const DENSITY: f32 = 1.0 / 19.5; // modes per Hz (Ege & Boutillon, strung upright)
-    const ETA: f32 = 0.021; // mean loss factor
+    // THE OWNER'S RULE, and it is absolute:
+    //   "the resonance frequency pattern of sound board (or anything structural) should
+    //    never have any tonality, any pitch. never ever."
+    //
+    // The first version broke it badly. Measured on the board ALONE (impulse straight
+    // through the bank, no string): pitch salience 0.381, spectral peakiness 23.3 dB, and
+    // it RANG for 0.64 s. Three separate mistakes, each of which produces pitch:
+    //
+    //   1. The modes were nearly EVENLY SPACED (~19.5 Hz apart, lightly jittered). An
+    //      evenly-spaced set of resonances is a COMB, and a comb has a pitch. This is the
+    //      one that mattered most.
+    //   2. They were far too lightly damped, so the board RANG FREE. Anything that rings
+    //      long enough to have a period is something you can hear a pitch in - and the
+    //      action thump is a broadband click, which is exactly the signal that exposes it.
+    //   3. A Gaussian amplitude peak put one mode 23 dB over its neighbours. A resonance
+    //      that towers is a resonance you hear as a note.
+    //
+    // A real soundboard is a heavily-damped, irregular, densely-overlapping structure. It
+    // COLOURS; it does not SING. Rebuilt accordingly:
+    //
+    //   - frequencies are drawn IRREGULARLY (log-uniform jitter, no fixed step), so there
+    //     is no periodicity for the ear to lock onto;
+    //   - damping is strong and rises with frequency, so the board's impulse response dies
+    //     in ~0.1 s rather than ringing;
+    //   - amplitudes are broadly spread with no dominant peak.
+    //
+    // Gated by `board_tonality` in lib.rs, which measures pitch salience, spectral
+    // peakiness and ring time on the bank in isolation. That test is the owner's rule,
+    // made enforceable.
+    const ETA_LO: f32 = 0.10; // loss factor at the bottom - a board is HEAVILY damped
+    const ETA_HI: f32 = 0.26; // and more so up top, where radiation dominates
     let mut n = 0;
-    let mut f = 48.0f32;
+    let mut f = 55.0f32;
     let mut seed = 0x9E3779B9u32;
     let mut rnd = || {
         seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
         (seed >> 8) as f32 / 16_777_216.0
     };
-    while n < out.len() && f < 5200.0 {
-        // t60 from the loss factor: decay rate = pi*f*eta
-        let t60 = 6.907755 / (core::f32::consts::PI * f * ETA);
-        // amplitude: the board radiates best in the 150-800 Hz region and rolls off either
-        // side. The +-30% scatter is the point - a board whose modes are evenly weighted
-        // sounds synthetic, and its notes all decay identically.
-        let lf = (f / 260.0).ln();
-        let shape = (-0.5 * lf * lf / 1.5).exp();
-        let g = shape * (0.7 + 0.6 * rnd());
-        out[n] = (f, t60.clamp(0.05, 2.5), g);
+    while n < out.len() && f < 5000.0 {
+        let x = (f / 55.0).log2() / 6.5; // 0 at the bottom, ~1 at the top
+        let eta = ETA_LO + (ETA_HI - ETA_LO) * x.clamp(0.0, 1.0);
+        let t60 = 6.907755 / (core::f32::consts::PI * f * eta);
+        // Broad, gently-tilted amplitude with heavy scatter and NO dominant peak. An
+        // evenly-weighted board sounds synthetic; a peaked one has a pitch.
+        let tilt = (55.0f32 / f).powf(0.35);
+        let g = tilt * (0.45 + 1.1 * rnd());
+        out[n] = (f, t60.clamp(0.02, 0.45), g);
         n += 1;
-        // spacing from the modal density, jittered. Above the modal-overlap crossover
-        // (~975 Hz) individual modes stop being resolvable, so thin them out.
-        let mut step = 1.0 / DENSITY;
-        if f > 975.0 {
-            step *= 1.0 + (f - 975.0) / 700.0;
-        }
-        f += step * (0.55 + 0.9 * rnd());
+        // IRREGULAR spacing. The mean follows the measured modal density (Ege & Boutillon,
+        // ~1 mode per 19.5 Hz), but each step is drawn from a wide distribution so the set
+        // never forms a comb.
+        let mean_step = 19.5 * (1.0 + 1.6 * (f / 1600.0).max(0.0));
+        f += mean_step * (0.25 + 1.6 * rnd() * rnd().max(0.35));
     }
     n
+
 }
 
 /// Instrument body as a parallel modal resonator bank on the track bus
@@ -367,17 +430,31 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
         // cello: provisional, NOT a measured LUFS bake (spike). Re-run measure-loudness.
         Instrument::Cello => 1.0,
         Instrument::Trombone => 1.0,
-        Instrument::Marimba => 2.1,       // reference
+        // bowed/brass family: provisional, NOT a measured LUFS bake (spike). The per-note
+        // level bake lives in BowedVoice/BrassVoice::start; this stage is left at unity.
+        Instrument::Violin => 1.0,
+        Instrument::Viola => 1.0,
+        Instrument::Contrabass => 1.0,
+        Instrument::Trumpet => 1.0,
+        Instrument::FrenchHorn => 1.0,
+        Instrument::Saxophone => 1.0,
+        Instrument::Organ => 1.0,
+        Instrument::Xylophone => 5.2,
+        Instrument::TubularBells => 8.3,
+        Instrument::Celesta => 8.0,
+        Instrument::Harp => 0.42,
+        Instrument::Pizzicato => 0.34,
+        Instrument::Marimba => 1.70,       // reference
         Instrument::Vibraphone => 4.9,    // was -30.5 LUFS
         Instrument::Glockenspiel => 30.6, // reverb pre-delay re-bake 2026-07-13 (x1.11)
         Instrument::MusicBox => 14.8,     // was -35.6 LUFS
         Instrument::Guitar => 0.184,       // reverb pre-delay re-bake 2026-07-13 (x1.16)
-        Instrument::Bass => 1.97,         // reverb pre-delay re-bake 2026-07-13 (x1.09)
+        Instrument::Bass => 1.32,         // reverb pre-delay re-bake 2026-07-13 (x1.09)
         Instrument::EPiano => 1.17,       // EP r2 tine/pickup rebuild, reverb-flat re-bake 2026-07-13 (×1.05)
         Instrument::Drums => 0.58,        // drums r4 0.61 x room 0.95 (verify by sweep)
         Instrument::SynthPad => 0.51,     // reverb pre-delay re-bake 2026-07-13 (x1.08)
-        Instrument::Piano => 0.0319, // P1 per-key calibration re-bake (per-key LUFS trims raised the mid; was -14.9 LUFS at 0.130, x0.51 per measure-loudness)
-        Instrument::GuitarSteel => 0.364,   // body-round 0.387 x room 0.94 (verify by sweep)
+        Instrument::Piano => 0.0053, // P1 per-key calibration re-bake (per-key LUFS trims raised the mid; was -14.9 LUFS at 0.130, x0.51 per measure-loudness)
+        Instrument::GuitarSteel => 0.255,   // body-round 0.387 x room 0.94 (verify by sweep)
         Instrument::GuitarElectric => 0.416, // reverb pre-delay re-bake 2026-07-13 (x1.08)
         Instrument::GuitarDistorted => 0.135, // reverb pre-delay re-bake 2026-07-13 (x1.06)
         Instrument::DrumsRock => 0.38,      // drums r4 0.41 x room 0.93 (verify by sweep)
@@ -391,8 +468,17 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
 /// electrics lowest (the cab/amp chain already carries their space).
 pub fn room_send(inst: Instrument) -> f32 {
     match inst {
-        Instrument::Cello => 0.12,
-        Instrument::Trombone => 0.13,
+        Instrument::Cello | Instrument::Violin | Instrument::Viola => 0.12,
+        Instrument::Contrabass => 0.10,
+        Instrument::Trombone | Instrument::Trumpet => 0.13,
+        Instrument::FrenchHorn => 0.15, // the horn lives on its room; it plays into the wall
+        Instrument::Saxophone => 0.12,
+        Instrument::Organ => 0.10,
+        Instrument::Xylophone => 0.10,
+        Instrument::TubularBells => 0.14,
+        Instrument::Celesta => 0.12,
+        Instrument::Harp => 0.12,
+        Instrument::Pizzicato => 0.11,
         Instrument::Drums | Instrument::DrumsRock => 0.16,
         Instrument::DrumsJazz => 0.18, // brushes/jazz kits are recorded roomier
         Instrument::Piano => 0.09,
@@ -2286,6 +2372,12 @@ impl PluckVoice {
 /// between p1 and p20 (A0: B = 2.2e-4 measured on Salamander, loop ~1750
 /// samples), which takes ~14-18 first-order sections. Solved per note in
 /// `design_piano_dispersion`; treble keys use 1-3.
+/// Longest per-string hammer contact delay (samples). ~0.35 ms at 48 kHz.
+const STRIKE_LAG_MAX: usize = 20;
+
+/// Longitudinal delay line. f_long is 1.2-6 kHz, so the loop is short.
+const LNG_BUF: usize = 256;
+
 const PIANO_MAX_DISP: usize = 20;
 
 #[derive(Clone, Copy)]
@@ -2298,6 +2390,8 @@ struct StringLoop {
     loss: f32,
     // fractional tuning allpass
     ap_c: f32,
+    /// the NOMINAL fractional delay, so modulation is applied around it and cannot accumulate
+    ap_frac0: f32,
     ap_x1: f32,
     ap_y1: f32,
     // stiffness dispersion: M cascaded first-order allpasses, all with
@@ -2329,6 +2423,15 @@ struct StringLoop {
 /// less energy to the blocker.
 const DC_POLE: f32 = 0.9999;
 
+/// Lip contact: how much stiffer the lips are when pressed together than when free, and how
+/// much of the collision the tissue absorbs. Brass players call it "the lips beating".
+const LIP_CONTACT: f32 = 4.0;
+/// Bell radiation tilt (one-zero highpass): 0 = no tilt, ->1 = +6 dB/oct.
+const RAD_TILT: f32 = 0.0;
+/// Viscothermal wall loss, one pole per pass. Lower = darker bore.
+const WALL_C: f32 = 0.060;
+const LIP_CONTACT_D: f32 = 0.003;
+
 /// One-pole loop-lowpass H(z) = c/(1 − (1−c)z⁻¹): exact phase delay at ω, in
 /// samples (the old (1−c)/c DC approximation left the mid keyboard ~+12…+35
 /// cents sharp once the dispersion cascade grew — measured on the P1 baseline).
@@ -2357,6 +2460,20 @@ fn piano_dc_mag(w: f32) -> f32 {
 }
 
 impl StringLoop {
+    /// Shorten the loop by `d` samples (signed) via the fractional tuning allpass. Used for
+    /// tension modulation: a string under more tension is effectively a shorter string.
+    ///
+    /// It modulates around the STORED NOMINAL, `ap_frac0`. The first version derived the
+    /// base from the CURRENT coefficient and shifted from there - so every sample it shifted
+    /// AGAIN, the detune accumulated, and the fraction walked into its clamp within
+    /// milliseconds. The result was a permanent maximum sharpening: A4 at vel 0.9 rendered
+    /// 443.4 Hz instead of 440 (+13 cents), which the tuning test caught immediately.
+    #[inline(always)]
+    fn detune_now(&mut self, d: f32) {
+        let frac = (self.ap_frac0 + d).clamp(0.02, 0.98);
+        self.ap_c = (1.0 - frac) / (1.0 + frac);
+    }
+
     /// `detune_cents` shifts this string against the nominal pitch (unison
     /// beating). `loss`/`lp_c` are the per-round-trip loop loss and lowpass
     /// coefficient SOLVED by the caller from the per-key t60 targets
@@ -2383,6 +2500,7 @@ impl StringLoop {
             lp_c,
             loss,
             ap_c: (1.0 - frac) / (1.0 + frac),
+            ap_frac0: frac,
             ap_x1: 0.0,
             ap_y1: 0.0,
             disp_a,
@@ -2486,6 +2604,10 @@ impl StringLoop {
 //             wound-string false beats excluded)
 //   STRIKE_Q  strike-point fraction (comb fit, de-aliased, smoothed)
 // ---- generated by piano-p1/gen_tables.py from Salamander refs ----
+/// Radiation warmth: one-pole lowpass cutoff coefficient + how much high end to keep.
+const PIANO_WARM_C: f32 = 0.05;
+const PIANO_WARM_KEEP: f32 = 0.35; // 1.0 = off; lower = warmer (fundamental-led, per real grands)
+
 const PIANO_CAL_N: usize = 24;
 const PIANO_CAL_MIDI: [f32; PIANO_CAL_N] = [21.0, 24.0, 27.0, 33.0, 36.0, 42.0, 45.0, 48.0, 51.0, 57.0, 60.0, 66.0, 69.0, 72.0, 75.0, 81.0, 84.0, 87.0, 93.0, 96.0, 99.0, 102.0, 105.0, 108.0];
 const PIANO_CAL_LOG10_B: [f32; PIANO_CAL_N] = [-3.654, -3.788, -3.881, -4.047, -4.041, -4.147, -4.12, -3.957, -3.898, -3.666, -3.539, -3.298, -3.196, -3.086, -2.959, -2.74, -2.617, -2.527, -2.281, -2.125, -2.053, -1.948, -1.878, -1.808];
@@ -2701,7 +2823,27 @@ const PIANO_ACTION_THUMP_GAIN: f32 = 0.006_748_095; // 0.012 * 10^(-5/20)
 #[derive(Clone, Copy)]
 pub struct PianoVoice {
     strings: [StringLoop; 3],
+    /// HORIZONTAL polarization, one per string (Weinreich 1977).
+    ///
+    /// A piano string vibrates in TWO planes. The vertical plane pushes the bridge and
+    /// therefore radiates - and therefore decays fast. The horizontal plane is parallel to
+    /// the soundboard, barely loads the bridge, radiates weakly, and so rings on for a very
+    /// long time. The hammer strikes vertically, so horizontal starts near-silent; energy
+    /// then ROTATES into it through the bridge, which is not perfectly constrained.
+    ///
+    /// That rotation is the piano's BLOOM. The note does not merely decay - it hands energy
+    /// from a fast-dying mode to a long-singing one. Without it the aftersound has to be
+    /// faked from unison anti-phase modes alone, which is what we were doing.
+    strings_h: [StringLoop; 3],
+    /// vertical <-> horizontal energy rotation at the bridge
+    pol_rot: f32,
+    /// how much the horizontal plane reaches the listener (it barely moves the bridge)
+    pol_out: f32,
     strike_off: [usize; 3],
+    strike_lag: [usize; 3],
+    strike_jit: [f32; 3],
+    lag_buf: [[f32; STRIKE_LAG_MAX]; 3],
+    lag_pos: [usize; 3],
     // radiated mix per string: prompt-dominant at onset, aftersound plateau
     // ~7 dB below peak once the prompt dumps (see start() Weinreich note)
     out_w: [f32; 3],
@@ -2756,6 +2898,9 @@ pub struct PianoVoice {
     body_y1: [f32; PIANO_BOARD_MODES],
     body_y2: [f32; PIANO_BOARD_MODES],
     body_g: [f32; PIANO_BOARD_MODES],
+    // radiation warmth: the bridge pickup senses velocity (bright); a real board radiates
+    // a warmer, more fundamental-led spectrum. A gentle radiation lowpass restores that.
+    warm_lp: f32,
     // Legacy structural bridge impulse retained as the broad component of the
     // onset; the actual Stulov force supplies an asymmetric felt-detail path.
     body_attack_pos: u32,
@@ -2819,6 +2964,39 @@ pub struct PianoVoice {
     // normalized at design time so both deploy sample rates radiate the same
     // formant level. Band-limited by construction: the resonator is
     // narrowband and its center is capped ≤ 0.35·sr.
+    /// LONGITUDINAL WAVEGUIDE (Conklin; Bank & Sujbert).
+    ///
+    /// The single biggest reason our piano reads as an ELECTRIC piano. An EP is a struck
+    /// tine: LINEAR, a few clean partials, a pure decay. A piano string is steel under
+    /// enormous tension, and it is NONLINEAR.
+    ///
+    /// A vibrating string is LONGER than a straight one, so its tension rises with
+    /// amplitude. That stretching launches waves ALONG the string, at ~10-50x the
+    /// transverse speed. Because the stretch goes as the SQUARE of transverse displacement,
+    /// the longitudinal drive is full of 2*f_i and f_i +- f_j combination tones - and the
+    /// longitudinal waveguide rings at whichever of them land on its modes. Those are
+    /// Conklin's PHANTOM PARTIALS: they are not harmonics of the note, they sit between the
+    /// harmonics, and they are what makes a loud bass note sound like struck STEEL rather
+    /// than a bell.
+    ///
+    /// The previous model faked this with a squared signal sprayed through ONE resonator - a
+    /// single formant, which produces a bump, not a mode series. A real waveguide gives the
+    /// whole ladder, and the phantoms fall where the physics puts them.
+    lng_buf: [f32; LNG_BUF],
+    lng_pos: usize,
+    /// FRACTIONAL. An integer-length longitudinal loop lands its phantom partials at a
+    /// different frequency at 44.1 kHz than at 48 kHz - the rounding changes the mode
+    /// ladder. The rate-stability test caught it: attack centroid drifted 1445 -> 1233 Hz
+    /// (15%) between the two rates. Phantoms are inharmonic, so nothing else masks it.
+    lng_len: f32,
+    lng_loss: f32,
+    lng_lp: f32,
+    lng_c: f32,
+    lng_out: f32,
+    /// slow-averaged string stretch (the tension state)
+    tens: f32,
+    /// how hard tension modulation sharpens the pitch (cents at full drive)
+    tens_pitch: f32,
     lg_a1: f32,
     lg_r2: f32,
     lg_g: f32,
@@ -2910,7 +3088,37 @@ impl PianoVoice {
         // sings on (aftersound). P1: all strings share the SOLVED loop filter
         // — velocity→brightness now lives entirely in the felt-hammer law
         // (where the physics puts it), not in a velocity-voiced loop filter.
-        let cfg: [f32; 3] = [0.0, detune_spread, -0.8 * detune_spread];
+        // PER-NOTE UNISON TUNING, and it must be IDIOSYNCRATIC.
+        //
+        // Owner: "for each note, the three strings should be tuned slightly differently."
+        // We did detune them - but with a rigid formula, [0, +d, -0.8d], the SAME shape on
+        // every one of the 88 notes, merely rescaled by a per-key d. A real piano is tuned
+        // by hand, note by note; each unison's three deviations are its own.
+        //
+        // That rigidity was not cosmetic - it was CAUSING a defect, and the defect was then
+        // papered over. With the two outer strings placed symmetrically about the centre,
+        // the three pairwise beat rates nearly coincide and the unison MODE-LOCKS, digging a
+        // ~-40 dB null into the tail. The previous fix was to mute strings 2 and 3 to -21 dB
+        // and -32 dB (see out_w) so the null could not be heard. But muting two of the three
+        // strings removes most of what a piano unison IS, which is why the instrument sounds
+        // "a bit too simple".
+        //
+        // Fix the cause: give every note its own irregular spread, deterministic per key
+        // (the same piano every render - it is an instrument, not a random number) but with
+        // no shared pattern between notes. The three pairwise beat rates are then
+        // incommensurate, the beating never locks, and the strings can be heard at their
+        // real, near-equal weights.
+        let mut ds = Lcg(0x9E37_79B9 ^ midi.wrapping_mul(2_654_435_761));
+        // Three strings, each a little off pitch, in BOTH directions. That is all.
+        // No centre string that is exactly right and two that are wrong.
+        let j1 = 0.75 + 0.35 * ds.next(); // +0.40 .. +1.10 of the spread
+        let j2 = -0.80 - 0.35 * ds.next(); // -0.45 .. -1.15
+        let j0 = 0.30 * ds.next();
+        let cfg: [f32; 3] = [
+            detune_spread * j0,  // even the "centre" string is not exactly on pitch
+            detune_spread * j1,
+            detune_spread * j2,
+        ];
         // TWO coupling terms (see bridge_g field docs).
         // g0 — broadband, purely real: no phase, no detune; owns the composite
         // early envelope. Extra decay rate ≈ 8.686·N·g0·f0 dB/s at every
@@ -2926,31 +3134,38 @@ impl PianoVoice {
         let kb = (key / 0.31).min(1.0);
         let gap_cap = 3.0 + 60.0 * kb * kb;
         let rate_gap = (60.0 / t60_prompt - 60.0 / t60).max(0.0).min(gap_cap);
-        // GAP_BOOST: how strongly the in-phase (prompt) unison mode drains into the bridge
-        // relative to the anti-phase (aftersound) modes. This gap IS the two-stage decay -
-        // a piano's fast bloom then long singing tail - and it is the single biggest thing
-        // separating a piano's sustain from a plucked string's.
-        const GAP_BOOST: f32 = 4.0;
-        let bridge_g0 = GAP_BOOST * rate_gap / (8.686 * n_strings as f32 * f0);
-        // g1 — through the admittance lowpass: gives the FUNDAMENTAL its extra
-        // dive while upper partials keep ~the broadband rate. P1: the dive is
-        // a per-key MEASURED quantity (strong only around C3–G3 — C3 p1 dives
-        // at −52 dB/s vs −9 for its mids; zero across most of the keyboard),
-        // not a broad bass Gaussian. The lowpass phase LAG pulls the fast mode
-        // SHARP by ≈ N·g1·Im H(f0) rad/round-trip (Weinreich's "twang", §VI),
-        // so g1 stays capped at 0.04 rad — the pull applies only to the fast
-        // mode; the aftersound that carries perceived pitch is untouched.
+        // NOTE: an earlier revision multiplied this coupling by 4x, because the two-stage
+        // decay measured only 1.57x (a real piano is 2-4x) and the piano sounded like a
+        // plucked string. That was a hack compensating for a hack: the coupling was FINE,
+        // and the reason its prompt/aftersound split could not be heard is that strings 2
+        // and 3 were muted to -21 dB and -32 dB in out_w. With the strings restored to
+        // their physical weights, the UNBOOSTED coupling gives 4.14x on its own. Boost
+        // removed. Fix the cause, and the compensations delete themselves.
+        let bridge_g0 = rate_gap / (8.686 * n_strings as f32 * f0);
+        // g1 — REMOVED. This was an artificial pitch pull, and the owner heard it:
+        //
+        //   "the twang, i.e. as if in a synth, filter with high Q is changing its frequency
+        //    sweep, exists. a little bit, but it does exist."
+        //   "the sweep... i think that's a weird decision..to artificially add. why??"
+        //   "i'd rather just let the three strings have variation in their pitch, both + and
+        //    -, and that's it."
+        //
+        // He is right. g1 existed to give the fundamental an "extra dive" - a faster initial
+        // decay - by phase-lagging the bridge admittance. But a phase lag in the coupling
+        // DRAGS THE FAST MODE SHARP, and as that mode dies the perceived pitch slides back
+        // down. The code knew: its own comment cited "Weinreich's 'twang', §VI" and then
+        // merely CAPPED the pull at 0.02 rad rather than asking why we were introducing a
+        // pitch glide at all. A capped artefact is still an artefact.
+        //
+        // Measured: partial 3 swept -3.3 cents over the decay. On a long-ringing, high-Q
+        // partial that reads as a filter sweep, which is exactly what he described.
+        //
+        // The dive it was buying is not worth a glide. Deleted.
+        let bridge_g1 = 0.0f32;
+        let _ = dive_extra_dbps;
+        // still needed for the admittance lowpass cutoff (bridge_c) - that shapes HOW the
+        // coupling drains with frequency, and it does not pull pitch. Only g1 did.
         let bridge_fc = (0.25 * f0).max(40.0);
-        let xb = f0 / bridge_fc;
-        let h_re = 1.0 / (1.0 + xb * xb);
-        let h_mag = h_re.sqrt();
-        let h_im = xb * h_re;
-        // twang cap 0.02 rad (halved from r3's 0.04): the C3 prompt measured
-        // +10 c sharp vs the reference at the old cap — half the dive depth
-        // where the cap binds is the better trade (P2 owns a real admittance
-        // mechanism for the dive).
-        let bridge_g1 = (dive_extra_dbps / (8.686 * n_strings as f32 * f0 * h_mag))
-            .min(0.02 / (n_strings as f32 * h_im));
         let rng = Lcg(seed | 1);
         // Prompt string (the struck vertical polarization) gets its OWN loop
         // filter solved from the measured early HI-band t60 (its high
@@ -2962,11 +3177,74 @@ impl PianoVoice {
         let t60e_hi = piano_cal(mkey, &PIANO_CAL_T60E_HI).clamp(0.1, t60);
         let (loss0, lp_c0) = solve_piano_loss(f0, sr, t60, t60e_hi.min(t60 * 0.99), f_hi);
         let mut strings = [StringLoop::new(f0, 0.0, sr, loss0, lp_c0, disp_n, disp_a); 3];
+        // NO IN-PHASE EXCITATION among the three strings.
+        //
+        // Owner: "some randomness, within three strings, is needed imo. also no in-phase
+        // among them."
+        //
+        // The hammer was striking all three strings at the SAME INSTANT, at the SAME POINT,
+        // with the same phase - a perfectly coherent, in-phase excitation. That is not a
+        // thing a real hammer can do: felt is soft and uneven, the strings are not exactly
+        // coplanar, and the contact point differs by a fraction of a millimetre across the
+        // unison. A coherent strike manufactures a strong in-phase mode and makes the three
+        // strings behave like one fat string - which is precisely the "too simple" sound.
+        //
+        // So the strike is now incoherent in all three ways a real one is:
+        //   - a different strike POINT per string (each gets its own comb of missing partials)
+        //   - a small per-string CONTACT DELAY (sub-millisecond; the hammer is not flat)
+        //   - a per-note, per-string FORCE difference
+        // All deterministic per key - the same piano every render. It is an instrument, not
+        // a random number generator.
+        // The horizontal polarization: same string, same stiffness, so the same dispersion -
+        // but it is weakly coupled to the bridge, so its loss is far lower and it sings on.
+        // Its frequency differs by a few cents (the bridge/agraffe are not symmetric), which
+        // is what makes the vertical and horizontal beat against each other.
+        let h_t60 = (t60 * 3.2).min(60.0);
+        let (loss_h, lp_h) = solve_piano_loss(f0, sr, h_t60, (t60_hi * 3.2).min(h_t60 * 0.99), f_hi);
+        let mut sk = Lcg(0x85EB_CA6B ^ midi.wrapping_mul(0x27D4_EB2F));
         let mut strike_off = [0usize; 3];
+        let mut strike_lag = [0usize; 3];
+        let mut strike_jit = [1.0f32; 3];
         for (i, s) in strings.iter_mut().enumerate().take(n_strings) {
             let (ls, c) = if i == 0 { (loss0, lp_c0) } else { (loss, lp_c) };
             *s = StringLoop::new(f0, cfg[i], sr, ls, c, disp_n, disp_a);
-            strike_off[i] = ((strike_q * s.len as f32) as usize).clamp(1, s.len - 1);
+            // strike point: +-6% around the nominal, per string
+            let qj = strike_q * (1.0 + 0.06 * sk.next());
+            strike_off[i] = ((qj * s.len as f32) as usize).clamp(1, s.len - 1);
+            // contact delay: 0 .. ~0.35 ms. Enough to decohere, far too small to hear as a flam.
+            // Contact delay: ONE OR TWO SAMPLES. Get the magnitude from the physics, not
+            // from taste. The three strings of a unison sit within ~0.1 mm of coplanar and
+            // the hammer arrives at ~4 m/s, so the real spread in contact time is ~25 us -
+            // about one sample at 48 kHz.
+            //
+            // The first attempt used 0.2-0.3 ms, i.e. ~10x too much. That is not a
+            // decoherence, it is a COMB: two of three strings delayed by 0.2 ms notches the
+            // attack around 2.5 kHz, and a +-1 sample rounding difference between 44.1 and
+            // 48 kHz moves the notch - which is exactly what the rate-stability test caught
+            // (attack centroid drifted 1138 -> 1251 Hz, 9.9% against an 8% gate). The test
+            // was right and the physics agrees with it.
+            strike_lag[i] = if i == 0 { 0 } else { 1 + (sk.next() > 0.0) as usize };
+            strike_jit[i] = 1.0 + 0.09 * sk.next();
+        }
+        let mut strings_h = [StringLoop::new(f0, 0.0, sr, loss_h, lp_h, disp_n, disp_a); 3];
+        for (i, s) in strings_h.iter_mut().enumerate().take(n_strings) {
+            // Off its own vertical partner - but ZERO-MEAN and RANDOM-SIGNED, which matters
+            // enormously and I got it wrong first.
+            //
+            // The first version put the horizontal ALWAYS SHARP (+1.6 .. +2.5 cents). Since
+            // energy rotates vertical -> horizontal over the decay, EVERY partial's centre of
+            // mass then migrated UPWARD, coherently, by ~2 cents. Measured: partial 1 swept
+            // +2.0 c by 1.5 s. A coherent pitch glide on a long-ringing, high-Q partial is
+            // audible as exactly what the owner named:
+            //
+            //   "the twang, i.e. as if in a synth, filter with high Q is changing its
+            //    frequency sweep, exists. a little bit, but it does exist."
+            //
+            // He heard a 2-cent sweep. A real piano's horizontal mode sits a hair off its
+            // vertical partner in EITHER direction, uncorrelated across strings, so the
+            // migrations cancel instead of accumulating into a glide.
+            let dh = cfg[i] + 0.75 * sk.next();
+            *s = StringLoop::new(f0, dh, sr, loss_h, lp_h, disp_n, disp_a);
         }
 
         // Hammer-string collision (the anti-harpsichord): the string starts at REST
@@ -3009,7 +3287,14 @@ impl PianoVoice {
         // body knock: dense soundboard mode cloud (see below)
         let mut v = Self {
             strings,
+            strings_h,
+            pol_rot: 0.006,
+            pol_out: 0.08,
             strike_off,
+            strike_lag,
+            strike_jit,
+            lag_buf: [[0.0; STRIKE_LAG_MAX]; 3],
+            lag_pos: [0; 3],
             // Weinreich fig. 4 balance: the hammer strike is vertical, so the
             // PROMPT polarization owns the onset; the aftersound plateau is
             // what remains once it dumps — refs hold that plateau ~7 dB under
@@ -3029,18 +3314,26 @@ impl PianoVoice {
                 // partial band. Replaces the r3 three-segment law — at the
                 // top of the keyboard the law's −2 dB plateau flattened the
                 // composite early decay ~35 dB/s short of the references.
-                let a_db = piano_cal(mkey, &PIANO_CAL_PLATEAU_DB);
+                // ONE hammer strikes all the strings of a note, and they ALL terminate on
+                // the same bridge. Their radiated weights are therefore near-equal, and
+                // whatever prompt/aftersound asymmetry exists must come from the COUPLING
+                // (in-phase mode drains into the bridge, anti-phase modes sing on), not
+                // from painting two of the three strings down.
+                //
+                // They were painted down HARD: [2.0, 0.175, 0.049] at C4 - strings 2 and 3
+                // at -21 dB and -32 dB. That was compensating for the mode-locking null
+                // caused by the rigid symmetric detune above. With the detune now
+                // idiosyncratic per note, the null cannot form, and the strings can be
+                // heard. This is most of what "too simple" was.
+                //
+                // The small residual inequality is physical: the hammer does not strike the
+                // three strings identically (see strike_w), and the outer strings sit at
+                // slightly different points on the bridge.
+                let _ = piano_cal(mkey, &PIANO_CAL_PLATEAU_DB);
                 if n_strings == 2 {
-                    let a = 1.8 * 10f32.powf(a_db / 20.0);
-                    [1.8, a, 0.0]
+                    [1.05, 0.95, 0.0]
                 } else {
-                    let a = 2.0 * 10f32.powf(a_db / 20.0);
-                    // 72/28: the two slow normal modes must reach the output
-                    // with clearly UNEQUAL amplitude, or their mode-locked
-                    // ~0.15 Hz residual beat digs a −40 dB null into the tail
-                    // (measured 4.75 s @ C4) that no real piano shows —
-                    // Weinreich's measured unison modes are asymmetric mixes.
-                    [2.0, 0.78 * a, 0.22 * a]
+                    [1.06, 0.97, 0.90]
                 }
             },
             bridge_g0,
@@ -3073,6 +3366,7 @@ impl PianoVoice {
             body_r2: [0.0; PIANO_BOARD_MODES],
             body_y1: [0.0; PIANO_BOARD_MODES],
             body_y2: [0.0; PIANO_BOARD_MODES],
+            warm_lp: 0.0,
             body_g: [0.0; PIANO_BOARD_MODES],
             body_attack_pos: 0,
             body_attack_len: (((0.003 - 0.002 * key) * sr) as u32).max(2),
@@ -3158,6 +3452,17 @@ impl PianoVoice {
             ph_c: 1.0 - (-core::f32::consts::TAU * (6.0 * f0).min(0.1 * sr) / sr).exp(),
             ph_lp1: 0.0,
             ph_lp2: 0.0,
+            lng_buf: [0.0; LNG_BUF],
+            lng_pos: 0,
+            lng_len: 32.0,
+            // the longitudinal mode ladder is lightly damped - it RINGS, which is the
+            // metallic bloom
+            lng_loss: 0.9955,
+            lng_lp: 0.0,
+            lng_c: 0.42,
+            lng_out: 0.0,
+            tens: 0.0,
+            tens_pitch: 0.0,
             lg_a1: 0.0,
             lg_r2: 0.0,
             lg_g: 0.0,
@@ -3241,6 +3546,42 @@ impl PianoVoice {
         if v.ph_gain > 0.0 {
             let f_long = piano_anchor_interp(mkey, &PIANO_LONG_MIDI, &PIANO_LONG_HZ)
                 .min(0.35 * sr);
+            // A real longitudinal WAVEGUIDE at the measured longitudinal frequency: a whole
+            // mode ladder, not a single formant bump.
+            v.lng_len = (sr / f_long.clamp(600.0, 9000.0)).clamp(6.0, (LNG_BUF - 3) as f32);
+            v.lng_out = 0.55;
+            // TENSION MODULATION. A vibrating string is longer than a straight one, so its
+            // tension - and therefore its pitch - rise with amplitude. A ff note starts sharp
+            // and settles as it decays.
+            //
+            // This is real, AMPLITUDE-DEPENDENT physics, and it is the opposite of the
+            // artificial constant pitch-pull we just deleted: at pp it does nothing at all.
+            // Larger in the bass, where the strings are long and the amplitudes are big.
+            // Bass-weighted, and steeply so. Tension modulation is a LONG, SLACK string with
+            // a big amplitude: at A0 ff a real piano sharpens by several cents and settles;
+            // at C#5 it is well under one cent.
+            //
+            // The first version used 9 * (1 - 0.75*key), giving ~4-5 cents even at C#5. That
+            // is not merely unphysical - it drove the fractional-delay allpass into its clamp,
+            // and the clamp point differs between 44.1 and 48 kHz, so the attack centroid
+            // drifted 1445 -> 1233 Hz (15%) across rates. The rate-stability test caught it.
+            // The physics and the test agreed, again.
+            // TENSION MODULATION -> PITCH: ATTEMPTED, NOT SHIPPED. See the commit body.
+            //
+            // The physics is right and it is exactly the nonlinearity this instrument is
+            // missing - a vibrating string is longer than a straight one, so a ff bass note
+            // starts sharp and settles. But it cannot be built on the mechanism I used. The
+            // fractional tuning allpass can only shift the loop by LESS THAN ONE SAMPLE; a
+            // real bass tension-mod needs to move the INTEGER delay too, with interpolation.
+            // Forcing it through the allpass drove the coefficient into its clamp, and the
+            // clamp point differs between 44.1 and 48 kHz - the rate-stability test failed,
+            // correctly, twice. My own measurements of it were also incoherent (A1 pp read
+            // sharper than A1 ff, which is backwards), so I do not trust the effect I was
+            // hearing either.
+            //
+            // Left OFF rather than shipped broken. The longitudinal waveguide below - the
+            // other half of the same nonlinearity, and the audible half - IS shipped.
+            v.tens_pitch = 0.0;
             let trim = piano_anchor_interp(mkey, &PIANO_LONG_MIDI, &PIANO_LONG_DB);
             let wl = core::f32::consts::TAU * f_long / sr;
             let rl = (-core::f32::consts::PI * (f_long / 12.0) / sr).exp();
@@ -3311,7 +3652,27 @@ impl PianoVoice {
                     let inj = f * self.h_gain * inv_n;
                     for i in 0..self.n_strings {
                         let off = self.strike_off[i];
-                        self.strings[i].inject(off, inj * strike_w[i]);
+                        let w = inj * strike_w[i] * self.strike_jit[i];
+                        // The hammer reaches this string a fraction of a millisecond after
+                        // the first, so its force arrives DELAYED - not truncated. Skipping
+                        // the early samples (the first attempt) does not delay the strike,
+                        // it makes it WEAKER: strings 2 and 3 simply lost the front of the
+                        // contact, the excitation energy dropped, and the two-stage decay
+                        // collapsed from 4.14x to 1.29x. Push through a tiny FIFO instead.
+                        let d = self.strike_lag[i];
+                        if d == 0 {
+                            self.strings[i].inject(off, w);
+                        } else {
+                            let head = self.lag_pos[i];
+                            let out = self.lag_buf[i][head];
+                            self.lag_buf[i][head] = w;
+                            self.lag_pos[i] = (head + 1) % d.min(STRIKE_LAG_MAX);
+                            self.strings[i].inject(off, out);
+                        }
+                        // The hammer is not perfectly aligned with the string plane, so a
+                        // little force goes into the HORIZONTAL polarization directly. Most
+                        // of the horizontal energy will arrive later, by rotation.
+                        self.strings_h[i].inject(off, w * 0.05);
                     }
                 } else if self.h_v < 0.0 {
                     self.h_active = false; // hammer moving away, contact over
@@ -3341,11 +3702,60 @@ impl PianoVoice {
             }
             // two-term bridge coupling (see bridge_g0 field docs): broadband
             // real term + admittance-lowpass term for the fundamental's dive
+            // TENSION MODULATION -> PITCH. Slow-average the stretch and use it to shorten
+            // the transverse loop: more amplitude -> more tension -> sharper. A ff note
+            // starts sharp and settles as it decays; a pp note does not move at all.
+            if self.tens_pitch > 0.0 {
+                let stretch = w_sum * w_sum;
+                self.tens += 0.0015 * (stretch - self.tens);
+                let cents = self.tens_pitch * self.tens.min(1.0);
+                if cents > 0.001 {
+                    // cents -> SAMPLES of loop length: dL/L = -dF/F = -cents/1200 * ln2,
+                    // and L is the loop length in samples. Getting this dimensionally right
+                    // matters: the first version left out L entirely and was ~100x too small
+                    // (it only "worked" because the coefficient was accumulating).
+                    for st in self.strings.iter_mut().take(self.n_strings) {
+                        let l = st.len as f32;
+                        st.detune_now(-l * cents / 1200.0 * core::f32::consts::LN_2);
+                    }
+                }
+            }
+
             self.bridge_lp += self.bridge_c * (w_sum - self.bridge_lp);
             let gsum = self.bridge_g0 * w_sum + self.bridge_g1 * self.bridge_lp;
             for (i, st) in self.strings.iter_mut().enumerate().take(self.n_strings) {
                 st.commit(w[i] - gsum);
             }
+
+            // ---- HORIZONTAL POLARIZATION (Weinreich 1977) ----
+            //
+            // The bridge is driven by the string's VERTICAL motion - that is what radiates,
+            // and that is why the vertical plane decays fast. The horizontal plane lies
+            // parallel to the soundboard, barely loads the bridge, and therefore rings on far
+            // longer. It is where the aftersound actually lives.
+            //
+            // ROTATION is the point. The bridge is not perfectly constrained, so the vertical
+            // drain drives the horizontal plane too: energy leaves the fast-dying mode and
+            // arrives in the long-singing one. The note does not just decay - it BLOOMS. That
+            // hand-off is the single most piano-like thing a string does, and modelling one
+            // polarization per string cannot produce it at all.
+            let mut wh = [0.0f32; 3];
+            let mut wh_sum = 0.0f32;
+            let mut s_h = 0.0f32;
+            for (i, st) in self.strings_h.iter_mut().enumerate().take(self.n_strings) {
+                let (y, wi) = st.tick();
+                wh[i] = wi;
+                wh_sum += wi;
+                s_h += y * self.out_w[i];
+            }
+            // the horizontal plane hardly pushes the bridge, so it drains far more slowly
+            let gsum_h = 0.18 * self.bridge_g0 * wh_sum;
+            let rot = self.pol_rot * gsum;
+            for (i, st) in self.strings_h.iter_mut().enumerate().take(self.n_strings) {
+                st.commit(wh[i] - gsum_h + rot);
+            }
+            // and it radiates weakly, because radiation IS bridge motion
+            s += s_h * self.pol_out;
             // phantom partials (see field docs): quadratic tension tap off the
             // prompt + ONE aftersound string. Squaring the full detuned pair
             // parked a 2·f0 beat chorus in the tail (measured lm_tail
@@ -3354,26 +3764,43 @@ impl PianoVoice {
             // 492/541 Hz at −13…−17 dB there). One aftersound string gives
             // sustained sum-terms with a single, slow cross-beat.
             if self.ph_gain > 0.0 {
+                // ---- TENSION: the string's stretch, which goes as the SQUARE of its
+                // transverse displacement. This one quadratic term is the whole nonlinearity
+                // of a piano string, and it is what an electric piano does not have.
                 let s2 = ph_src * ph_src;
                 self.ph_lp1 += self.ph_c * (s2 - self.ph_lp1);
                 let h1 = s2 - self.ph_lp1;
                 self.ph_lp2 += self.ph_c * (h1 - self.ph_lp2);
                 let d0 = h1 - self.ph_lp2;
-                // longitudinal drive saturation: the refs' phantom growth
-                // SATURATES with amplitude (D#2 v4->v13 spread 6 dB vs the
-                // unsaturated quadratic's 24; longitudinal displacement is
-                // physically bounded). Rational soft-sat: quadratic regime
-                // for small drive, compressed at deep-bass ff amplitudes.
+                // longitudinal displacement is physically bounded; the refs' phantom growth
+                // saturates with amplitude
                 let drive = d0 / (1.0 + d0.abs() * self.ph_isat);
-                // longitudinal-mode formant (P3, Bank & Sujbert): the bridge
-                // transduces the string's longitudinal response — free ringing
-                // near the mode plus forced phantoms shaped by its resonance
-                let yl = self.lg_a1 * self.lg_y1 - self.lg_r2 * self.lg_y2 + self.lg_g * drive;
-                self.lg_y2 = self.lg_y1;
-                self.lg_y1 = yl;
-                // broadband forced floor, top end bounded by the ~7 kHz pole
+
+                // ---- LONGITUDINAL WAVEGUIDE ----
+                // Driven by the quadratic tension signal, which is full of 2*f_i and
+                // f_i +- f_j combination tones. The waveguide rings at whichever of them land
+                // on ITS modes - and those are Conklin's phantom partials: not harmonics of
+                // the note, sitting BETWEEN the harmonics. This is why a loud low note sounds
+                // like struck steel and not like a bell.
+                //
+                // The old code sprayed the same drive through a SINGLE resonator, which gives
+                // one bump. A waveguide gives the whole ladder, and the phantoms fall where
+                // the physics puts them rather than where a formant was fitted.
+                // fractional read, so the mode ladder sits at the same frequency at 44.1 and
+                // 48 kHz
+                let di = self.lng_len.floor();
+                let fr = self.lng_len - di;
+                let i0 = (self.lng_pos + LNG_BUF - di as usize) % LNG_BUF;
+                let i1 = (i0 + LNG_BUF - 1) % LNG_BUF;
+                let lo = self.lng_buf[i0] * (1.0 - fr) + self.lng_buf[i1] * fr;
+                self.lng_lp += self.lng_c * (lo - self.lng_lp);
+                let fb = self.lng_loss * flush_denormal(self.lng_lp);
+                self.lng_buf[self.lng_pos] = fb + drive;
+                self.lng_pos = (self.lng_pos + 1) % LNG_BUF;
+
+                // broadband forced floor (the part that does not land on a mode)
                 self.ph_lp3 += self.ph_c3 * (drive - self.ph_lp3);
-                s += self.ph_gain * (self.ph_fw * self.ph_lp3 + yl);
+                s += self.ph_gain * (self.ph_fw * self.ph_lp3 + self.lng_out * lo);
             }
             // air/radiation top-octave rolloff (see field docs)
             self.air_lp += self.air_c * (s - self.air_lp);
@@ -3426,6 +3853,11 @@ impl PianoVoice {
                 s += self.thump_amp * self.thump_env * self.noise_lp;
                 self.thump_env *= self.thump_decay;
             }
+            // RADIATION WARMTH (see field). Real grands lead with the fundamental (Steinway
+            // C4 h2 -15 dB); our bright velocity pickup put h2/h3 ABOVE the fundamental
+            // (+3/+6). A gentle radiation lowpass brings the fundamental forward.
+            self.warm_lp += PIANO_WARM_C * (s - self.warm_lp);
+            let s = self.warm_lp + PIANO_WARM_KEEP * (s - self.warm_lp);
             self.onset_env += self.onset_c * (1.0 - self.onset_env);
             *o += s * self.level * self.onset_env;
         }
@@ -4320,6 +4752,105 @@ impl SynthVoice {
     pub fn release(&mut self) {
         self.stage = 3;
     }
+}
+
+/// Tonewheel (Hammond-style) drawbar ORGAN. Purely ADDITIVE - nine sine "tonewheels" at the
+/// classic drawbar ratios, summed at a fixed registration. No physical loop, so it is tiny and
+/// cheap, and it fills the biggest GM gap (programs 16-23 were a placeholder). The character is
+/// in three details a real Hammond has and a naive sine bank does not: (1) the tonewheels are
+/// slightly INHARMONIC (the real gear ratios are off by <0.1%, which beats and warms); (2) a
+/// bright KEY CLICK transient at note-on (the physical key contacts); (3) the whole thing
+/// sustains flat while held and cuts fast - an organ does not decay.
+#[derive(Clone, Copy)]
+pub struct OrganVoice {
+    phase: [f32; 9],
+    dphase: [f32; 9],
+    amp: [f32; 9],
+    env: f32,
+    env_rate: f32,
+    releasing: bool,
+    // key click: a short bright noise burst
+    click: f32,
+    click_lp: f32,
+    click_c: f32,
+    rng: u32,
+    level: f32,
+    age: u64,
+}
+
+impl OrganVoice {
+    pub fn start(f0: f32, vel: f32, sr: f32, seed: u32) -> Self {
+        // drawbar ratios: 16', 5 1/3', 8', 4', 2 2/3', 2', 1 3/5', 1 1/3', 1'
+        const RATIO: [f32; 9] = [0.5, 1.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0];
+        // a warm, versatile registration (drawbar 0-8): fundamental-led, gently tapering.
+        const BAR: [f32; 9] = [8.0, 3.0, 8.0, 6.0, 4.0, 3.0, 2.0, 2.0, 1.0];
+        let mut v = OrganVoice {
+            phase: [0.0; 9], dphase: [0.0; 9], amp: [0.0; 9],
+            env: 0.0, env_rate: 1.0 - (-1.0 / (0.006 * sr)).exp(),
+            releasing: false, click: 0.0, click_lp: 0.0,
+            click_c: 1.0 - (-1.0 / (0.0006 * sr)).exp(), rng: seed | 1, level: 0.0, age: 0,
+        };
+        let mut norm = 0.0f32;
+        for b in BAR.iter() { norm += b; }
+        for i in 0..9 {
+            // tonewheel detune: a tiny per-note, per-wheel offset for the Hammond beat/warmth
+            v.rng = v.rng.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let det = 1.0 + ((v.rng >> 9) as f32 * (2.0 / 8_388_608.0) - 1.0) * 0.0008;
+            let f = f0 * RATIO[i] * det;
+            v.dphase[i] = core::f32::consts::TAU * f / sr;
+            // random start phase so notes do not all click in phase
+            v.rng = v.rng.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            v.phase[i] = (v.rng >> 9) as f32 * (core::f32::consts::TAU / 8_388_608.0);
+            // roll off the very top tonewheels (a real one loses level up there)
+            let hf = (1.0 - 0.06 * (f / 4000.0)).clamp(0.4, 1.0);
+            v.amp[i] = (BAR[i] / norm) * hf;
+        }
+        let vv = vel.clamp(0.05, 1.0);
+        v.click = 0.16 + 0.14 * vv; // subtle - a key TICK, not a hit
+        v.level = 0.32 * (0.55 + 0.45 * vv); // chord headroom: organs play chords
+        v
+    }
+
+    pub fn render(&mut self, out: &mut [f32]) -> bool {
+        for s in out.iter_mut() {
+            let target = if self.releasing { 0.0 } else { 1.0 };
+            self.env += (target - self.env) * self.env_rate;
+            // key click: a decaying bright noise burst, only at the very onset
+            let mut sig = 0.0;
+            if self.click > 1e-4 {
+                self.rng = self.rng.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let n = (self.rng >> 9) as f32 * (2.0 / 8_388_608.0) - 1.0;
+                self.click_lp += self.click_c * (n - self.click_lp);
+                sig += self.click * (n - self.click_lp); // highpassed = bright click
+                self.click *= 0.965; // ~2 ms tick, not a 14 ms brush
+            }
+            for i in 0..9 {
+                self.phase[i] += self.dphase[i];
+                if self.phase[i] > core::f32::consts::TAU { self.phase[i] -= core::f32::consts::TAU; }
+                sig += self.amp[i] * fast_sin(self.phase[i]);
+            }
+            *s = sig * self.env * self.level;
+            self.age += 1;
+        }
+        !(self.releasing && self.env < 1e-4)
+    }
+
+    pub fn release(&mut self) {
+        self.releasing = true;
+    }
+}
+
+/// Cheap sine, ~1e-3 accurate, for the additive organ (9 per sample per voice). Bhaskara-style
+/// on [0, tau); input already wrapped to [0, tau).
+#[inline(always)]
+fn fast_sin(x: f32) -> f32 {
+    use core::f32::consts::{PI, TAU};
+    let x = x - PI; // [-pi, pi)
+    let b = 4.0 / PI;
+    let c = -4.0 / (PI * PI);
+    let y = b * x + c * x * x.abs();
+    let _ = TAU;
+    -(0.775 * y + 0.225 * y * y.abs()) // sign flip: we shifted by pi
 }
 
 // ---------------------------------------------------------------------------
@@ -5267,10 +5798,21 @@ impl DrumVoice {
                         v.freq = f1 * (1.08 + 0.12 * vel);
                         v.freq_end = f1;
                         v.sweep = (-1.0 / (0.005 * sr)).exp();
-                        // amplitude-dependent damping: soft strokes ring
-                        // relatively longer (DRS LF at 0.3 s: -9 dB soft,
-                        // -17 mid, -21.5 hard rel the first 30 ms)
-                        v.decay = t60_gain(0.78 - 0.25 * vel, sr);
+                        // DE-TONALIZED (owner, 2026-07-21: the jazz kick is
+                        // "fundamentally annoying"). The Virtuosity close mic we
+                        // had been matching rings a CLEAR 75 Hz fundamental for
+                        // ~1.9 s (t60) at periodicity 0.78-0.84 — correct as a
+                        // bare sample, but a kick that SINGS a pitch on every
+                        // stroke is grating played bare and repeatedly (the
+                        // playground), and fights the bass and the tune. This is
+                        // the third tonality complaint on this drum ("crazy
+                        // clear pitch" -> "reduce the tonality" -> this). The
+                        // reference is the wrong target for a usable default;
+                        // the owner's ear overrides it. The near-fundamental
+                        // modes are shortened so the sung pitch becomes a felt
+                        // THUMP that dies in ~0.35 s instead of a sustained tone.
+                        // Body decay ~2x faster (t60 was 0.78-0.25v).
+                        v.decay = t60_gain(0.40 - 0.14 * vel, sr);
                         // felt beater: long compliant contact, 10 ms base
                         let contact_ms = 10.0 * (1.35 - 0.5 * vel).max(0.5);
                         v.atk_ph = 0.0;
@@ -5280,7 +5822,13 @@ impl DrumVoice {
                         // amp is ~linear in vel, NOT the rock/pop supralinear
                         // (r4: x(1.30-0.30v) refunds the sine_g duck's ~1.6 LU cost at
                         // pp so the measured feathering span stays ~16 LU)
-                        v.amp = 0.85 * vel.powf(1.05) * (1.30 - 0.30 * vel);
+                        // headroom trim 2026-07-21: the shortened decay stacks
+                        // the modal energy at the onset, so the sample peak rose
+                        // to ~0.98 at ff (was 0.545). Trimmed body+modes back to
+                        // the PRIOR loudness so mix balance is unchanged — this
+                        // is a timbre fix, not a level change (measured ff peak
+                        // 0.63 vs the old 0.545). Body coefficient 0.85 -> 0.40.
+                        v.amp = 0.40 * vel.powf(1.05) * (1.30 - 0.30 * vel);
                         // felt click: tiny and dark (2-6 kHz sits ~-33 dB
                         // under LF in the refs' first 30 ms)
                         v.click = 0.06 + 0.30 * vel * vel;
@@ -5303,11 +5851,10 @@ impl DrumVoice {
                         // darker (140 Hz) and longer (0.5 s: open shell)
                         v.lfn_c = 1.0 - (-core::f32::consts::TAU * 140.0 / sr).exp();
                         v.lfn_env = 3.4 * (0.85 + 0.15 * vel);
-                        // bed decays WITH the drum (amplitude-dependent
-                        // damping law above): a fixed 0.5 s bed died under
-                        // the pp fundamental (t60 0.72) and left the feathered
-                        // tail a naked sine again (it3 measurement)
-                        v.lfn_dec = t60_gain(0.74 - 0.24 * vel, sr);
+                        // bed decays WITH the shortened body (de-tonalize
+                        // 2026-07-21): it must not outlast the thump and leave a
+                        // naked hum, so it tracks the new ~0.35 s body decay.
+                        v.lfn_dec = t60_gain(0.35 - 0.12 * vel, sr);
                         // feathered strokes read as a modal mix, not one
                         // clean fundamental: duck the body sine at pp (the
                         // undertone/partner cluster below rises to meet it)
@@ -5330,8 +5877,17 @@ impl DrumVoice {
                                 // mode, not a clean near-fundamental sine
                                 ModeDef {
                                     ratio: 0.66,
-                                    amp: 0.55 * (1.15 - 0.6 * vel),
-                                    t60: 0.95,
+                                    amp: 0.18 * (1.15 - 0.6 * vel),
+                                    // de-tonalize 2026-07-21: was 0.95 s @ amp
+                                    // 0.55. This 50 Hz sub-fundamental "air mode"
+                                    // was the reference's below-pitch wander — and
+                                    // exactly the tonality the owner rejects. Cut
+                                    // hard so it is a brief sub-weight in the
+                                    // attack, NOT a sustained sag that drags the
+                                    // perceived pitch below the 76 Hz fundamental
+                                    // (at ff it was out-decaying the body and the
+                                    // kick read as a 50 Hz sub-tone).
+                                    t60: 0.15,
                                 },
                                 // resonant-head partner: the open two-stage
                                 // tail (rings past 0.6 s at every velocity).
@@ -5341,25 +5897,32 @@ impl DrumVoice {
                                 // clean 79 Hz sine for 1.3 s
                                 ModeDef {
                                     ratio: 1.035,
-                                    amp: 0.55 * (1.25 - 0.5 * vel),
-                                    t60: 0.95 - 0.28 * vel,
+                                    // amp 0.55 -> 0.26: de-tonalize headroom trim
+                                    amp: 0.26 * (1.25 - 0.5 * vel),
+                                    // de-tonalize 2026-07-21: was 0.95-0.28v —
+                                    // THE "clean sine survivor" that rang a near-
+                                    // fundamental 79 Hz pitch. This is the single
+                                    // biggest source of the sung pitch; cut hard.
+                                    t60: 0.28 - 0.08 * vel,
                                 },
-                                // overtone ladder measured on the ff DRS hit
-                                // (101/125/145/174/209 Hz over 76): the open
-                                // heads hold these within -8..-25 dB of the
-                                // fundamental for the whole first half-second
-                                ModeDef { ratio: 1.33, amp: 0.70, t60: 0.90 },
-                                ModeDef { ratio: 1.65, amp: 0.55, t60: 0.75 },
-                                ModeDef { ratio: 1.91, amp: 0.42, t60: 0.65 },
-                                ModeDef { ratio: 2.28, amp: 0.40, t60: 0.55 },
-                                ModeDef { ratio: 2.75, amp: 0.25, t60: 0.45 },
+                                // overtone ladder — the felt THUMP's body/thwack.
+                                // Shortened 2026-07-21 so none of it sustains a
+                                // pitch past ~0.3 s (was 0.90/0.75/0.65/0.55/0.45);
+                                // the transient body stays, the tonal tail goes.
+                                // Amps ~0.66x for the onset-stack headroom trim.
+                                ModeDef { ratio: 1.33, amp: 0.33, t60: 0.32 },
+                                ModeDef { ratio: 1.65, amp: 0.26, t60: 0.28 },
+                                ModeDef { ratio: 1.91, amp: 0.20, t60: 0.24 },
+                                ModeDef { ratio: 2.28, amp: 0.18, t60: 0.20 },
+                                ModeDef { ratio: 2.75, amp: 0.11, t60: 0.18 },
                             ],
                             0.6,
                             0.0,
                             0.0,
                             seed ^ 0x6b1c,
                         );
-                        v.life = (1.40 * sr) as u64;
+                        // was 1.40 s — nothing rings that long now.
+                        v.life = (0.7 * sr) as u64;
                     }
                     KitStyle::Rock => {
                         // BEATER-TRANSIENT topology: hard slap + shell knock
@@ -5963,6 +6526,8 @@ pub enum Kernel {
     Off,
     Bowed(BowedVoice),
     Brass(BrassVoice),
+    Reed(ReedVoice),
+    Organ(OrganVoice),
     Modal(ModalVoice),
     Pluck(PluckVoice),
     EPluck(ElectricVoice),
@@ -6097,6 +6662,35 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
             0.0,
             seed,
         )),
+        Instrument::Xylophone => {
+            // hard bright mallet, rosewood/synthetic bars tuned to the 3rd (a 12th up),
+            // short decay that shortens toward the top of the keyboard
+            let key = ((midi as f32 - 65.0) / 30.0).clamp(0.0, 1.0);
+            let t = (0.45 - 0.22 * key).clamp(0.12, 0.5);
+            Kernel::Modal(ModalVoice::start(f0, vel, sr, &[
+                ModeDef { ratio: 1.0, amp: 1.0, t60: t },
+                ModeDef { ratio: 3.0, amp: 0.45, t60: t * 0.35 },
+                ModeDef { ratio: 6.5, amp: 0.18, t60: t * 0.18 },
+                ModeDef { ratio: 9.7, amp: 0.06, t60: t * 0.10 },
+            ], 0.55, 0.11, 0.0, seed))
+        }
+        Instrument::TubularBells => Kernel::Modal(ModalVoice::start(f0, vel, sr, &[
+            // a chime's fundamental is WEAK; the strong 2nd/3rd define the "strike tone",
+            // the upper partials are inharmonic (Rossing). Long decay - several seconds.
+            ModeDef { ratio: 1.0, amp: 0.40, t60: 5.0 },
+            ModeDef { ratio: 2.0, amp: 1.00, t60: 4.5 },
+            ModeDef { ratio: 3.01, amp: 0.60, t60: 3.5 },
+            ModeDef { ratio: 4.17, amp: 0.35, t60: 2.5 },
+            ModeDef { ratio: 5.43, amp: 0.18, t60: 1.8 },
+            ModeDef { ratio: 6.80, amp: 0.08, t60: 1.2 },
+        ], 1.0, 0.10, 0.0, seed)),
+        Instrument::Celesta => Kernel::Modal(ModalVoice::start(f0, vel, sr, &[
+            // struck steel bars with felt hammers over resonators - like a glock but WARMER
+            // and gentler (softer strike, quicker overtone decay)
+            ModeDef { ratio: 1.0, amp: 1.0, t60: 1.6 },
+            ModeDef { ratio: 4.0, amp: 0.16, t60: 0.55 },
+            ModeDef { ratio: 10.1, amp: 0.05, t60: 0.28 },
+        ], 1.0, 0.11, 0.0, seed)),
         Instrument::MusicBox => Kernel::Modal(ModalVoice::start(
             f0,
             vel,
@@ -6113,6 +6707,170 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
             0.0,
             seed,
         )),
+        Instrument::Harp => {
+            let key = (((midi as f32) - 24.0) / 60.0).clamp(0.0, 1.0);
+            let p = AcPluck {
+                f0,
+                vel,
+                // refs split by source: 010 ≈ 6–15 s early t60, 014 ≈ 22–27 s;
+                // round-1's 8+4·key sat at the floor of both (render −20 dB vs
+                // 014 at the 3 s mark). Compromise law raised round 2.
+                // superseded by the damping law (eta_f > 0); kept as doc of the
+                // r2 hand fit the law replaces
+                t60_f0: 18.0 + 9.0 * key,
+                lp_c: 0.990 - 0.05 * key + 0.01 * vel,
+                hf_floor_t60: 0.0,
+                hf_knee_hz: 2400.0,
+                pick_pos: 0.33,
+                // r2's 0.045 band-limited the excitation to ~n=22 (1.8 kHz at
+                // E2); the refs keep 1.7-3.4 kHz attack content +17..+31 dB
+                // above the render (pooled envdelta r3). Woodhouse 2012 uses a
+                // ~7.5 mm contact on a 650 mm string = 0.0115 - our wider value
+                // also stood in for the missing radiation tilt, now present.
+                // Velocity-steepened: soft tirando is all flesh (wide patch),
+                // hard plucks release nearer the nail.
+                contact: 0.024 - 0.008 * vel,
+                snap: 0.5,
+                scrape: 0.06,
+                // fingertip/nail release tick (r3): at the nylon transient
+                // scale (tr_lvl = p.level, no differencer renorms) this is
+                // subtle - metrics prefer it slightly over 0 and single-note
+                // peaks are unchanged (0.042)
+                click: 5.0,
+                // fingertip/nail contact: lower band than a pick, and only a
+                // light slide component (ref mf scrape/body sits 13 dB below
+                // the old render's — tirando is mostly flesh)
+                click_slow: 0.8,
+                click_hz: 2000.0,
+                // fingertip flesh: slow contact (soft strokes slower still)
+                click_ramp: 0.012 - 0.006 * vel,
+                // nylon refs' post-off slopes (68-171 dB/s) are contaminated
+                // by the NSynth release fade/gate (014 mids are hard-gated;
+                // steel 015's 31-51 dB/s proves slower decays survive the
+                // pipeline, so nylon's true damp is ≥ ~70 dB/s). A 0.55-0.75 s
+                // law overshot (tail logmel 1.29→1.45, it2); 0.30 s keeps an
+                // audible finger-damp ring without ringing past the refs.
+                rel_t60: 0.45 - 0.08 * vel,
+                rel_click: 0.25,
+                rel_ramp: 0.0, // legacy instant damp (bit-identical; see AcPluck)
+                pol_mix: 0.35,
+                pol_detune_cents: 2.2,
+                pol_t60_ratio: 0.55,
+                // nylon source 014 measures B ≈ 4.6e-5 (E2) → 5.2e-5 (C4), h10
+                // ≈ +5 cents; source 010 is near-flexible. Split the difference
+                // low — nylon stretch is subtle but real (bfit 2026-07-11 r2).
+                stiff_b: 3.5e-5,
+                // no tension glide: nylon refs show none, and the glide beat
+                // against the polarization detune measurably hurt C5
+                tm_cents: 0.0,
+                // Woodhouse 2004 II Table 1 (D'Addario Pro Arte): monofilament
+                // trebles eta_f 14-40e-5, wound basses 2-7e-5 (key-interp);
+                // eta_a ~1.2. eta_b fit to the NSynth sources instead of the
+                // table's 2e-2 polymer value: refs keep 2-3.4 kHz ringing
+                // through the mid window (t60(2k) ~5-7 s), implying ~2.5e-3 —
+                // the table value killed HF 50 dB below ref (it2d, 2026-07-12).
+                // couple sized so eta at A0 roughly doubles intrinsic loss.
+                eta_f: 0.0, // BISECT: legacy path
+                eta_b: 2.5e-3,
+                eta_a: 1.2,
+                couple: 4.0e-3,
+                // displacement tap: the NSynth nylon sources are fundamental-
+                // dominant in mid/high register; low-register h2 emphasis comes
+                // from the body's T1 mode, not a global force tilt
+                br_rho: 0.0,
+                acc_rho: 0.0, // body-round radiation design (bass-merge silently reverted this; drift-check caught it)
+                // radiated sound only: monopole HP (Woodhouse 2012 f_c ~250 Hz)
+                rad_hz: 250.0,
+                thump: 0.0,
+                thump_hz: 110.0,
+                // register slope ~12 dB/key (within-source NSynth slope is
+                // ~9 dB/key; cross-source fits inflate it); mild velocity curve
+                level: 0.42 * (0.55 + 0.45 * vel) * (1.1 * key.min(0.9)).exp(),
+            };
+            Kernel::Pluck(PluckVoice::start_acoustic(&p, sr, seed))
+        }
+        Instrument::Pizzicato => {
+            let key = (((midi as f32) - 36.0) / 48.0).clamp(0.0, 1.0);
+            let p = AcPluck {
+                f0,
+                vel,
+                // refs split by source: 010 ≈ 6–15 s early t60, 014 ≈ 22–27 s;
+                // round-1's 8+4·key sat at the floor of both (render −20 dB vs
+                // 014 at the 3 s mark). Compromise law raised round 2.
+                // superseded by the damping law (eta_f > 0); kept as doc of the
+                // r2 hand fit the law replaces
+                t60_f0: 0.9 + 0.6 * key,
+                lp_c: 0.90 - 0.06 * key,
+                hf_floor_t60: 0.0,
+                hf_knee_hz: 2400.0,
+                pick_pos: 0.16,
+                // r2's 0.045 band-limited the excitation to ~n=22 (1.8 kHz at
+                // E2); the refs keep 1.7-3.4 kHz attack content +17..+31 dB
+                // above the render (pooled envdelta r3). Woodhouse 2012 uses a
+                // ~7.5 mm contact on a 650 mm string = 0.0115 - our wider value
+                // also stood in for the missing radiation tilt, now present.
+                // Velocity-steepened: soft tirando is all flesh (wide patch),
+                // hard plucks release nearer the nail.
+                contact: 0.030 - 0.010 * vel,
+                snap: 0.5,
+                scrape: 0.06,
+                // fingertip/nail release tick (r3): at the nylon transient
+                // scale (tr_lvl = p.level, no differencer renorms) this is
+                // subtle - metrics prefer it slightly over 0 and single-note
+                // peaks are unchanged (0.042)
+                click: 5.0,
+                // fingertip/nail contact: lower band than a pick, and only a
+                // light slide component (ref mf scrape/body sits 13 dB below
+                // the old render's — tirando is mostly flesh)
+                click_slow: 0.8,
+                click_hz: 2000.0,
+                // fingertip flesh: slow contact (soft strokes slower still)
+                click_ramp: 0.012 - 0.006 * vel,
+                // nylon refs' post-off slopes (68-171 dB/s) are contaminated
+                // by the NSynth release fade/gate (014 mids are hard-gated;
+                // steel 015's 31-51 dB/s proves slower decays survive the
+                // pipeline, so nylon's true damp is ≥ ~70 dB/s). A 0.55-0.75 s
+                // law overshot (tail logmel 1.29→1.45, it2); 0.30 s keeps an
+                // audible finger-damp ring without ringing past the refs.
+                rel_t60: 0.20,
+                rel_click: 0.25,
+                rel_ramp: 0.0, // legacy instant damp (bit-identical; see AcPluck)
+                pol_mix: 0.35,
+                pol_detune_cents: 2.2,
+                pol_t60_ratio: 0.55,
+                // nylon source 014 measures B ≈ 4.6e-5 (E2) → 5.2e-5 (C4), h10
+                // ≈ +5 cents; source 010 is near-flexible. Split the difference
+                // low — nylon stretch is subtle but real (bfit 2026-07-11 r2).
+                stiff_b: 8.0e-5,
+                // no tension glide: nylon refs show none, and the glide beat
+                // against the polarization detune measurably hurt C5
+                tm_cents: 0.0,
+                // Woodhouse 2004 II Table 1 (D'Addario Pro Arte): monofilament
+                // trebles eta_f 14-40e-5, wound basses 2-7e-5 (key-interp);
+                // eta_a ~1.2. eta_b fit to the NSynth sources instead of the
+                // table's 2e-2 polymer value: refs keep 2-3.4 kHz ringing
+                // through the mid window (t60(2k) ~5-7 s), implying ~2.5e-3 —
+                // the table value killed HF 50 dB below ref (it2d, 2026-07-12).
+                // couple sized so eta at A0 roughly doubles intrinsic loss.
+                eta_f: 0.0, // BISECT: legacy path
+                eta_b: 2.5e-3,
+                eta_a: 1.2,
+                couple: 4.0e-3,
+                // displacement tap: the NSynth nylon sources are fundamental-
+                // dominant in mid/high register; low-register h2 emphasis comes
+                // from the body's T1 mode, not a global force tilt
+                br_rho: 0.0,
+                acc_rho: 0.0, // body-round radiation design (bass-merge silently reverted this; drift-check caught it)
+                // radiated sound only: monopole HP (Woodhouse 2012 f_c ~250 Hz)
+                rad_hz: 250.0,
+                thump: 0.0,
+                thump_hz: 110.0,
+                // register slope ~12 dB/key (within-source NSynth slope is
+                // ~9 dB/key; cross-source fits inflate it); mild velocity curve
+                level: 0.55 * (0.5 + 0.5 * vel) * (1.0 * key.min(0.9)).exp(),
+            };
+            Kernel::Pluck(PluckVoice::start_acoustic(&p, sr, seed))
+        }
         Instrument::Guitar => {
             // nylon: near-lossless bright loop (refs 010/014: all harmonics decay
             // at similar slow rates at E2); darkness comes from the finger-release
@@ -6323,8 +7081,15 @@ pub fn start_voice(inst: Instrument, midi: u32, vel: f32, sr: f32, seed: u32) ->
         Instrument::DrumsJazz => Kernel::Drum(DrumVoice::start(midi, vel, sr, seed, KitStyle::Jazz)),
         Instrument::SynthPad => Kernel::Synth(SynthVoice::start(f0, vel, sr)),
         Instrument::Piano => Kernel::Piano(PianoVoice::start(midi, f0, vel, sr, seed)),
-        Instrument::Cello => Kernel::Bowed(BowedVoice::start(f0, vel, sr)),
-        Instrument::Trombone => Kernel::Brass(BrassVoice::start(f0, vel, sr)),
+        Instrument::Cello
+        | Instrument::Violin
+        | Instrument::Viola
+        | Instrument::Contrabass => Kernel::Bowed(BowedVoice::start(inst, f0, vel, sr)),
+        Instrument::Trombone
+        | Instrument::Trumpet
+        | Instrument::FrenchHorn => Kernel::Brass(BrassVoice::start(inst, f0, vel, sr)),
+        Instrument::Saxophone => Kernel::Reed(ReedVoice::start(inst, f0, vel, sr)),
+        Instrument::Organ => Kernel::Organ(OrganVoice::start(f0, vel, sr, seed)),
         Instrument::GuitarSteel => {
             // steel: darker loop than nylon in RELATIVE terms (h12/h1 t60 ratio
             // ~1/3 in ref 015) but a much brighter pick excitation near the
@@ -7671,23 +8436,43 @@ mod drum_kit_tests {
         }
     }
 
-    /// Round-3 two-stage tail: the open jazz kick still rings at 0.6 s
-    /// (resonant-head mode) while the muffled rock kick has died.
+    /// The jazz kick is a SHORT FELT THUMP, not a sustained pitched ring.
+    ///
+    /// This test used to assert the OPPOSITE — that the open jazz kick "still
+    /// rings at 0.6 s" (a resonant-head two-stage tail matched to the Virtuosity
+    /// close mic, which sustains a clear 75 Hz fundamental for ~1.9 s). The owner
+    /// rejected that by ear, three times: "crazy clear pitch" -> "reduce the
+    /// tonality" -> (2026-07-21) "the jazz drum kick is fundamentally annoying."
+    /// A bare close-mic kick that SINGS a pitch on every stroke is correct as a
+    /// sample and grating as a played instrument; the reference was the wrong
+    /// target for a usable default and the ear overrides it (PRINCIPLES: human
+    /// listening gates release; drums carry the highest bar).
+    ///
+    /// It is now a regression TRIPWIRE against the pitched ring coming back: the
+    /// jazz kick's 0.55-0.70 s tail must be effectively dead (energy gone to a
+    /// felt thump by ~0.35 s). Kit distinctness lives in the fundamental pitch
+    /// and beater brightness (the other two kick tests), not in ring length.
     #[test]
-    fn kick_two_stage_tail_is_kit_voiced() {
+    fn jazz_kick_is_a_short_thump_not_a_pitched_ring() {
         let sr = 48_000.0f32;
         let jazz = render_kit(36, 1.0, sr, KitStyle::Jazz, 1.5);
-        let rock = render_kit(36, 1.0, sr, KitStyle::Rock, 1.5);
-        let late = |x: &[f32]| {
-            let (i0, i1) = ((0.55 * sr) as usize, (0.70 * sr) as usize);
+        let rms = |x: &[f32], a: f32, b: f32| {
+            let (i0, i1) = ((a * sr) as usize, (b * sr) as usize);
             if x.len() < i1 {
                 return 0.0;
             }
             (x[i0..i1].iter().map(|s| s * s).sum::<f32>() / (i1 - i0) as f32).sqrt()
         };
-        let (lj, lr) = (late(&jazz), late(&rock));
-        assert!(lj > 1e-4, "jazz kick tail dead at 0.6 s: {lj}");
-        assert!(lr < lj * 0.5, "rock kick should be muffled vs jazz: rock {lr} jazz {lj}");
+        let body = rms(&jazz, 0.02, 0.10); // the thump itself
+        let late = rms(&jazz, 0.55, 0.70); // where the old ring lived
+        // the tail is >40 dB below the body — a sustained pitch would sit far
+        // higher (the old design measured the tail at ~-32 dB rel body here)
+        assert!(
+            late < body * 0.01,
+            "jazz kick still ringing at 0.6 s ({late:.2e} vs body {body:.2e}, ratio {:.4}) \
+             - the pitched tail the owner called 'fundamentally annoying' is back",
+            late / body.max(1e-12)
+        );
     }
 
     /// Kick-specialist round (2026-07-12): the three kits' kicks are
@@ -7741,8 +8526,15 @@ mod drum_kit_tests {
             pk / rms.max(1e-9)
         };
         let (cj, cr) = (crest(&jazz), crest(&rock));
+        // Rock's hard beater is still the spikier waveform, but the margin over
+        // 0.5 s shrank once the jazz kick stopped being a long low-crest ring
+        // (de-tonalize 2026-07-21: a short thump concentrates its energy, so its
+        // crest rose). The felt-vs-hard PHYSICS is carried by the 2-6 kHz
+        // spectral contrast above (the >10 dB check, the stronger assertion);
+        // this only guards the ordering, which still holds (rock ~10.7 > jazz
+        // ~8.9). Was 1.35x, calibrated to the old sustained jazz kick.
         assert!(
-            cr > cj * 1.35,
+            cr > cj * 1.1,
             "rock kick should be spikier than jazz: crest rock {cr:.1} jazz {cj:.1}"
         );
     }
@@ -7917,6 +8709,8 @@ impl Rail {
     }
 }
 
+const VIB_BUF: usize = 64;
+
 #[derive(Clone, Copy)]
 pub struct BowedVoice {
     nb: Rail, // nut  -> bow
@@ -7960,6 +8754,22 @@ pub struct BowedVoice {
 
     dc_x1: f32,
     dc_y1: f32,
+    // bow noise (stochastic stick-slip air)
+    bow_noise: f32,
+    noise_st: u32,
+    noise_bp: f32,  // bandpass state (lowpass of the highpassed noise)
+    noise_hp: f32,  // highpass state
+    // radiation brightness tilt (one-zero highpass)
+    tilt: f32,
+    tilt_x1: f32,
+    // per-instrument vibrato: a modulated fractional delay on the output
+    vib_buf: [f32; VIB_BUF],
+    vib_pos: usize,
+    vib_phase: f32,
+    vib_inc: f32,
+    vib_amp: f32,  // delay swing, samples
+    vib_base: f32, // base delay, samples
+    vib_env: f32,  // depth ramp 0 -> 1
     level: f32,
     age: u64,
     releasing: bool,
@@ -7969,8 +8779,54 @@ pub struct BowedVoice {
     dbg_n: f32,
 }
 
+/// Per-instrument voicing for the shared bowed-string model. The STRING physics
+/// (waveguide + thermal friction) is identical across the family; what changes with
+/// instrument is the body it drives, how close to the bridge it is bowed, how bright the
+/// bridge termination is, and the loudness bake. Numbers are fitted to VSCO-2-CE
+/// references (solo where one exists; violin and contrabass are solo, viola is a section).
+struct BowedVoicing {
+    /// Multiply the cello's signature body resonances by this. A violin body resonates
+    /// ~2.7x higher than a cello's, a contrabass ~0.6x. Sets the register of the box.
+    body_scale: f32,
+    /// Bow-bridge distance as a fraction of string length. Closer to the bridge (smaller)
+    /// is brighter and is where the higher strings are actually played.
+    beta: f32,
+    /// Bridge reflection lowpass coefficient - higher is brighter.
+    br_c: f32,
+    /// Per-note loudness bake (provisional spike level, NOT a measured LUFS bake).
+    level_k: f32,
+    /// Bow noise level: the stochastic micro-slips of the stick-slip contact make broadband
+    /// air, band-passed by the string and body. Real and audible; more on the violin (thin
+    /// string, fast bow) than the contrabass. Kept low so it reads as air, not hiss.
+    bow_noise: f32,
+    /// Radiation brightness tilt (one-zero highpass coefficient, 0..1). The bridge/body
+    /// radiates high frequencies more efficiently than low (radiation resistance rises with
+    /// frequency); this lifts the upper harmonics the dark Helmholtz corner leaves too weak.
+    tilt: f32,
+    /// Bow speak time (s): how long the bow takes to set the string into Helmholtz motion.
+    /// A light violin string speaks fast; a heavy contrabass string is slow to answer.
+    speak: f32,
+    /// Vibrato rate (Hz) and depth (cents). MEASURED off the VSCO references, which are
+    /// vibrato takes: violin/viola vibrate ~+/-9 cents, the contrabass barely (~+/-4). This
+    /// is the clearest per-instrument difference in the real recordings and the one the ear
+    /// uses to tell them apart - the model played dead straight before this.
+    vib_rate: f32,
+    vib_depth: f32,
+}
+
+fn bowed_voicing(inst: Instrument) -> BowedVoicing {
+    match inst {
+        Instrument::Violin => BowedVoicing { body_scale: 2.70, beta: 0.075, br_c: 0.95, level_k: 0.0016, bow_noise: 0.14, tilt: 0.55, speak: 0.030, vib_rate: 5.0, vib_depth: 9.0 },
+        Instrument::Viola => BowedVoicing { body_scale: 1.65, beta: 0.085, br_c: 0.92, level_k: 0.0015, bow_noise: 0.11, tilt: 0.50, speak: 0.040, vib_rate: 5.2, vib_depth: 9.0 },
+        Instrument::Contrabass => BowedVoicing { body_scale: 0.62, beta: 0.110, br_c: 0.80, level_k: 0.0011, bow_noise: 0.05, tilt: 0.35, speak: 0.070, vib_rate: 4.0, vib_depth: 4.0 },
+        // Cello and anything else: the original, measured values.
+        _ => BowedVoicing { body_scale: 1.00, beta: 0.080, br_c: 0.90, level_k: 0.0010, bow_noise: 0.09, tilt: 0.45, speak: 0.050, vib_rate: 4.8, vib_depth: 7.0 }, // cello
+    }
+}
+
 impl BowedVoice {
-    pub fn start(f0: f32, vel: f32, sr: f32) -> Self {
+    pub fn start(inst: Instrument, f0: f32, vel: f32, sr: f32) -> Self {
+        let voicing = bowed_voicing(inst);
         let mut v = Self {
             nb: Rail::new(), bn: Rail::new(), br: Rail::new(), rb: Rail::new(),
             br_lp: 0.0, br_c: 0.0, br_loss: 0.0,
@@ -7983,6 +8839,10 @@ impl BowedVoice {
             body_a1: [0.0; 8], body_r2: [0.0; 8], body_g: [0.0; 8],
             body_y1: [0.0; 8], body_y2: [0.0; 8],
             dc_x1: 0.0, dc_y1: 0.0,
+            bow_noise: 0.0, noise_st: 0x2545_F491, noise_bp: 0.0, noise_hp: 0.0,
+            tilt: 0.0, tilt_x1: 0.0,
+            vib_buf: [0.0; VIB_BUF], vib_pos: 0, vib_phase: 0.0,
+            vib_inc: 0.0, vib_amp: 0.0, vib_base: 0.0, vib_env: 0.0,
             level: 0.0, age: 0, releasing: false,
             dbg_slip: 0.0, dbg_vin: 0.0, dbg_vinj: 0.0, dbg_n: 0.0,
         };
@@ -7991,10 +8851,10 @@ impl BowedVoice {
         // of string length; a cellist bows around 1/8 from the bridge. The bow point
         // splits the string, and that split IS the Helmholtz corner geometry.
         let period = sr / f0.max(20.0);
-        let beta = 0.127;
+        let beta = voicing.beta;
 
         // Bridge reflection: -1 * one-pole lowpass.
-        v.br_c = 0.62;
+        v.br_c = voicing.br_c;
         v.br_loss = 0.988;
 
         // Budget the loop delay EXACTLY, or the string plays flat.
@@ -8065,12 +8925,16 @@ impl BowedVoice {
         v.env_target = 1.0;
         // a bow takes tens of ms to speak - this is why bowed notes cannot be
         // driven by an impulse
-        v.env_rate = 1.0 - (-1.0 / (0.035 * sr)).exp();
+        v.env_rate = 1.0 - (-1.0 / (voicing.speak * sr)).exp();
 
         // Cello body: measured-ish low modes (A0 ~ 220, main wood ~ 300, bridge hill).
         // A cello body is not a bank of sharp peaks - a high-Q low mode makes a WOLF,
         // and an unmanaged one is a 12 dB hole/blowup at whatever note lands on it.
         // (It did: G2 was +12 dB over C3.) Broad, damped, overlapping.
+        // The cello's measured signature resonances, scaled by instrument size. Above the
+        // Nyquist-safe ceiling a mode is simply skipped (its gain zeroed), which is why the
+        // higher instruments end up with fewer active modes - correct, a small violin box
+        // has fewer low resonances, not the same ones shifted off the top.
         let modes = [
             (98.0f32, 0.16f32, 0.30f32), // A0-ish air; damped hard or it wolfs
             (176.0, 0.15, 0.45),
@@ -8082,6 +8946,11 @@ impl BowedVoice {
             (1900.0, 0.08, 0.20),
         ];
         for (i, (f, t60, g)) in modes.iter().enumerate() {
+            let f = f * voicing.body_scale;
+            if f > 0.45 * sr {
+                v.body_g[i] = 0.0;
+                continue;
+            }
             let w = core::f32::consts::TAU * f / sr;
             let r = (-6.9078 / (t60 * sr)).exp();
             v.body_a1[i] = 2.0 * r * w.cos();
@@ -8093,7 +8962,20 @@ impl BowedVoice {
         // the instrument unplayable in a mix. Compensate against f0. This is a provisional
         // bake, NOT the measured BS.1770 one the other instruments have - see measure-loudness.
         let reg_g = (f0 / 130.0).powf(0.55).clamp(0.55, 2.4);
-        v.level = 0.0013 * reg_g; // provisional; NOT a measured LUFS bake (spike)
+        v.level = voicing.level_k * reg_g; // provisional; NOT a measured LUFS bake (spike)
+
+        // vibrato: a sinusoidally modulated delay of A samples produces a pitch swing of
+        // A*omega (fractional), so for a target depth in cents,
+        //   A = depth_cents * ln2 * sr / (1200 * 2*pi * rate).
+        // Base delay keeps the read strictly in the past even at the trough.
+        v.tilt = voicing.tilt;
+        v.bow_noise = voicing.bow_noise;
+        v.noise_st = 0x2545_F491 ^ (f0.to_bits());
+        v.vib_inc = core::f32::consts::TAU * voicing.vib_rate / sr;
+        v.vib_amp = voicing.vib_depth * core::f32::consts::LN_2 * sr
+            / (1200.0 * core::f32::consts::TAU * voicing.vib_rate.max(0.5));
+        v.vib_amp = v.vib_amp.min((VIB_BUF as f32) * 0.4);
+        v.vib_base = v.vib_amp + 3.0;
         v
     }
 
@@ -8151,7 +9033,40 @@ impl BowedVoice {
         const TWO_Z: f32 = 2.0; // string wave impedance seen by the bow (two half-strings)
         const MU0: f32 = 1.05; // cold rosin
         const HEAT: f32 = 0.055; // frictional power -> temperature
-        const COOL: f32 = 0.011; // thermal relaxation of the contact patch
+        // THE CONTACT PATCH RELAXES IN ~1.7 SAMPLES (35 us), AND REAL ROSIN DOES NOT.
+        //
+        // This was 0.011 - a 1.9 ms relaxation, which is physically right. It also made the
+        // cello play up to 97 CENTS FLAT (nearly a semitone), and the error grew as the bow
+        // LIGHTENED: -83 c at pp vs -35 c at ff on C3.
+        //
+        // The mechanism is real and it is not a coding error. The contact slips when
+        // |f_stick| > mu*force. A LAGGING temperature means a LAGGING mu, which means the
+        // slip fires late, which means the period is long - the loop measured 10-20 samples
+        // longer than the rails, INDEPENDENT OF PITCH, exactly as a fixed lag would (and not
+        // at all as a rail-length bug would, which is how the diagnosis was made). Bow harder
+        // and the patch heats more, mu drops, the slip fires earlier, and the note comes back
+        // toward pitch - which is why the error tracked bow force.
+        //
+        // Real bowed strings DO flatten under bow force (Schelleng), by a FEW cents. Ours had
+        // it an order of magnitude too strong, so the HEAT/MU0/impedance constants are
+        // mis-scaled against each other. Calibrating them properly needs Woodhouse's measured
+        // rosin data and a real cello corpus (#52); neither exists here yet.
+        //
+        // Everything else was tried and is worse:
+        //   HEAT 0.055 -> 0.005 at the physical time constant:  97c -> 41c. Still unusable,
+        //     and it walks toward constant-mu - the Friedlander ambiguity this model exists
+        //     to avoid. At HEAT = 0 exactly, the string NaNs above C3.
+        //   COOL 0.011 -> 0.005 (4 ms):   56 cents.
+        //   COOL 0.011 -> 0.002 (10 ms):  NaN.
+        // Only a fast patch tunes: at 0.60 the worst error over C1-C4 x pp/ff is 1 CENT.
+        //
+        // WHAT THIS COSTS, PLAINLY: with a 35 us relaxation the temperature tracks the
+        // instantaneous dissipated power, so this is no longer a THERMAL friction with
+        // hysteresis - it is a memoryless mu(P) law. It keeps the property that matters
+        // numerically (the load line meets it exactly once, so no ambiguity and no NaN) and
+        // loses the hysteresis. An instrument that is in tune and honestly described beats
+        // one that is a semitone flat and described as thermal.
+        const COOL: f32 = 1.2; // thermal relaxation of the contact patch
 
         // Rosin softens as it heats. This IS the friction law - there is no mu(v) anywhere.
         let mu = MU0 / (1.0 + self.temp);
@@ -8220,8 +9135,23 @@ impl BowedVoice {
             // nut: near-rigid
             self.nb.write(-0.998 * at_nut);
 
-            // body
-            let drive = at_bridge;
+            // THE BODY IS ONLY 8 MODES, AND IT IS NOT THE PROBLEM. A broadband continuum
+            // above the modal-overlap crossover (the argument that gave the piano its
+            // 160-mode board) was added here and measured NO CHANGE AT ALL, at any gain:
+            // the signal ARRIVING at the bridge has no high frequencies for a body to
+            // radiate. That is what rules the body out and puts the fault in the string.
+            // bow noise: white -> bandpass (the bridge/body region), gated by the bow envelope
+            // and by whether the string is slipping (noise is strongest during slip). Injected
+            // at the bridge so the body filters it, the way real bow noise reaches the ear.
+            self.noise_st = self.noise_st.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let white = (self.noise_st >> 9) as f32 * (2.0 / 8_388_608.0) - 1.0;
+            self.noise_hp = 0.7 * self.noise_hp + 0.3 * white;
+            let hp = white - self.noise_hp; // highpass ~ upper band
+            self.noise_bp = 0.6 * self.noise_bp + 0.4 * hp; // tame the very top
+            let slip = if self.stuck { 0.4 } else { 1.0 };
+            let noise = self.noise_bp * self.bow_noise * self.env * slip;
+
+            let drive = at_bridge + noise;
             let mut body = 0.0;
             for i in 0..8 {
                 let y = self.body_a1[i] * self.body_y1[i]
@@ -8232,7 +9162,13 @@ impl BowedVoice {
                 body += y;
             }
 
-            let y = 0.7 * body + 0.3 * drive;
+            // radiation brightness tilt: lift the highs the dark corner leaves weak, and cut
+            // the relative bass so the tone is not boomy. A one-zero highpass mixed back so
+            // tilt=0 is flat, tilt->1 is +6 dB/oct.
+            let ybody = 0.7 * body + 0.3 * drive;
+            // high-shelf: y = (1+t)*x - t*x1, flat at DC, +~20log10(1+2t) dB at Nyquist.
+            let y = ybody + self.tilt * (ybody - self.tilt_x1);
+            self.tilt_x1 = flush_denormal(ybody);
             let hp = y - self.dc_x1 + DC_POLE * self.dc_y1;
             self.dc_x1 = y;
             self.dc_y1 = flush_denormal(hp);
@@ -8242,7 +9178,25 @@ impl BowedVoice {
             self.dbg_vinj = 0.98 * self.dbg_vinj + v_inj.abs();
             self.dbg_n = 0.98 * self.dbg_n + 1.0;
 
-            *s = hp * self.level;
+            // ---- vibrato: modulated fractional delay on the output ----
+            // Zero-mean, so the AVERAGE pitch is unchanged (the tuning gate still holds); the
+            // depth ramps in over ~0.25 s so the attack speaks straight, the way a player
+            // sets the note before rocking into it.
+            self.vib_env += (1.0 - self.vib_env) * 0.00008;
+            self.vib_buf[self.vib_pos] = hp;
+            self.vib_phase += self.vib_inc;
+            if self.vib_phase > core::f32::consts::TAU {
+                self.vib_phase -= core::f32::consts::TAU;
+            }
+            let d = self.vib_base + self.vib_amp * self.vib_env * self.vib_phase.sin();
+            let di = d.floor();
+            let fr = d - di;
+            let i0 = (self.vib_pos + VIB_BUF - di as usize) % VIB_BUF;
+            let i1 = (i0 + VIB_BUF - 1) % VIB_BUF;
+            let vib_out = self.vib_buf[i0] * (1.0 - fr) + self.vib_buf[i1] * fr;
+            self.vib_pos = (self.vib_pos + 1) % VIB_BUF;
+
+            *s = vib_out * self.level;
             self.age += 1;
         }
 
@@ -8348,6 +9302,9 @@ pub struct BrassVoice {
 
     rdc_x1: f32,
     rdc_y1: f32,
+    rad_x1: f32,
+    wall_lp: f32,
+    wall_c: f32,
     dc_x1: f32,
     dc_y1: f32,
     level: f32,
@@ -8360,6 +9317,93 @@ pub struct BrassVoice {
     rms: f32,
 }
 
+/// Per-instrument voicing for the shared lip-valve/bore/bell brass model. The MECHANISM
+/// (beating lips, nonlinear bore steepening, viscothermal wall loss, radiating bell) is
+/// identical; what changes with instrument is the length of the bore (hence which
+/// harmonic slots the player reaches for), how bright the bell radiates, and how hard the
+/// bore steepens. Numbers fitted to VSCO-2-CE solo references.
+struct BrassVoicing {
+    /// Bore fundamental range in Hz - the range the slide/valves sweep. A short trumpet
+    /// bore is a high fundamental; a long horn bore is a low one.
+    bore_lo: f32,
+    bore_hi: f32,
+    /// Highest harmonic the player reaches for. The horn lives high in the series (to 16);
+    /// the trombone stays low (to 10).
+    n_max: u32,
+    /// f0 floor to keep slot() out of the degenerate sub-bass.
+    f0_floor: f32,
+    /// Fixed lip placement as a fraction of f0 (used when lip_k == 0). The trombone plays
+    /// only low slots and was reference-matched at a fixed 0.70; keep it exactly.
+    lip_ratio: f32,
+    /// n-scaled lip placement: when > 0, the lip sits at f0*(1 - lip_k/n) for harmonic n -
+    /// a fraction of the way from bore mode n-1 up to the target mode n, so the
+    /// outward-striking valve slots correctly at HIGH n (trumpet, horn). 0 disables it.
+    lip_k: f32,
+    /// Lip resonance damping (1/2Q). Lower = higher-Q = locks more tightly to ONE mode and
+    /// pulls the pitch less - which is what widely-spaced high-n slotting needs.
+    lip_damp: f32,
+    /// Nonlinear wave steepening (brassiness). Higher = brighter at ff, but too high wolfs.
+    beta: f32,
+    /// Bell transmission split - lower reflects more (darker, more back into the loop).
+    bell_c: f32,
+    bell_loss: f32,
+    /// Viscothermal wall loss per bore pass (one-pole). A longer bore loses more, so the
+    /// horn is darker than the trumpet by construction, not by taste.
+    wall_c: f32,
+    /// Per-note loudness bake (provisional spike level, NOT a measured LUFS bake).
+    level_k: f32,
+    /// Within-slot pitch drift correction (cents per Hz of bore frequency): cancels the flat
+    /// drift across a slot so the pitch does not JUMP at each slot boundary.
+    slot_drift: f32,
+}
+
+/// Measured lip-bore detuning per slot: the outward-striking lip pulls the sounding pitch
+/// sharp of the bore mode, most at n=3 (+44 cents) and tapering with n. A single lip
+/// placement cannot zero it across the whole harmonic series (the pull is a resonance in
+/// lip-to-mode distance), so the bore length is PRE-FLATTENED by the measured pull, the way a
+/// real bore's register/end corrections vary per slot. Trumpet only for now; the trombone is
+/// reference-matched and gated without it, and the horn needs its own table.
+fn brass_slot_pull_cents(inst: Instrument, n: f32) -> f32 {
+    match inst {
+        Instrument::Trumpet => match n as u32 {
+            2 => -6.0, 3 => 44.0, 4 => 29.0, 5 => 16.0, 6 => 5.0, 7 => -3.0, _ => -10.0,
+        },
+        Instrument::FrenchHorn => match n as u32 {
+            2 => 24.0, 3 => 48.0, 4 => 36.0, 5 => 26.0, 6 => 40.0, _ => 40.0,
+        },
+        _ => 0.0,
+    }
+}
+
+fn brass_voicing(inst: Instrument) -> BrassVoicing {
+    match inst {
+        // Bb trumpet: short bore (~1.48 m), high fundamental, bright bell, plays low slots.
+        Instrument::Trumpet => BrassVoicing {
+            bore_lo: 78.0, bore_hi: 125.0, n_max: 10, f0_floor: 150.0,
+            lip_ratio: 0.0, lip_k: 0.56, lip_damp: 0.05, beta: 40.0, bell_c: 0.20, bell_loss: 0.986, wall_c: 0.060, level_k: 5.0, slot_drift: 0.64,
+        },
+        // F horn: DORMANT, not shippable yet. A real horn's long bore forces it onto high
+        // harmonics (n up to 16) where the lip mis-selects the mode (locked +474c sharp,
+        // nearly a mode too high, on every note). Raising the bore so it plays LOW harmonics
+        // (n=2-5, like the trumpet) plus the per-slot pull correction below fixes the STABLE
+        // MIDDLE of each slot (within +/-15c), but the notes at slot BOUNDARIES still jump to
+        // the wrong mode (+200-340c) - the lip is ambiguous there and no single Q or placement
+        // resolves it (higher Q measured WORSE). That boundary mode-selection is the horn's
+        // real remaining problem and wants a different selector (hysteresis in the slot, or an
+        // explicit harmonic lock). Left dormant with the diagnosis; the bore/correction here
+        // are the progress, not the answer.
+        Instrument::FrenchHorn => BrassVoicing {
+            bore_lo: 58.0, bore_hi: 100.0, n_max: 9, f0_floor: 100.0,
+            lip_ratio: 0.0, lip_k: 0.56, lip_damp: 0.05, beta: 26.0, bell_c: 0.50, bell_loss: 0.987, wall_c: 0.060, level_k: 1.7, slot_drift: 0.0,
+        },
+        // Tenor trombone and anything else: the measured, reference-matched values.
+        _ => BrassVoicing {
+            bore_lo: 41.0, bore_hi: 58.5, n_max: 10, f0_floor: 60.0,
+            lip_ratio: 0.70, lip_k: 0.0, lip_damp: 0.05, beta: 40.0, bell_c: 0.28, bell_loss: 0.985, wall_c: 0.060, level_k: 2.2, slot_drift: 0.0,
+        },
+    }
+}
+
 impl BrassVoice {
     /// Pick the harmonic and the slide position, the way a player does.
     ///
@@ -8367,12 +9411,19 @@ impl BrassVoice {
     /// ~58 Hz (1st position, Bb) down to ~44 Hz (7th position, E), and the player
     /// chooses a HARMONIC n of that fundamental with the lips. So for a target pitch
     /// we search for the (n, slide) pair a player would actually use.
-    fn slot(f0: f32) -> (f32, f32) {
-        let mut best = (2.0f32, 58.0f32);
+    fn slot(f0: f32, v: &BrassVoicing) -> (f32, f32) {
+        let mut best = (2.0f32, 0.5 * (v.bore_lo + v.bore_hi));
         let mut best_err = f32::INFINITY;
-        for n in 2..=10 {
+        for n in 2..=v.n_max {
             let fb = f0 / n as f32;
-            if !(43.0..=59.0).contains(&fb) {
+            // A tenor trombone's bore fundamental runs from Bb1 = 58.3 Hz in 1st position
+            // down to E1 = 41.2 Hz in 7th. The old window (43..59) cut the bottom of the
+            // slide off, so E2 - the lowest note of the normal range, and the note a writer
+            // reaches for first - found NO valid (harmonic, slide) pair at all, silently fell
+            // back to a default bore that did not match it, and landed the lip exactly ON the
+            // bore fundamental: the degenerate case that damps. It clipped at 1.000 and
+            // pulsed. Every note below F2 was in that hole.
+            if !(v.bore_lo..=v.bore_hi).contains(&fb) {
                 continue;
             }
             // prefer the LOWEST harmonic that reaches the note - that is what a player
@@ -8386,8 +9437,14 @@ impl BrassVoice {
         best
     }
 
-    pub fn start(f0: f32, vel: f32, sr: f32) -> Self {
-        let (n_sel, f_bore) = Self::slot(f0.max(60.0));
+    pub fn start(inst: Instrument, f0: f32, vel: f32, sr: f32) -> Self {
+        let voicing = brass_voicing(inst);
+        let (n_sel, f_bore) = Self::slot(f0.max(voicing.f0_floor), &voicing);
+        // flatten the bore by the measured lip pull (per-harmonic base) PLUS a within-slot
+        // slope so the pitch does not drift across a slot and jump at its boundary.
+        let fbore_mid = 0.5 * (voicing.bore_lo + voicing.bore_hi);
+        let pull = brass_slot_pull_cents(inst, n_sel) + voicing.slot_drift * (fbore_mid - f_bore);
+        let f_bore = f_bore * 2f32.powf(-pull / 1200.0);
 
         let mut v = Self {
             fwd: [0.0; BORE_BUF],
@@ -8411,6 +9468,9 @@ impl BrassVoice {
             beta: 0.0,
             rdc_x1: 0.0,
             rdc_y1: 0.0,
+            rad_x1: 0.0,
+            wall_lp: 0.0,
+            wall_c: 0.060,
             dc_x1: 0.0,
             dc_y1: 0.0,
             level: 0.0,
@@ -8431,30 +9491,112 @@ impl BrassVoice {
         v.len = (period * 0.5).clamp(8.0, (BORE_BUF - 4) as f32);
 
         // bell: reflect the lows, radiate the highs
-        v.bell_c = 0.28;
-        v.bell_loss = 0.985;
+        v.bell_c = voicing.bell_c;
+        v.wall_c = voicing.wall_c;
+        v.bell_loss = voicing.bell_loss;
 
-        // Lip resonance sits AT the target pitch. Blowing harder does not change it -
-        // the player's embouchure does. Because the lip is outward-striking, it locks
-        // onto whichever bore mode is nearest, which is exactly slotting.
-        // Fletcher's valve classification: an OUTWARD-STRIKING valve oscillates when the
-        // air-column mode is ABOVE the lip resonance. Put the lip exactly ON the bore mode
-        // (as the first version did) and the loop is a positive resistance - it damps, and
-        // the instrument sits silent at equilibrium. Sit it slightly below and the phase
-        // rotates, the effective resistance goes negative, and it speaks.
-        v.lip_w = core::f32::consts::TAU * (f0 * 0.80) / sr;
-        v.lip_damp = 0.05;
-        v.y0 = 0.06;
-        v.lip_area = 0.20;
-        v.lip_gain = 0.20; // pressure -> lip displacement at equilibrium
+        // Lip resonance sits JUST BELOW the target pitch, and HOW FAR below must scale with
+        // the harmonic number - this is the fix that made the trumpet and horn slot.
+        //
+        // Fletcher's valve classification: an OUTWARD-STRIKING valve oscillates on the bore
+        // mode ABOVE the lip resonance, so the lip must sit below the target mode n but ABOVE
+        // the neighbouring mode n-1, or it locks to the wrong one. Mode n-1 sits at
+        // (n-1)/n * f0. A FIXED ratio (0.72*f0, which is all the trombone ever needed because
+        // it plays n=2-4) falls BELOW (n-1)/n once n>=4: at n=4, mode n-1 is at 0.75*f0, above
+        // a 0.72 lip, so the lip locked a fourth flat - measured -452 cents on the trumpet,
+        // exactly (n-1)/n. The horn, living up at n=16, was hopeless.
+        //
+        // So place the lip a fixed FRACTION of the way from mode n-1 up to mode n:
+        //   lip = f0 * (1 - k/n),  k in (0,1)
+        // k=0.5 is the midpoint; smaller k sits closer to the target mode. This is 0.72-ish
+        // for the trombone's low slots by construction and tracks upward as the note climbs.
+        let lip_frac = if voicing.lip_k > 0.0 {
+            (1.0 - voicing.lip_k / n_sel.max(2.0)).clamp(0.5, 0.985)
+        } else {
+            voicing.lip_ratio
+        };
+        v.lip_w = core::f32::consts::TAU * (f0 * lip_frac) / sr;
+        v.lip_damp = voicing.lip_damp;
+        v.lip_area = 2.0;
+        v.lip_gain = 0.05;
 
         // breath: harder = more pressure = a brighter, brassier note, not just louder
         let vv = vel.clamp(0.05, 1.0);
-        v.pm = 0.55 + 0.95 * vv;
-        v.env_rate = 1.0 - (-1.0 / (0.030 * sr)).exp();
+        v.pm = 0.42 + 1.55 * vv;
+        v.env_rate = 1.0 - (-1.0 / (0.012 * sr)).exp();
 
-        // brassiness: how much the local pressure speeds the wave up
-        v.beta = 2.4;
+        // THE LIPS MUST BEAT, OR THIS IS NOT A BRASS INSTRUMENT.
+        //
+        // A brass player PRESSES THE LIPS TOGETHER and the breath forces a small aperture
+        // open against that compression. Every cycle the lips slam shut again; the flow is
+        // RECTIFIED, and that rectification IS the harmonic series. It is the same mechanism
+        // as a reed, and it is why a trombone is bright and a flute is not.
+        //
+        // The old code had a rest opening y0 = 0.06 and no pre-compression, so the static
+        // equilibrium sat at y0 + lip_gain*pm = 0.06 + 0.20*1.5 = 0.36 - SIX TIMES the rest
+        // opening. The lips were blown wide apart and never touched. With no beating there is
+        // no rectification, so the flow stayed a near-sinusoid (measured: h2 -20 dB, h4 -72 dB,
+        // spectral centroid 139 Hz on a 116 Hz note - a SINE), and with no strong nonlinearity
+        // to pump the loop the oscillation crept up over 2.08 SECONDS.
+        //
+        // So: solve for the pre-compression that leaves a small aperture at equilibrium, and
+        // let the AC swing beat through zero. Because the swing grows with blowing pressure
+        // and the equilibrium does not, a loud note beats HARDER and for a larger fraction of
+        // the cycle - the brightness rises with dynamics on its own. That is brassiness
+        // arriving from the valve, where the literature says most of it actually comes from.
+        // The embouchure is set by the PLAYER, once, and then he blows harder or softer
+        // through it. Solving y0 against this note's OWN pm (which the first version did)
+        // makes the embouchure cancel the dynamics exactly - the lip then sits at the same
+        // operating point at pp and ff, and the timbre cannot change with velocity. It
+        // didn't: centroid 176 Hz at pp, 181 Hz at ff.
+        //
+        // So set it from a FIXED reference blow. Blow harder than the reference and the lips
+        // are driven further, beat longer, and the note brassens - on its own.
+        // A player FIRMS THE EMBOUCHURE as he blows harder. He does not hold it fixed.
+        //
+        // Both extremes fail, and both were measured:
+        //   - fully compensating (y0 solved against this note's own pm) pins the operating
+        //     point, so the timbre is identical at pp and ff: centroid 176 -> 181 Hz. No
+        //     dynamics at all.
+        //   - not compensating at all (a fixed embouchure) lets the DC push pry the lips
+        //     open at ff faster than the oscillation grows, and a LOUD LOW note stops beating
+        //     entirely - F2 ff went from 18% closure to 0.0% on a beta change of 8 -> 12.
+        //     The model was sitting on a regime boundary; that is not shippable.
+        //
+        // So firm it PARTIALLY. The lips still open a little as he leans in - which is what
+        // keeps the dynamics - but never so far that they stop beating.
+        const Y_EQ: f32 = 0.008;
+        const PM_REF: f32 = 1.02; // a mezzo-forte blow
+        const FIRM: f32 = 0.75; // how much of the extra pressure the embouchure takes up
+        let pm_emb = PM_REF * (1.0 - FIRM) + v.pm * FIRM;
+        v.y0 = Y_EQ - v.lip_gain * pm_emb; // negative == lips pressed together
+
+        // Start the lips already moving. A player TONGUES the note - the attack is a release,
+        // not the slow growth of an instability from the noise floor. Without this the loop
+        // has to bootstrap itself, which is the other half of the 2-second attack.
+        v.y = Y_EQ;
+        v.yv = 0.006 + 0.005 * vv;
+
+        // BRASSINESS, NOW FITTED TO A REAL TROMBONE INSTEAD OF TO A NUMBER I MADE UP.
+        //
+        // This was 2.4 (did nothing), then I raised it to 35 chasing a "real trombone sits at
+        // ~1500 Hz" target that I had INVENTED FROM MEMORY. Measured against 31 sustained
+        // notes of a real tenor trombone (VSCO-2-CE, CC0), the truth was the exact opposite:
+        // at pp the real instrument's harmonic centroid is 436 Hz and OURS WAS 1507 - we were
+        // 3.5x TOO BRIGHT and I spent a whole session pushing it brighter.
+        //
+        // What beta really does is make the SHOCK, and a shock makes harmonics across the
+        // whole band. Turn it down and the 320-1300 Hz brass formant collapses with it; turn
+        // it up alone and it manufactures a wall of hash (the shipped beta=35 measured
+        // +49.6 dB of excess at 2-5 kHz - THAT is what "so bad" sounded like). The thing that
+        // stops a real shock going infinitely sharp is WALL LOSS, which is what we did not
+        // have. Steepen hard, damp hard: beta 40 + WALL_C 0.060.
+        //
+        // 40, not 55: above ~45 the extra steepening pushes the lip off its partial and the
+        // note wolfs onto the neighbouring bore mode (m58 went to -7 dB purity). Verified by
+        // the RAW-VOICE test, not the engine path - the engine's limiter and reverb were
+        // masking the wolf and reported 26 dB when the voice itself was at -7.
+        v.beta = voicing.beta;
 
         v.dbg_fbore = f_bore;
         v.dbg_n = n_sel;
@@ -8462,7 +9604,38 @@ impl BrassVoice {
         // (low slots much quieter). Both make it useless next to anything else. Provisional
         // bake, NOT the measured BS.1770 one.
         let reg_g = (110.0 / f0.max(40.0)).powf(0.85).clamp(0.35, 2.2);
-        v.level = 34.0 * reg_g; // provisional; NOT a measured LUFS bake (spike)
+
+        // A VELOCITY GAIN, AND IT IS NOT PHYSICS. Say so plainly.
+        //
+        // This model self-oscillates into a limit cycle whose amplitude is set by the LIP
+        // GEOMETRY, not by how hard you blow: measured pp -> ff is 1.5-3.6 dB. A real
+        // trombone spans 20-30 dB. Everything tried to close that honestly made it worse:
+        //   - widening the blowing pressure 1.7x -> 2.4x bought 1 dB (the flow law is
+        //     u ~ a*sqrt(dp) - a SQUARE ROOT, so doubling the pressure is +3 dB and no more);
+        //   - cutting the lip contact loss 0.010 -> 0.0008: no change (not the limiter);
+        //   - letting the aperture open with pressure (FIRM 0.75 -> 0.40): the loud notes
+        //     stopped beating entirely and went back to sine;
+        //   - strong coupling (lip_area 2 -> 12): brighter, but the slot collapsed to 3 dB
+        //     and the dynamic range got WORSE, not better - it saturates harder.
+        //
+        // The missing physics is the strong-coupling regime, where the mouthpiece pressure
+        // scales with blowing pressure instead of with its square root. Until that is built,
+        // this gain stands in for it. It is a calibration. It is not brassiness, and the
+        // brightness that DOES track velocity (centroid 479 -> 933 Hz) is real and comes from
+        // the bore, not from here.
+        let dyn_g = vv.powf(2.20); // see below: measured CLEAN this yields 23-31 dB, not 15
+
+        // 34.0 -> 0.50. The trombone was ~35 dB too hot and CLIPPED ON EVERY NOTE - it sat
+        // slammed into the master limiter for the whole of its life. Two things followed:
+        //   - the limiter squashed its dynamics flat, so the pp/ff range MEASURED as 15 dB
+        //     when the model was actually producing 26;
+        //   - clipping MANUFACTURES HARMONICS, so every brightness number taken while it was
+        //     hot is suspect. Re-measured clean: slot 28-37 dB (better than the 21-27 read
+        //     through the limiter) and centroid 600 -> 1013 Hz. The limiter had been
+        //     flattering the slot and inflating nothing - but it could easily have gone the
+        //     other way, and for a while every claim here rested on distorted audio.
+        // Worst peak over EVERY note m40-m65 x 3 velocities is now 0.739.
+        v.level = voicing.level_k * reg_g * dyn_g;
         v
     }
 
@@ -8539,12 +9712,23 @@ impl BrassVoice {
                 - 2.0 * self.lip_damp * w * self.yv;
             self.yv += acc;
             self.y += self.yv;
-            // the lips beat against each other - they cannot open negative
+            // THE LIPS SQUASH. y < 0 is not "impossible" - it is the lips PRESSED TOGETHER,
+            // tissue compressing. The APERTURE is what cannot go negative, and that is
+            // already handled by y.max(0.0) above.
+            //
+            // Clamping y itself at 0 and killing the velocity (which is what this did) is an
+            // infinitely strong limiter sitting exactly AT the closure point: the oscillation
+            // can never grow past "just grazing zero", at ANY blowing pressure. Measured: the
+            // lips were shut 0.2% of the cycle at pp and 0.2% at ff. That is why the trombone
+            // had no dynamics - the operating point was identical whether you whispered or
+            // blasted, so the timbre was too.
+            //
+            // Let it squash, and closure duration becomes a function of how hard you blow -
+            // which is the whole of brass dynamics. Contact damping stands in for the tissue
+            // absorbing the collision.
             if self.y < 0.0 {
-                self.y = 0.0;
-                if self.yv < 0.0 {
-                    self.yv *= -0.35; // inelastic collision
-                }
+                self.yv -= LIP_CONTACT * self.y * w * w; // one-sided contact stiffness
+                self.yv *= 1.0 - LIP_CONTACT_D; // tissue loss while pressed together
             }
             self.y = flush_denormal(self.y);
             self.yv = flush_denormal(self.yv);
@@ -8576,11 +9760,36 @@ impl BrassVoice {
             let radiated = p_bell - refl_raw; // the bell is a HIGH-PASS in transmission
 
             // ---- write and advance ----
-            self.fwd[self.pos] = p_plus;
+            // VISCOTHERMAL WALL LOSS. A real bore loses energy to friction and heat
+            // conduction at the wall, and the loss GROWS WITH FREQUENCY (~sqrt(f)). This is
+            // why a trombone has almost nothing above 2 kHz: measured against a real one, our
+            // 2-5 kHz band was 16-26 dB TOO LOUD - a tail of hash the instrument does not
+            // have - while 320-1300 Hz, the band that actually makes it sound like brass, was
+            // 12-18 dB TOO QUIET. Our loop loss was flat, so the wave steepening had nothing
+            // to damp it and the radiation highpass then amplified exactly the junk it made.
+            // One-pole per pass; the cascade around the loop gives the frequency dependence.
+            self.wall_lp += self.wall_c * (p_plus - self.wall_lp);
+            self.fwd[self.pos] = flush_denormal(self.wall_lp);
             self.bwd[self.pos] = refl;
             self.pos = (self.pos + 1) % BORE_BUF;
 
-            let y = radiated;
+            // BELL RADIATION TILT. A bell is a poor radiator at low frequency and an
+            // efficient one high up (radiation resistance rises with ka), so the sound that
+            // LEAVES the instrument is tilted upward relative to the pressure inside it.
+            // Without this the fundamental dominates the radiated field, and the tone comes
+            // out h1-heavy with a thin, weak harmonic series - measured against a real tenor
+            // trombone, our h2..h6 were 9-13 dB too quiet while the real instrument's h1..h4
+            // sit within 2 dB of EACH OTHER (a flat-topped spectrum, then a cliff).
+            let tilted = radiated - RAD_TILT * self.rad_x1;
+            self.rad_x1 = radiated;
+
+            // A 2-POLE RESONANT BELL WAS TRIED HERE AND MEASURED WORSE. The idea was that a
+            // bell's radiation peak IS the brass formant and its fall IS the HF cliff, so one
+            // object would explain both measured errors. Fitted over fc = 500/800/1200 Hz x
+            // Q = 0.7/1.4, EVERY setting was worse than no resonator at all (ladder error
+            // 10.4-20.4 dB vs 9.2 dB baseline). It is left recorded, not left in.
+            let y = tilted;
+
             let hp = y - self.dc_x1 + DC_POLE * self.dc_y1;
             self.dc_x1 = y;
             self.dc_y1 = flush_denormal(hp);
@@ -8609,5 +9818,241 @@ impl BrassVoice {
 
     pub fn probe(&self) -> (f32, f32, f32, f32) {
         (self.y, self.yv, self.dbg_u, self.dbg_pmp)
+    }
+}
+
+/// STATUS (WIP, dormant - not in the facade or playground). Two of the three original
+/// blockers are now SOLVED:
+///   1. It self-oscillates at f0 (closed-open quarter-wave topology + inverting bell).
+///   2. TIMBRE: it now has the sax's FULL harmonic series (h2 -9, h3 -11, h4 -16, matching a
+///      real tenor sax), not the clarinet's odd-only. A true conical bore was not needed - the
+///      nonlinear bore steepening (beta = 8) generates the even harmonics a cone would, and a
+///      one-pole wall loss (wall_c = 0.12) gives the correct rolloff. Fitted to VCSL.
+/// REMAINING (updated 2026-07-20): IGNITION IS FIXED - it now oscillates at EVERY velocity,
+/// not just ff. The blocker was the mouth pressure gamma sitting BELOW the oscillation
+/// threshold at low velocity (pm 0.28+0.20*vv -> gamma 0.28-0.48; the threshold is ~0.55 here,
+/// loss-raised from the ideal 1/3), plus a startup seed that scaled with velocity so soft notes
+/// never got a kick. Fixed: gamma 0.72+0.08*vv (above threshold always) and a fixed ignition
+/// kick. (This cost many wasted iterations to a TESTING bug - a regex that edited BrassVoice's
+/// pm instead of the reed's, count=1 hitting the first match; it also silently corrupted the
+/// trombone until caught. Lesson logged.)
+/// The STRUCTURAL blocker that remains: the limit-cycle AMPLITUDE is tiny (rms ~0.012) and does
+/// NOT scale with gamma (0.60->0.82 barely moves it), so there is no dynamic range, and the
+/// high notes go mode-ambiguous (f0/2 ~ f0 at m70). The reed-bore coupling delivers too little
+/// energy per cycle - almost certainly the flow<->pressure impedance (Zc normalised to 1). That
+/// wants a from-scratch, reference-validated reed-junction reimplementation, not a sweep. Dormant.
+/// Single-reed woodwind (saxophone). A cousin of BrassVoice - same bore waveguide, bell and
+/// viscothermal wall loss - but the valve is a REED, not a lip, and that flips two things:
+///
+///  1. The reed is INWARD-striking: blowing pushes it SHUT (a lip is pushed open). So the
+///     reed forcing carries +dp where the lip carried -dp. This is the whole difference in
+///     the self-oscillation, and it is why a clarinet speaks BELOW the reed resonance while a
+///     brass instrument speaks above the lip resonance (Fletcher's valve classification).
+///
+///  2. There is NO SLOTTING. A sax plays the FUNDAMENTAL of the current tube length (the tone
+///     holes set the length), so the bore round trip is simply one period of f0 and the reed
+///     beats at that fundamental. None of the brass lip/harmonic selection problem exists here.
+///
+/// A saxophone bore is CONICAL, so like the brass it radiates the full harmonic series
+/// (odd+even); we get that by construction from a non-inverting round trip, same as brass.
+#[derive(Clone, Copy)]
+pub struct ReedVoice {
+    fwd: [f32; BORE_BUF],
+    bwd: [f32; BORE_BUF],
+    pos: usize,
+    len: f32,
+
+    bell_lp: f32,
+    bell_c: f32,
+    bell_loss: f32,
+    wall_lp: f32,
+    wall_c: f32,
+
+    // reed: inward-striking valve
+    y: f32,    // opening (>=0; 0 == beating shut)
+    yv: f32,
+    y0: f32,   // rest opening
+    reed_w: f32,
+    reed_damp: f32,
+    reed_k: f32,   // how hard pressure closes the reed
+    reed_area: f32,
+    dp_prev: f32,  // last-sample reed pressure, for the one-sample-delayed quasi-static reed
+
+    pm: f32,   // mouth pressure
+    env: f32,
+    env_target: f32,
+    env_rate: f32,
+
+    beta: f32,
+    rdc_x1: f32,
+    rdc_y1: f32,
+    rad_x1: f32,
+    dc_x1: f32,
+    dc_y1: f32,
+    level: f32,
+    releasing: bool,
+    age: u64,
+    rms: f32,
+    dbg_u: f32,
+    dbg_pmp: f32,
+}
+
+impl ReedVoice {
+    pub fn start(_inst: Instrument, f0: f32, vel: f32, sr: f32) -> Self {
+        let mut v = ReedVoice {
+            fwd: [0.0; BORE_BUF], bwd: [0.0; BORE_BUF], pos: 0, len: 1.0,
+            bell_lp: 0.0, bell_c: 0.0, bell_loss: 0.0, wall_lp: 0.0, wall_c: 0.06,
+            y: 0.0, yv: 0.0, y0: 0.0, reed_w: 0.0, reed_damp: 0.0, reed_k: 0.0, reed_area: 0.0, dp_prev: 0.0,
+            pm: 0.0, env: 0.0, env_target: 1.0, env_rate: 0.0,
+            beta: 0.0, rdc_x1: 0.0, rdc_y1: 0.0, rad_x1: 0.0, dc_x1: 0.0, dc_y1: 0.0,
+            level: 0.0, releasing: false, age: 0, rms: 0.0, dbg_u: 0.0, dbg_pmp: 0.0,
+        };
+
+        // Bore round trip = one period of f0 (the fundamental the reed plays).
+        // CLOSED-OPEN (clarinet) topology: reed end closed (non-inverting), bell open
+        // (inverting). That is the configuration that self-oscillates. Closed-open is a
+        // QUARTER-wave resonator, so the tube is period/4 and the round trip is half a period;
+        // the inverting bell supplies the sign flip that makes the full round trip one period.
+        let period = sr / f0.max(30.0);
+        v.len = (period * 0.25).clamp(4.0, (BORE_BUF - 4) as f32);
+
+        // bell / open end: reflect lows, radiate highs (a sax bell is small; the tone holes
+        // do most of the radiating, but the same lowpass-split models the net effect).
+        v.bell_c = 0.5;
+        v.bell_loss = 0.995;
+        v.wall_c = 0.12;
+
+        // reed: rest OPEN; pressure pushes it shut. Resonance high above the note and heavily
+        // damped - a sax reed is a fast beating valve, not a pitch selector.
+        v.reed_w = core::f32::consts::TAU * 2600.0 / sr;
+        v.reed_damp = 0.5;
+        v.y0 = 1.0;
+        v.reed_k = 1.0;
+        v.reed_area = 0.4;
+
+        // breath: harder = more pressure = brighter + louder. A sax has a wide dynamic range.
+        let vv = vel.clamp(0.05, 1.0);
+        v.pm = 0.72 + 0.08 * vv; // gamma above the oscillation threshold at all velocities
+        v.env_rate = 1.0 - (-1.0 / (0.020 * sr)).exp();
+
+        v.beta = 8.0; // bore steepening -> even harmonics (the conical-bore full series, approximated) (a sax gets brassy when pushed, but less than brass)
+
+        // provisional spike level (NOT a measured LUFS bake); register-compensated
+        let reg_g = (150.0 / f0.max(40.0)).powf(0.5).clamp(0.4, 2.0);
+        v.level = 0.9 * reg_g;
+
+        // A tongued attack: seed the bore with a short pressure pulse so the oscillation has
+        // something to grow FROM. A reed self-oscillator sits at a DC operating point until
+        // perturbed; from perfect silence it never starts. (The brass has the same need - it
+        // kicks the lip velocity.)
+        for i in 0..(v.len as usize).min(BORE_BUF - 1) {
+            v.fwd[i] = 0.25; // fixed ignition kick (velocity-independent)
+        }
+        v
+    }
+
+    #[inline(always)]
+    fn read(buf: &[f32; BORE_BUF], pos: usize, d: f32) -> f32 {
+        let di = d.floor();
+        let fr = d - di;
+        let i = (pos + BORE_BUF - di as usize - 1) % BORE_BUF;
+        let j = (i + BORE_BUF - 1) % BORE_BUF;
+        buf[i] * (1.0 - fr) + buf[j] * fr
+    }
+
+    pub fn render(&mut self, out: &mut [f32]) -> bool {
+        for s in out.iter_mut() {
+            self.env += (self.env_target - self.env) * self.env_rate;
+            let pm = self.pm * self.env;
+
+            // nonlinear bore propagation (brassiness), same as brass
+            let p_bell_lin = Self::read(&self.fwd, self.pos, self.len);
+            let p_lip_lin = Self::read(&self.bwd, self.pos, self.len);
+            let p_tot = p_bell_lin + p_lip_lin;
+            let d = (self.len - self.beta * p_tot).clamp(4.0, self.len + 8.0);
+            let p_bell = Self::read(&self.fwd, self.pos, d);
+            let p_minus = Self::read(&self.bwd, self.pos, d);
+
+            // ---- reed scattering junction (closed form) ----
+            // Mouthpiece pressure if no flow is p = 2*p_minus; the pressure available across
+            // the reed is D = pm - 2*p_minus. The Bernoulli flow through the reed slit is
+            // u = a*sqrt(|dp|)*sign(dp) with a set by the reed opening, and dp = D - u. That
+            // is one quadratic in sqrt(|dp|): s^2 + a*s - |D| = 0 (Bilbao/Smith).
+            // ---- reed junction: IMPLICIT solve, inward-striking ----
+            // The reed opening y and the flow u must be solved TOGETHER at this sample. That
+            // simultaneity IS the self-oscillation: y = y0 - k*dp shrinks as pressure rises,
+            // so the flow u = area*y*sqrt(dp) first grows then FALLS with dp - a region of
+            // NEGATIVE differential resistance, and that is what pumps the bore. My first
+            // version used last sample's dp for y (a one-sample delay), which decoupled them,
+            // destroyed the instantaneous negative resistance, and the reed never oscillated -
+            // it sat at a stable DC operating point and the instrument was silent. Newton on
+            //   f(dp) = dp + u(dp) - dd = 0,   dd = pm - 2*p_minus
+            // converges in a few steps; warm-started from last sample.
+            // Fixed-point on the CLOSED-FORM flow, not Newton. The flow u ~ y*sqrt(|dp|) has
+            // INFINITE slope at dp=0, so a Newton step started from rest pins dp at zero, the
+            // flow never opens, and the reed stays silent (it did). Instead: for a FIXED
+            // opening y the junction is the same quadratic the brass solves in closed form
+            //   s = (-a + sqrt(a^2 + 4|dd|)) / 2,   a = area*y,   u = a*s,  dp = s^2
+            // so iterate {solve flow given y; update y from the new dp} a few times. Stable,
+            // and it keeps the instantaneous y<->dp coupling that makes the reed oscillate.
+            let close = if self.releasing { self.env } else { 1.0 };
+            let dd = pm - 2.0 * p_minus;
+            let y0c = self.y0 * close;
+            let mut dp = self.dp_prev;
+            let mut u = 0.0f32;
+            for _ in 0..3 {
+                let y = (y0c - self.reed_k * dp).max(0.0);
+                let a = self.reed_area * y;
+                let s = 0.5 * (-a + (a * a + 4.0 * dd.abs()).sqrt());
+                u = a * s * dd.signum();
+                dp = s * s * dd.signum();
+            }
+            let y = (y0c - self.reed_k * dp).max(0.0);
+            self.dp_prev = flush_denormal(dp);
+            self.y = y;
+            self.yv = 0.0;
+            let _ = self.reed_w;
+            let _ = self.reed_damp;
+            let p_plus = p_minus + u;
+            let p_mp = p_plus + p_minus;
+
+            // ---- bell: reflect lows, radiate highs (non-inverting -> full harmonics) ----
+            let loss = self.bell_loss * (0.90 + 0.10 * self.env);
+            self.bell_lp += self.bell_c * (p_bell - self.bell_lp);
+            let refl_raw = loss * flush_denormal(self.bell_lp);
+            let refl = refl_raw - self.rdc_x1 + DC_POLE * self.rdc_y1;
+            self.rdc_x1 = refl_raw;
+            self.rdc_y1 = flush_denormal(refl);
+            let radiated = p_bell - refl_raw;
+
+            // wall loss inside the loop, then write & advance
+            self.wall_lp += self.wall_c * (p_plus - self.wall_lp);
+            self.fwd[self.pos] = flush_denormal(self.wall_lp);
+            self.bwd[self.pos] = -refl; // open bell inverts (closed-open resonator)
+            self.pos = (self.pos + 1) % BORE_BUF;
+
+            let y = radiated;
+            let hp = y - self.dc_x1 + DC_POLE * self.dc_y1;
+            self.dc_x1 = y;
+            self.dc_y1 = flush_denormal(hp);
+
+            self.dbg_u = u;
+            self.dbg_pmp = p_mp;
+            self.rms = 0.999 * self.rms + 0.001 * hp.abs();
+            *s = hp * self.level;
+            self.age += 1;
+        }
+        !(self.releasing && self.env < 1.0e-3 && self.rms < 2.0e-4)
+    }
+
+    pub fn damp(&mut self, sr: f32) {
+        self.releasing = true;
+        self.env_target = 0.0;
+        self.env_rate = 1.0 - (-1.0 / (0.040 * sr)).exp();
+    }
+
+    /// (reed opening y, last dp, last flow u, mouthpiece pressure) - diagnostics only.
+    pub fn reed_probe(&self) -> (f32, f32, f32, f32) {
+        (self.y, self.dp_prev, self.dbg_u, self.dbg_pmp)
     }
 }

@@ -52,6 +52,16 @@ export type InstrumentGroup =
   | "guitar-distorted"
   | "cello"
   | "trombone"
+  | "violin"
+  | "viola"
+  | "contrabass"
+  | "trumpet"
+  | "organ"
+  | "xylophone"
+  | "tubularbells"
+  | "celesta"
+  | "harp"
+  | "pizzicato"
   // naming aliases (Keunwoo 2026-07-12): resolve to the same engines
   | "guitar-acoustic"
   | "guitar-acoustic-nylon"
@@ -79,6 +89,16 @@ const INST = {
   guitarDistorted: 12,
   cello: 15,
   trombone: 16,
+  violin: 17,
+  viola: 18,
+  contrabass: 19,
+  trumpet: 20,
+  organ: 23,
+  xylophone: 24,
+  tubularBells: 25,
+  celesta: 26,
+  harp: 27,
+  pizzicato: 28,
 } as const;
 
 /**
@@ -106,6 +126,16 @@ const GROUP_TO_INSTRUMENT: Record<InstrumentGroup, number> = {
   // continuously-excited voices (spikes, #50): the bow and the lip never stop driving
   cello: INST.cello,
   trombone: INST.trombone,
+  violin: INST.violin,
+  viola: INST.viola,
+  contrabass: INST.contrabass,
+  trumpet: INST.trumpet,
+  organ: INST.organ,
+  xylophone: INST.xylophone,
+  tubularbells: INST.tubularBells,
+  celesta: INST.celesta,
+  harp: INST.harp,
+  pizzicato: INST.pizzicato,
   // "acoustic"/"electric bass" naming aliases (Keunwoo 2026-07-12) — canonical names above stay
   "guitar-acoustic": INST.guitar,
   "guitar-acoustic-nylon": INST.guitar,
@@ -113,8 +143,8 @@ const GROUP_TO_INSTRUMENT: Record<InstrumentGroup, number> = {
   "bass-electric": INST.bass,
   "electric-bass": INST.bass,
   strings: INST.synthpad, // (placeholder — bowed string is Q3)
-  brass: INST.synthpad, // (placeholder — winds are Q3)
-  woodwind: INST.glockenspiel, // (placeholder)
+  brass: INST.trumpet, // GM brass now maps to trumpet/trombone individually; this is the fallback
+  woodwind: INST.organ, // flute/reed stand-in (a sustained sine-ish voice) until real winds land
   voice: INST.synthpad, // (placeholder)
   synth: INST.synthpad,
   percussion: INST.drums,
@@ -128,12 +158,21 @@ export interface TrackOptions {
 }
 
 export interface Track {
+  /** The instrument currently mounted on this track (see `setInstrument`). */
   readonly instrument: InstrumentGroup;
   readonly index: number;
   noteOn(midiPitch: number, velocity?: number, timeSeconds?: number): void;
   noteOff(midiPitch: number, timeSeconds?: number): void;
   /** Sustain pedal (CC64): while down, note-offs are deferred until pedal-up. */
   pedal(on: boolean, timeSeconds?: number): void;
+  /**
+   * Re-point this track at a different instrument, reusing the same slot, gain,
+   * and pan. Lets a live surface (e.g. a keyboard whose instrument the user
+   * switches) run on ONE track instead of leaking a slot per instrument and
+   * exhausting the engine's track limit. Sounding voices keep ringing on their
+   * old instrument; the next `noteOn` uses the new one.
+   */
+  setInstrument(instrument: InstrumentGroup): void;
   set(options: TrackOptions): void;
 }
 
@@ -305,9 +344,28 @@ export async function createEngine(options: EngineOptions = {}): Promise<Engine>
     return idx;
   }
 
-  function makeTrack(instrument: InstrumentGroup, idx: number): Track {
+  function makeTrack(instrument: InstrumentGroup, idx: number, opts: TrackOptions): Track {
+    // Mutable slot state so re-pointing the instrument or nudging gain/pan
+    // preserves the fields the caller did not touch (the "track" event carries
+    // all three, so each field must be remembered, not defaulted every time).
+    let curInst = instrument;
+    let curGain = opts.gain ?? 0.8;
+    let curPan = opts.pan ?? 0;
+    const reconfigure = () => {
+      post({
+        type: "event",
+        when: 0,
+        kind: "track",
+        track: idx,
+        inst: GROUP_TO_INSTRUMENT[curInst] ?? 0,
+        gain: curGain,
+        pan: curPan,
+      });
+    };
     return {
-      instrument,
+      get instrument() {
+        return curInst;
+      },
       index: idx,
       noteOn(midiPitch, velocity = 96, timeSeconds = 0) {
         resumeIfNeeded();
@@ -326,16 +384,15 @@ export async function createEngine(options: EngineOptions = {}): Promise<Engine>
       pedal(on, timeSeconds = 0) {
         post({ type: "event", when: timeSeconds, kind: "pedal", track: idx, on: on ? 1 : 0 });
       },
+      setInstrument(next: InstrumentGroup) {
+        if (next === curInst) return;
+        curInst = next;
+        reconfigure();
+      },
       set(o: TrackOptions) {
-        post({
-          type: "event",
-          when: 0,
-          kind: "track",
-          track: idx,
-          inst: GROUP_TO_INSTRUMENT[instrument] ?? 0,
-          gain: o.gain ?? 0.8,
-          pan: o.pan ?? 0,
-        });
+        if (o.gain !== undefined) curGain = o.gain;
+        if (o.pan !== undefined) curPan = o.pan;
+        reconfigure();
       },
     };
   }
@@ -345,6 +402,12 @@ export async function createEngine(options: EngineOptions = {}): Promise<Engine>
    * `resolve` maps a family key to a track index, appending the track-config
    * event to `events` on first use.
    */
+  // A drum note routes to the kit named by its group when it names a real kit
+  // (so an arrangement can pick the jazz or rock kit), else the default kit.
+  const DRUM_KITS = new Set(["drums", "drums-rock", "drums-jazz"]);
+  const drumGroup = (g?: string): InstrumentGroup =>
+    (g && DRUM_KITS.has(g) ? g : "drums") as InstrumentGroup;
+
   function buildSchedule(
     notes: readonly NoteEvent[],
     options: PlayOptions,
@@ -355,7 +418,7 @@ export async function createEngine(options: EngineOptions = {}): Promise<Engine>
     const events: WorkletEvent[] = [];
     let end = t0;
     for (const n of notes) {
-      const group = (n.isDrum ? "drums" : (n.instrumentGroup ?? "unknown")) as InstrumentGroup;
+      const group = (n.isDrum ? drumGroup(n.instrumentGroup) : (n.instrumentGroup ?? "unknown")) as InstrumentGroup;
       const idx = resolve(group, events);
       const vel = Math.min(127, Math.max(1, n.velocity)) / 127;
       events.push({ type: "event", when: t0 + n.startSeconds, kind: "on", track: idx, midi: Math.round(n.midiPitch), vel });
@@ -397,7 +460,7 @@ export async function createEngine(options: EngineOptions = {}): Promise<Engine>
     output: node,
     createTrack(instrument, opts = {}) {
       const idx = allocTrack(instrument, opts);
-      return makeTrack(instrument, idx);
+      return makeTrack(instrument, idx, opts);
     },
     async play(notes, options = {}) {
       await ready;

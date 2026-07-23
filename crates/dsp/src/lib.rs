@@ -695,7 +695,8 @@ impl Engine {
         let damps = match inst {
             // Free-ringing struck bars: no damper on the instrument, so note-off does
             // nothing. This is correct and deliberate - do not "fix" it.
-            Instrument::Marimba | Instrument::Glockenspiel | Instrument::MusicBox => false,
+            Instrument::Marimba | Instrument::Glockenspiel | Instrument::MusicBox
+            | Instrument::Xylophone | Instrument::TubularBells | Instrument::Celesta => false,
             // One-shot kits: the hit is the note.
             Instrument::Drums | Instrument::DrumsRock | Instrument::DrumsJazz => false,
             // Damped/sustained families.
@@ -704,6 +705,8 @@ impl Engine {
             | Instrument::GuitarSteel
             | Instrument::GuitarElectric
             | Instrument::GuitarDistorted
+            | Instrument::Harp
+            | Instrument::Pizzicato
             | Instrument::Bass
             | Instrument::EPiano
             | Instrument::SynthPad
@@ -712,7 +715,14 @@ impl Engine {
             // is fatal: they are self-oscillating and would sustain at full amplitude
             // forever, not merely over-ring.
             | Instrument::Cello
-            | Instrument::Trombone => true,
+            | Instrument::Trombone
+            | Instrument::Violin
+            | Instrument::Viola
+            | Instrument::Contrabass
+            | Instrument::Trumpet
+            | Instrument::FrenchHorn
+            | Instrument::Saxophone
+            | Instrument::Organ => true,
         };
         if !damps {
             return;
@@ -764,8 +774,12 @@ impl Engine {
                         Kernel::Piano(p) => p.damp(),
                     Kernel::Bowed(b) => b.damp(sr),
                     Kernel::Brass(b) => b.damp(sr),
+                    Kernel::Reed(b) => b.damp(sr),
+                    Kernel::Organ(o) => o.release(),
                         Kernel::Bowed(b) => b.damp(sr),
                     Kernel::Brass(b) => b.damp(sr),
+                    Kernel::Reed(b) => b.damp(sr),
+                    Kernel::Organ(o) => o.release(),
                         _ => {}
                     }
                 }
@@ -808,6 +822,8 @@ impl Engine {
                     Kernel::Piano(p) => p.damp(),
                     Kernel::Bowed(b) => b.damp(sr),
                     Kernel::Brass(b) => b.damp(sr),
+                    Kernel::Reed(b) => b.damp(sr),
+                    Kernel::Organ(o) => o.release(),
                     _ => {}
                 }
             }
@@ -827,6 +843,8 @@ impl Engine {
                     Kernel::Piano(p) => p.damp(),
                     Kernel::Bowed(b) => b.damp(sr),
                     Kernel::Brass(b) => b.damp(sr),
+                    Kernel::Reed(b) => b.damp(sr),
+                    Kernel::Organ(o) => o.release(),
                     Kernel::Drum(_) => {} // short one-shots; let them ring out
                     Kernel::Off => {}
                 }
@@ -867,6 +885,8 @@ impl Engine {
                     Kernel::Piano(pn) => pn.render(&mut self.voice_buf[..frames]),
                     Kernel::Bowed(b) => b.render(&mut self.voice_buf[..frames]),
                     Kernel::Brass(b) => b.render(&mut self.voice_buf[..frames]),
+                    Kernel::Reed(b) => b.render(&mut self.voice_buf[..frames]),
+                    Kernel::Organ(o) => o.render(&mut self.voice_buf[..frames]),
                     Kernel::Off => false,
                 };
                 let th = (v.pan.clamp(-1.0, 1.0) + 1.0) * core::f32::consts::FRAC_PI_4;
@@ -2184,3 +2204,402 @@ mod bench_scaffold {
         acc
     }
 }
+
+#[test]
+fn board_tonality() {
+    // THE OWNER'S RULE, and it is absolute:
+    //   "the resonance frequency pattern of sound board (or anything structural) should
+    //    never have any tonality, any pitch. never ever."
+    //
+    // Measuring this correctly is harder than it looks, and my first two attempts both
+    // measured the wrong thing:
+    //
+    //   - Plain autocorrelation reports high "salience" for ANY smooth, lowpassed signal,
+    //     because adjacent samples correlate. It was measuring spectral TILT, not pitch.
+    //   - Global peak-over-median also just reports TILT: a board that is simply louder
+    //     at the bottom scores as "peaky" while having no audible resonance at all.
+    //
+    // What actually makes a structure audible as a NOTE is a resonance that stands out
+    // FROM ITS NEIGHBOURS and rings long enough to have a period. So:
+    //
+    //   LOCAL CONTRAST - each bin against the median of a +-1/3-octave window around it.
+    //                    This is blind to tilt and sees only "does one mode tower".
+    //   RING TIME      - anything that rings has a period you can hear a pitch in.
+    use crate::kernels::*;
+    let sr = 48000.0f32;
+    let mut modes = [(0.0f32, 0.0f32, 0.0f32); MAX_BODY_MODES];
+    let n = piano_board(sr, &mut modes);
+
+    let len = (1.2 * sr) as usize;
+    let mut ir = vec![0.0f32; len];
+    let (mut a1, mut r2, mut g) = (vec![0.0f32; n], vec![0.0f32; n], vec![0.0f32; n]);
+    let (mut y1, mut y2) = (vec![0.0f32; n], vec![0.0f32; n]);
+    for i in 0..n {
+        let (f, t60, gg) = modes[i];
+        let r = (-6.907755 / (t60 * sr)).exp();
+        let w = core::f32::consts::TAU * f / sr;
+        a1[i] = 2.0 * r * w.cos();
+        r2[i] = r * r;
+        g[i] = gg * (1.0 - r);
+    }
+    for t in 0..len {
+        let drive = if t == 0 { 1.0 } else { 0.0 };
+        let mut s = 0.0;
+        for i in 0..n {
+            let y = a1[i] * y1[i] - r2[i] * y2[i] + g[i] * drive;
+            y2[i] = y1[i];
+            y1[i] = y;
+            s += y;
+        }
+        ir[t] = s;
+    }
+
+    // magnitude on a fine log grid
+    let seg: Vec<f32> = ir.iter().skip((0.02 * sr) as usize).cloned().collect();
+    let mut fs = vec![];
+    let mut mags = vec![];
+    let mut f = 50.0f32;
+    while f < 5000.0 {
+        let w = core::f32::consts::TAU * f / sr;
+        let c = 2.0 * w.cos();
+        let (mut s1, mut s2) = (0.0f32, 0.0f32);
+        for &v in seg.iter().take(24000) {
+            let s0 = v + c * s1 - s2;
+            s2 = s1;
+            s1 = s0;
+        }
+        mags.push(((s1 * s1 + s2 * s2 - c * s1 * s2).max(0.0)).sqrt().max(1e-12));
+        fs.push(f);
+        f *= 1.01;
+    }
+
+    // LOCAL CONTRAST: each bin vs the median of +-1/3 octave around it. Tilt-blind.
+    let half = (0.3333f32.exp2().log(1.01) / 1.0) as usize; // bins per 1/3 octave
+    let mut worst = 0.0f32;
+    let mut worst_f = 0.0f32;
+    for i in 0..mags.len() {
+        let lo = i.saturating_sub(half);
+        let hi = (i + half + 1).min(mags.len());
+        let mut w: Vec<f32> = mags[lo..hi].to_vec();
+        w.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let med = w[w.len() / 2];
+        let c = 20.0 * (mags[i] / med).log10();
+        if c > worst {
+            worst = c;
+            worst_f = fs[i];
+        }
+    }
+
+    // RING TIME
+    let pk = ir.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
+    let mut ring = len as f32 / sr;
+    for t in (0..len).step_by(240) {
+        let w = &ir[t..(t + 2400).min(len)];
+        let r = (w.iter().map(|v| v * v).sum::<f32>() / w.len() as f32).sqrt();
+        if r < pk * 0.001 {
+            ring = t as f32 / sr;
+            break;
+        }
+    }
+
+    eprintln!(
+        "BOARD n={n}  local_contrast={worst:.1} dB @ {worst_f:.0} Hz   ring={ring:.2}s"
+    );
+    eprintln!("BOARD rule (owner): a structure must have NO pitch -> contrast < 9 dB, ring < 0.20 s");
+    let pass = worst < 9.0 && ring < 0.20;
+    eprintln!("BOARD {}", if pass { "PASS" } else { "** FAIL - the structure is TONAL" });
+    assert!(pass, "soundboard is tonal: {worst:.1} dB local contrast, {ring:.2}s ring");
+}
+
+#[cfg(test)]
+mod level_gates {
+    use crate::*;
+
+    /// NO INSTRUMENT MAY CLIP, AT ANY NOTE, AT ANY VELOCITY.
+    ///
+    /// The trombone shipped ~35 dB too hot and clipped on EVERY note of its range. It sat
+    /// slammed into the master limiter for its entire life, and the damage was not just the
+    /// distortion: the limiter CRUSHED ITS DYNAMICS FLAT (pp->ff measured 15 dB when the
+    /// model was really producing 26), and clipping MANUFACTURES HARMONICS, so every
+    /// brightness measurement taken while it was hot was made on distorted audio.
+    ///
+    /// It survived because both the render gate and my own tuning metric measured an RMS
+    /// ENVELOPE, and a rich waveform has 6+ dB of crest factor - RMS 0.5 is a peak of 1.0.
+    /// A gate that cannot see a clipped sample cannot see a clipped instrument.
+    #[test]
+    fn no_instrument_clips_anywhere_in_its_range() {
+        const SR: f32 = 48000.0;
+        // (instrument, lowest note, highest note)
+        // Every EXPOSED instrument, and stepped every SEMITONE (a hot note hides between a
+        // coarse grid - the matrix scorecard found guitar-steel/bass/marimba clipping on
+        // notes the old every-3rd-semitone gate stepped over, and the steel/electric/distorted
+        // guitars were not covered at all).
+        let cases: [(u32, u32, u32); 23] = [
+            (9, 21, 108),  // piano
+            (6, 28, 96),   // epiano
+            (4, 40, 88),   // guitar nylon
+            (10, 40, 88),  // guitar steel
+            (11, 40, 88),  // guitar electric
+            (12, 40, 88),  // guitar distorted
+            (5, 28, 67),   // bass
+            (0, 48, 96),   // marimba
+            (1, 53, 96),   // vibraphone
+            (2, 79, 105),  // glockenspiel
+            (3, 72, 105),  // music box
+            (15, 31, 72),  // cello
+            (16, 40, 65),  // trombone
+            (17, 55, 96),  // violin
+            (18, 48, 88),  // viola
+            (19, 28, 60),  // contrabass
+            (20, 53, 84),  // trumpet
+            (23, 36, 96),  // organ
+            (24, 65, 108), // xylophone
+            (25, 48, 89),  // tubular bells
+            (26, 60, 108), // celesta
+            (27, 24, 103), // harp
+            (28, 36, 84),  // pizzicato
+        ];
+        for (inst, lo, hi) in cases {
+            let mut worst = 0.0f32;
+            let mut worst_at = (0u32, 0.0f32);
+            let mut midi = lo;
+            while midi <= hi {
+                for vel in [0.5f32, 0.8, 1.0] {
+                    let mut e = Engine::new(SR);
+                    e.set_track(0, Instrument::from_u32(inst), 1.0, 0.0);
+                    e.note_on(0, midi, vel);
+                    for _ in 0..300 {
+                        e.process(128);
+                        for &v in e.out_l[..128].iter() {
+                            if v.abs() > worst {
+                                worst = v.abs();
+                                worst_at = (midi, vel);
+                            }
+                        }
+                    }
+                }
+                midi += 1;
+            }
+            assert!(
+                worst < 0.95,
+                "instrument {inst}: peaks at {worst:.3} (midi {}, vel {}) - it is clipping, \
+                 which crushes its dynamics and fabricates harmonics",
+                worst_at.0, worst_at.1
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod bowed_gates {
+    use crate::kernels::*;
+
+    /// AN INSTRUMENT MUST PLAY THE NOTE IT IS ASKED FOR. The cello was up to 97 CENTS FLAT -
+    /// nearly a semitone - and no check we had could see it. Every render gate, budget gate,
+    /// NaN gate and level gate was green while it played a different note than the one sent.
+    ///
+    /// Also gates the mechanism: the error MUST NOT depend on bow force. A real bowed string
+    /// flattens a few cents under force (Schelleng); ours flattened by 48 cents between pp
+    /// and ff, which is a lagging friction state, not a violin.
+    #[test]
+    fn cello_plays_in_tune_at_every_bow_force() {
+        let sr = 48000.0;
+        for midi in [31u8, 36, 43, 48, 55, 60] {
+            let f0 = 440.0 * 2f32.powf((midi as f32 - 69.0) / 12.0);
+            let mut cents = Vec::new();
+            for vel in [0.3f32, 1.0] {
+                let mut v = BowedVoice::start(Instrument::Cello, f0, vel, sr);
+                let mut buf = vec![0.0f32; (2.0 * sr) as usize];
+                v.render(&mut buf);
+                let seg = &buf[(1.2 * sr) as usize..];
+                let p = sr / f0;
+                let (lo, hi) = ((p * 0.72) as usize, (p * 1.4) as usize);
+                let ac = |l: usize| -> f32 {
+                    seg[..seg.len() - hi].iter().zip(seg[l..].iter()).map(|(a, b)| a * b).sum()
+                };
+                let mut best = lo;
+                let mut bv = f32::NEG_INFINITY;
+                for l in lo..=hi {
+                    let a = ac(l);
+                    if a > bv { bv = a; best = l; }
+                }
+                let (y0, y1, y2) = (ac(best - 1), ac(best), ac(best + 1));
+                let d = 0.5 * (y0 - y2) / (y0 - 2.0 * y1 + y2);
+                let f = sr / (best as f32 + d);
+                let c = 1200.0 * (f / f0).log2();
+                assert!(
+                    c.abs() < 12.0,
+                    "midi {midi} vel {vel}: plays {c:.0} cents off - the friction state is \
+                     lagging and delaying the slip, so the loop is long"
+                );
+                cents.push(c);
+            }
+            let force_dep = (cents[0] - cents[1]).abs();
+            assert!(
+                force_dep < 10.0,
+                "midi {midi}: pitch moves {force_dep:.0} cents between pp and ff - a real \
+                 bowed string flattens a FEW cents under bow force, not a semitone"
+            );
+        }
+    }
+
+    /// THE WHOLE BOWED FAMILY MUST PLAY IN TUNE ACROSS ITS RANGE, not just the cello.
+    ///
+    /// The violin and viola live an octave-plus above the cello, where the loop is only ~60
+    /// samples long and the thermal-friction residual that COOL controls shows up as a
+    /// register-dependent flatness: measured -27 cents on the top notes at COOL 0.30, gone at
+    /// 0.60. This is the same mechanism as the cello's original 97-cent flatness, just
+    /// smaller and only visible up high - which is exactly why it needs the higher instruments
+    /// to catch it. Autocorrelation (not a spectral peak) because a bright violin's
+    /// fundamental can sit below its own harmonics, and only autocorrelation is octave-robust
+    /// there.
+    #[test]
+    fn bowed_family_plays_in_tune_across_range() {
+        let sr = 48000.0;
+        // (instrument, low, high) - the register that most exposes the residual
+        let cases: [(Instrument, u8, u8); 3] = [
+            (Instrument::Violin, 55, 93),
+            (Instrument::Viola, 48, 86),
+            (Instrument::Contrabass, 28, 55),
+        ];
+        for (inst, lo, hi) in cases {
+            let mut midi = lo;
+            while midi <= hi {
+                let f0 = 440.0 * 2f32.powf((midi as f32 - 69.0) / 12.0);
+                let mut v = BowedVoice::start(inst, f0, 0.7, sr);
+                let mut buf = vec![0.0f32; (2.0 * sr) as usize];
+                v.render(&mut buf);
+                let seg = &buf[(1.2 * sr) as usize..];
+                let p = sr / f0;
+                let (l0, l1) = ((p * 0.72) as usize, (p * 1.4) as usize);
+                let ac = |l: usize| -> f32 {
+                    seg[..seg.len() - l1].iter().zip(seg[l..].iter()).map(|(a, b)| a * b).sum()
+                };
+                let mut best = l0;
+                let mut bv = f32::NEG_INFINITY;
+                for l in l0..=l1 {
+                    let a = ac(l);
+                    if a > bv { bv = a; best = l; }
+                }
+                let (y0, y1, y2) = (ac(best - 1), ac(best), ac(best + 1));
+                let d = 0.5 * (y0 - y2) / (y0 - 2.0 * y1 + y2);
+                let c = 1200.0 * ((sr / (best as f32 + d)) / f0).log2();
+                assert!(
+                    c.abs() < 30.0,
+                    "{inst:?} midi {midi}: plays {c:.0} cents off - the thermal residual is \
+                     detuning the high register (COOL too slow?)"
+                );
+                midi += 3;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod brass_gates {
+    use crate::kernels::*;
+
+    /// THE TRUMPET MUST PLAY IN TUNE ACROSS ITS RANGE. The n-scaled lip fixed gross
+    /// mis-slotting (notes were up to 450 cents off); the residual was a systematic lip-bore
+    /// PULL, sharpest at the n=3 slot (+44 cents), cancelled by pre-flattening the bore per
+    /// slot (brass_slot_pull_cents). This gate covers F3-Ab5 (n<=8), where autocorrelation is
+    /// reliable; the top n=9 notes read as octave errors in the analyzer, not the synthesis
+    /// (the band error stays 11 dB, which a real 3400-cent miss could not).
+    #[test]
+    fn trumpet_plays_in_tune_across_range() {
+        let sr = 48000.0;
+        let mut m = 53u8;
+        while m <= 80 {
+            let f0 = 440.0 * 2f32.powf((m as f32 - 69.0) / 12.0);
+            let mut v = BrassVoice::start(Instrument::Trumpet, f0, 0.8, sr);
+            let mut buf = vec![0.0f32; (2.0 * sr) as usize];
+            v.render(&mut buf);
+            let seg = &buf[(1.2 * sr) as usize..];
+            let p = sr / f0;
+            let (l0, l1) = ((p * 0.72) as usize, (p * 1.4) as usize);
+            let ac = |l: usize| -> f32 {
+                seg[..seg.len() - l1].iter().zip(seg[l..].iter()).map(|(a, b)| a * b).sum()
+            };
+            let mut best = l0;
+            let mut bv = f32::NEG_INFINITY;
+            for l in l0..=l1 { let a = ac(l); if a > bv { bv = a; best = l; } }
+            let (y0, y1, y2) = (ac(best - 1), ac(best), ac(best + 1));
+            let d = 0.5 * (y0 - y2) / (y0 - 2.0 * y1 + y2);
+            let c = 1200.0 * ((sr / (best as f32 + d)) / f0).log2();
+            assert!(c.abs() < 25.0, "trumpet midi {m}: plays {c:.0} cents off");
+            m += 1;
+        }
+    }
+
+    /// A brass instrument that does not BEAT ITS LIPS is not a brass instrument - it is a
+    /// sine wave. This is the check that would have caught the original model, and did not
+    /// exist: every other gate (render, budget, NaN, level) was green while the lips sat
+    /// blown wide open and never touched, 0.0% of the cycle, at every dynamic.
+    #[test]
+    fn trombone_lips_actually_beat() {
+        let sr = 48000.0;
+        for midi in [41u8, 46, 53, 58] {
+            for vel in [0.35f32, 1.0] {
+                let f0 = 440.0 * 2f32.powf((midi as f32 - 69.0) / 12.0);
+                let mut v = BrassVoice::start(Instrument::Trombone, f0, vel, sr);
+                let mut o = [0.0f32; 1];
+                for _ in 0..(sr as usize) {
+                    v.render(&mut o);
+                }
+                let n = 12000;
+                let mut closed = 0usize;
+                for _ in 0..n {
+                    v.render(&mut o);
+                    if v.probe().0 <= 0.0 {
+                        closed += 1;
+                    }
+                }
+                let frac = 100.0 * closed as f32 / n as f32;
+                // 5%, not 20%: a SOFT LOW note genuinely should beat weakly and sound dark,
+                // and it does - the weakest case measured is F2 at vel 0.35, at 7.9%. This
+                // gate exists to catch lips that never close AT ALL (the original: 0.0% at
+                // every note and every dynamic), not to legislate a closure fraction.
+                assert!(
+                    frac > 5.0,
+                    "midi {midi} vel {vel}: lips closed only {frac:.1}% of the cycle -                      they are being blown open and never beating, so the flow is not                      rectified and the tone is a sine"
+                );
+            }
+        }
+    }
+
+    /// The trombone must play the partial it was ASKED for, and keep playing it. The bore's
+    /// neighbouring modes (a fifth up, a fourth down) are also unstable, and if the lip does
+    /// not reject them the note slides onto one mid-sustain - a wolf. It did: the note ended
+    /// up 4 dB BELOW the mode a fifth above it.
+    #[test]
+    fn trombone_holds_its_slot() {
+        let sr = 48000.0;
+        for midi in [41u8, 46, 53, 58] {
+            let f0 = 440.0 * 2f32.powf((midi as f32 - 69.0) / 12.0);
+            let mut v = BrassVoice::start(Instrument::Trombone, f0, 0.9, sr);
+            let mut buf = vec![0.0f32; (2.2 * sr) as usize];
+            v.render(&mut buf);
+            let late = &buf[(1.9 * sr) as usize..];
+            let amp = |f: f32| -> f32 {
+                let w = core::f32::consts::TAU * f / sr;
+                let c = 2.0 * w.cos();
+                let (mut s1, mut s2) = (0.0f32, 0.0f32);
+                for &x in late.iter() {
+                    let s0 = x + c * s1 - s2;
+                    s2 = s1;
+                    s1 = s0;
+                }
+                (s1 * s1 + s2 * s2 - c * s1 * s2).max(0.0).sqrt() / late.len() as f32
+            };
+            let note = amp(f0);
+            let wolf = amp(f0 * 1.5).max(amp(f0 * 0.75));
+            let purity = 20.0 * (note / wolf.max(1e-12)).log10();
+            assert!(
+                purity > 12.0,
+                "midi {midi}: the note is only {purity:.0} dB above the NEIGHBOURING bore                  mode - the trombone has slipped its slot and is playing a wolf"
+            );
+        }
+    }
+}
+
+
