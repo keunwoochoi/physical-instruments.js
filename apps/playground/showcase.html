@@ -344,8 +344,23 @@ function trackFor(group,isDrum){
 // ---- playback (seek-aware) -----------------------------------------------
 let playOffset=0;
 async function resumeCtx(){ if(engine && engine.context.state!=="running"){ try{ await engine.context.resume(); }catch{} } }
+// iOS/iPadOS (and some Android) only unlock audio when the AudioContext is
+// resumed SYNCHRONOUSLY inside the user gesture — an `await` first loses the
+// activation and playback stays silent while the visuals run. Also play one
+// silent buffer to prime the hardware. Call at the very top of every gesture.
+let audioPrimed=false;
+function unlockAudio(){
+  if(!engine) return;
+  const ac=engine.context;
+  if(ac.state!=="running"){ try{ ac.resume(); }catch{} }   // NOT awaited — must stay in the gesture
+  if(!audioPrimed){
+    try{ const buf=ac.createBuffer(1,1,ac.sampleRate); const src=ac.createBufferSource(); src.buffer=buf; src.connect(ac.destination); src.start(0); }catch{}
+    audioPrimed=true;
+  }
+}
 async function play(){
   if(!engine || playing) return;
+  unlockAudio();                       // sync resume within the gesture (iOS)
   await engine.ready; await resumeCtx();
   playing=true; hint.hidden=true; trackLimitHit=false;
   playGlyph.classList.add("hide");
@@ -381,6 +396,7 @@ function seek(newOff){
 }
 document.addEventListener("keydown",(e)=>{
   if(e.target.tagName==="SELECT" || e.target.tagName==="INPUT") return;
+  unlockAudio();
   if(e.code==="Space"){ e.preventDefault(); togglePlay(); }
   else if(e.code==="ArrowLeft"){ e.preventDefault(); seek(playOffset-10); }
   else if(e.code==="ArrowRight"){ e.preventDefault(); seek(playOffset+10); }
@@ -407,10 +423,11 @@ function pitchAt(x,y,yKbd){
   return (i>=0 && i<whiteList.length) ? whiteList[i] : null;
 }
 let pointerDown=false, heldPitch=null;
-function pressKey(m){ resumeCtx(); if(heldPitch===m) return; releaseKey(); if(previewInst){ previewInst.noteOn(m,102); heldPitch=m; heldPreview.set(m,true); ensureRaf(); } }
+function pressKey(m){ unlockAudio(); if(heldPitch===m) return; releaseKey(); if(previewInst){ previewInst.noteOn(m,102); heldPitch=m; heldPreview.set(m,true); ensureRaf(); } }
 function releaseKey(){ if(heldPitch!=null){ if(previewInst) previewInst.noteOff(heldPitch); heldPreview.delete(heldPitch); heldPitch=null; ensureRaf(); } }
-function hitDrum(lane){ resumeCtx(); const midi=LANE_NOTE[LANES[lane]]; if(previewDrum){ previewDrum.noteOn(midi,112); drumPulses.set(lane, performance.now()); ensureRaf(); } }
+function hitDrum(lane){ unlockAudio(); const midi=LANE_NOTE[LANES[lane]]; if(previewDrum){ previewDrum.noteOn(midi,112); drumPulses.set(lane, performance.now()); ensureRaf(); } }
 cv.addEventListener("pointerdown",(e)=>{
+  unlockAudio();                       // unlock audio on the very first touch, synchronously
   const {x,y}=ptr(e), yKbd=H-KBD_H, PW=pitchW();
   if(y<yKbd){ togglePlay(); return; }              // the video area → play/pause
   if(x<PW){ const m=pitchAt(x,y,yKbd); if(m!=null){ pressKey(m); pointerDown=true; try{cv.setPointerCapture(e.pointerId);}catch{} } }
