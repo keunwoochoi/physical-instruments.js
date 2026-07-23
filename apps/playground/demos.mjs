@@ -25,6 +25,14 @@
  */
 
 export const DEMOS = [
+  { id: "windup", name: "Windup", genre: "Hayoung Lyou - jazz piano trio",
+    combo: "piano / bass / drums", midi: "./midi/hayoung.mid",
+    instrument: null, excerpt: 60,
+    youtube: "https://www.youtube.com/watch?v=vdV1UEqv5CA",
+    mix: {
+      piano: { gain: 0.40, pan: 0.10 }, bass: { gain: 0.44, pan: 0 },
+      drums: { gain: 0.18, pan: 0 },
+    } },
   { id: "you-and-i", name: "you and i", genre: "keunwoo.OOO - the best music in the world",
     combo: "piano / drums / strings / bass / guitar / woodwind",
     midi: "./midi/you-and-i.mid", instrument: null, excerpt: 60,
@@ -33,14 +41,6 @@ export const DEMOS = [
       piano: { gain: 0.36, pan: 0.12 }, drums: { gain: 0.18, pan: 0 },
       strings: { gain: 0.22, pan: -0.2 }, bass: { gain: 0.42, pan: 0 },
       guitar: { gain: 0.30, pan: -0.18 }, woodwind: { gain: 0.26, pan: 0.22 },
-    } },
-  { id: "windup", name: "Windup", genre: "Hayoung Lyou - jazz piano trio",
-    combo: "piano / bass / drums", midi: "./midi/hayoung.mid",
-    instrument: null, excerpt: 60,
-    youtube: "https://www.youtube.com/watch?v=vdV1UEqv5CA",
-    mix: {
-      piano: { gain: 0.40, pan: 0.10 }, bass: { gain: 0.44, pan: 0 },
-      drums: { gain: 0.18, pan: 0 },
     } },
   { id: "yyz", name: "YYZ", genre: "Rush - instrumental prog rock",
     combo: "synth / bass / drums", midi: "./midi/yyz-rush.mid",
