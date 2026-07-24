@@ -1,3 +1,8 @@
+# Pinned to an EXACT version, not "stable": the shipped WASM is committed and the
+# bundle audit (scripts/audit/bundle-size-audit.sh) rebuilds it and byte-compares.
+# A moving "stable" channel meant local and CI could build with different rustc
+# patch levels → different WASM bytes → a spurious audit failure. Pin here, rebuild
+# packages/core/wasm/instruments_dsp.wasm with this version, and CI installs the same.
 [toolchain]
-channel = "stable"
+channel = "1.97.0"
 targets = ["wasm32-unknown-unknown"]

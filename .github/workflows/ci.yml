@@ -13,9 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
+      # Install the EXACT rustc pinned in rust-toolchain.toml (1.97.0) so CI's WASM
+      # build byte-matches the committed binary — the bundle audit does an exact cmp,
+      # and a moving dtolnay@stable defeated the pin.
+      - run: rustup toolchain install 1.97.0 --profile minimal --target wasm32-unknown-unknown
       - run: cargo check --workspace
       - run: cargo test --workspace
       - run: cargo build -p instruments-dsp --target wasm32-unknown-unknown --release
@@ -47,9 +48,10 @@ jobs:
       - run: node scripts/dev/render-demo.mjs   # numeric render gates (peak/NaN/budget)
       - run: node scripts/dev/render-demo.mjs --bench
       # bundle contract needs BUILT dist + a wasm toolchain; it must run after build.
-      # Use the runner's preinstalled rustup — dtolnay/rust-toolchain conflicts with
-      # ubuntu-22.04's partial preinstalled toolchain ("detected conflict: manifest-rustc").
-      - run: rustup target add wasm32-unknown-unknown
+      # Install the exact pinned rustc (rust-toolchain.toml, 1.97.0) so the rebuilt
+      # WASM byte-matches the committed one. A fresh versioned toolchain install
+      # avoids the dtolnay@stable conflict with 22.04's partial preinstalled Rust.
+      - run: rustup toolchain install 1.97.0 --profile minimal --target wasm32-unknown-unknown
       - run: npm run audit:bundle   # public bundle-size contract + shipped-WASM freshness (#46)
       - run: npm run test:transport-baseline
   e2e:

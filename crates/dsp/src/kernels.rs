@@ -453,10 +453,13 @@ pub fn makeup_gain(inst: Instrument) -> f32 {
         Instrument::Contrabass => 2.30,       // ×2.30 (was ~7 dB low)
         Instrument::Organ => 0.85,            // ×0.85
         Instrument::Trombone => 1.46,         // ×1.46 (healthy)
-        // source >10 dB low → CLAMPED to 3.0×; full match needs a model fix
-        Instrument::Trumpet => 3.0,           // true ×11.7 clamped (source ~21 dB low)
-        Instrument::Saxophone => 3.0,         // true ×7.3 clamped — dormant/WIP
-        Instrument::FrenchHorn => 3.0,        // true ×59 clamped — dormant/WIP
+        // Trumpet un-clamped to full LUFS match (owner call 2026-07-23, judge by
+        // ear — it is user-selectable). Sax/FrenchHorn stay clamped: dormant/WIP,
+        // and ×7.3/×59 would amplify an unfinished model. Source-level model fix
+        // for the brass family remains deferred.
+        Instrument::Trumpet => 11.7,          // ×11.7 full (source ~21 dB low)
+        Instrument::Saxophone => 3.0,         // ×7.3 CLAMPED — dormant/WIP
+        Instrument::FrenchHorn => 3.0,        // ×59 CLAMPED — dormant/WIP
         // later mallets: re-verified
         Instrument::Xylophone => 4.42,        // ×0.85
         Instrument::TubularBells => 7.30,     // ×0.88
