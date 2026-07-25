@@ -98,10 +98,10 @@ export const DEMOS = [
     // woodwind; timpani -> engine percussion. The famous G-G-G-Eb motif
     // falls on strings (correct) followed by horns and woodwind.
     mix: {
-      strings: { gain: 0.30, pan: -0.05 }, violin: { gain: 0.34, pan: -0.10 },
-      viola: { gain: 0.30, pan: 0.10 }, cello: { gain: 0.32, pan: -0.15 },
-      contrabass: { gain: 0.36, pan: 0 }, woodwind: { gain: 0.28, pan: 0.20 },
-      trombone: { gain: 0.30, pan: 0.10 }, percussion: { gain: 0.26, pan: 0 },
+      strings: { gain: 0.22, pan: -0.05 }, violin: { gain: 0.26, pan: -0.10 },
+      viola: { gain: 0.22, pan: 0.10 }, cello: { gain: 0.24, pan: -0.15 },
+      contrabass: { gain: 0.28, pan: 0 }, woodwind: { gain: 0.22, pan: 0.20 },
+      trombone: { gain: 0.24, pan: 0.10 }, percussion: { gain: 0.20, pan: 0 },
     } },
   { id: "axel-f", name: "Axel F", genre: "Harold Faltermeyer - 80s synth theme",
     combo: "synth / bass / drums / strings / mallets / woodwind",
