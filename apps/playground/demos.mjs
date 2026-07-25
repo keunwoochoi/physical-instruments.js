@@ -10,15 +10,14 @@
  *   • Owner-named tracks: MuScriptor medium transcripts (MPS, 2026-07-22) of
  *     the owner's own recordings or third-party works / see licensing.md for
  *     per-file provenance and licence status.
- *   • Public-Domain classical — Murelo medium transcripts (2026-07-24) of
- *     real performances: Chopin Nocturne Op.9 №2 (Seong-Jin Cho/DG, solo
- *     piano), Beethoven Symphony №5 Mvt I (Kleiber/Wiener Philharmoniker),
- *     Bach BWV 565 organ, Bach BWV 773 (Glenn Gould, re-voiced piano). The
- *     compositions are Public Domain; the performances are not, demo-only.
- *     The Beethoven transcript's mis-assigned instruments are re-routed to
- *     the score's real orchestra (violin/viola/cello/contrabass/timpani/
- *     oboe/english-horn/bassoon/clarinet/flute) by pitch-aware monotonic
- *     alignment against the Mutopia Project typeset — see licensing.md.
+ *   • Public-Domain classical — two sources side by side:
+ *     – Chopin Nocturne Op.9 №2: Murelo medium transcript (2026-07-24) of
+ *       Seong-Jin Cho / DG (youtube QR10Od1cLaM), solo piano. Composition PD;
+ *       performance not licensed, demo-only.
+ *     – Beethoven Symphony №5 Mvt I: Mutopia Project PD typeset (clean-permissive).
+ *     – Bach BWV 565 organ, Bach BWV 773 (Glenn Gould, re-voiced piano): Murelo
+ *       medium transcripts (2026-07-24) of real performances. Compositions PD;
+ *       performances not licensed, demo-only.
  *   • Web MIDI from a public archive (github.com/Possibly93/possibly93.github.io,
  *     /c/programs/midi/songs/, verified 2026-07-22): recognised pop/jazz/rock/
  *     latin/folk instrumentals. These are third-party works, demo-only.
@@ -83,25 +82,18 @@ export const DEMOS = [
     // instruments) — the engine's piano model carries it directly.
     instrument: null, excerpt: 60,
     mix: { piano: { gain: 0.44, pan: 0 } } },
-  { id: "beethoven-5", name: "Symphony №5 - Mvt I", genre: "L.v. Beethoven - orchestral (Kleiber / Wiener Philharmoniker)",
-    combo: "strings / woodwind / brass / timpani",
+  { id: "beethoven-5", name: "Symphony №5 - Mvt I", genre: "L.v. Beethoven - orchestral",
+    combo: "strings / woodwind / timpani",
     midi: "./midi/beethoven-symphony-5-mvt1.mid", instrument: null, excerpt: 60,
-    youtube: "https://www.youtube.com/watch?v=PPl8nIbzMj0",
-    // Murelo medium transcript (2026-07-24) of the first 60s of
-    // Kleiber's 1974 VPO recording. The Murelo instrument labels were
-    // mis-assigned (acoustic_piano, electric_bass, distorted_guitar,
-    // string_ensemble catch-all); the notes are re-routed to the score's
-    // real orchestra by pitch-aware monotonic alignment against the
-    // Mutopia Project typeset (violin/viola/cello/contrabass/timpani/
-    // oboe/english-horn/bassoon/clarinet/flute) — see licensing.md.
-    // English horn (GM 69) -> engine trombone; flute/oboe/clarinet ->
-    // woodwind; timpani -> engine percussion. The famous G-G-G-Eb motif
-    // falls on strings (correct) followed by horns and woodwind.
+    youtube: "https://www.youtube.com/watch?v=J26C7z1M1EU",
+    // Mutopia Project PD typeset (clean-permissive). The Murelo medium
+    // transcript of Kleiber/VPO was tried (PRs #71–#73) but its instrument
+    // mis-assignment and same-pitch overlap artifacts weren't reliably
+    // fixable; reverted to the score typeset. See licensing.md.
     mix: {
-      strings: { gain: 0.22, pan: -0.05 }, violin: { gain: 0.26, pan: -0.10 },
-      viola: { gain: 0.22, pan: 0.10 }, cello: { gain: 0.24, pan: -0.15 },
-      contrabass: { gain: 0.28, pan: 0 }, woodwind: { gain: 0.22, pan: 0.20 },
-      trombone: { gain: 0.24, pan: 0.10 }, percussion: { gain: 0.20, pan: 0 },
+      woodwind: { gain: 0.26, pan: 0.20 }, violin: { gain: 0.34, pan: -0.10 },
+      viola: { gain: 0.30, pan: 0.10 }, cello: { gain: 0.32, pan: -0.15 },
+      contrabass: { gain: 0.36, pan: 0 }, percussion: { gain: 0.22, pan: 0 },
     } },
   { id: "axel-f", name: "Axel F", genre: "Harold Faltermeyer - 80s synth theme",
     combo: "synth / bass / drums / strings / mallets / woodwind",

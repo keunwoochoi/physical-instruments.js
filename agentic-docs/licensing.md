@@ -86,29 +86,30 @@ absorbed. PR / release gating on these files is a separate owner decision.
 | axel-f.mid | "Axel F" — Harold Faltermeyer | github.com/Possibly93/possibly93.github.io | NO licence held — third-party work, demo-only | 82060c2c34ed |
 | tico-tico.mid | "Tico Tico no Fubá" — Zequinha de Abreu | github.com/Possibly93/possibly93.github.io | NO licence held — third-party work, demo-only | e6863924cfd5 |
 | orange-blossom-special.mid | "Orange Blossom Special" — Ervin T. Rouse | github.com/Possibly93/possibly93.github.io | NO licence held — third-party work, demo-only | b74f7e77f5be |
-| beethoven-symphony-5-mvt1.mid | Symphony №5, Op.67, Mvt I — L.v. Beethoven | Murelo medium transcript (2026-07-24) of Kleiber / Wiener Philharmoniker 1974 recording (first 60s); instrument labels re-routed to the score's real orchestra via pitch-aware alignment against the Mutopia Project PD typeset (violin/viola/cello/contrabass/timpani/oboe/english-horn/bassoon/clarinet/flute); same-pitch overlaps on the same channel truncated to the next onset (404/790 notes) to prevent stuck-note / cut-note MIDI bugs | composition Public Domain — performance is NOT licensed, demo-only | 44165b693b83 |
+| beethoven-symphony-5-mvt1.mid | Symphony №5, Op.67, Mvt I — L.v. Beethoven | mutopiaproject.org/ftp/BeethovenLv/O67/Symphony5_1 | Public Domain | 0ce1bca911ba |
 | chopin-nocturne-op9-no2.mid | Nocturne in E♭, Op.9 №2 — F.F. Chopin | Murelo medium transcript (2026-07-24) of Seong-Jin Cho / Deutsche Grammophon recording (youtube QR10Od1cLaM) | composition Public Domain — performance is NOT licensed, demo-only | dd27e1d7d26b |
 | bach-toccata-fugue-dm.mid | Toccata & Fugue in D minor, BWV 565 — J.S. Bach | Murelo medium transcript (2026-07-24) of a 9:21 organ performance (youtube ho9rZjlsyYY) | composition Public Domain — performance is NOT licensed, demo-only | 99f6f6edb8f3 |
 | bach-invention-2.mid | Invention No. 2 in C minor, BWV 773 — J.S. Bach | Murelo medium transcript (2026-07-24) of Glenn Gould's performance (youtube lb-LhVJszWE) | composition Public Domain — performance is NOT licensed, demo-only | d49c515b4439 |
 
-The Beethoven Symphony and the two Bach works are real-performance
+The two Bach works and the Chopin Nocturne are real-performance
 transcripts (Murelo medium, 2026-07-24), re-voiced onto the engine's
-orchestral / organ / piano groups via gmProgramToGroup. Beethoven Mvt I's
-Murelo labels were mis-assigned (it routed the famous G-G-G-Eb motif onto
-acoustic_piano, electric_bass, distorted_electric_guitar, and a 406-note
-string_ensemble catch-all); a pitch-aware monotonic alignment against the
-Mutopia Project PD typeset re-routes every note to the score's real
-orchestra — violin (233), viola (116), cello (53), contrabass (102),
-timpani (16), oboe (29), english-horn (78), bassoon (61), clarinet (63),
-flute (10). 670/790 notes matched an exact-pitch score note within an
-adaptive time window; the remaining 120 fell back to plausible neighbours
-by pitch range. The two Bach pieces are force-voiced — BWV 565 to organ
-(its iconic sound) and BWV 773 to piano (honouring Gould). The Chopin
-Nocturne is a Murelo transcript of Seong-Jin Cho / DG, solo piano, single
-instrument — no remap needed. The "＋ Your MIDI" client-side path (commit
-56ca64b) stays as the no-commit escape hatch for any listener who wants to
-hear their own copyrighted file through the engine without the repo
-carrying it.
+organ / piano groups via gmProgramToGroup. The two Bach pieces are
+force-voiced — BWV 565 to organ (its iconic sound) and BWV 773 to piano
+(honouring Gould). The Chopin Nocturne is a Murelo transcript of Seong-Jin
+Cho / DG, solo piano, single instrument — no remap needed.
+
+The Beethoven Symphony №5 Mvt I was tried as a Murelo transcript of
+Kleiber/VPO (PRs #71–#73) with instrument labels re-routed to the score's
+real orchestra by pitch-aware alignment, but the owner judged the result
+audibly wrong ("still bad … notes don't end when there's the same note
+later") even after a same-pitch overlap truncation fix; it was reverted
+to the Mutopia Project PD typeset, which carries correct per-part
+instrumentation and no overlap artifacts. The Murelo-based attempt's
+diagnosis and revert are recorded in PRs #71–#73 for the write-up.
+
+The "＋ Your MIDI" client-side path (commit 56ca64b) stays as the
+no-commit escape hatch for any listener who wants to hear their own
+copyrighted file through the engine without the repo carrying it.
 
 ## Port ledger
 
