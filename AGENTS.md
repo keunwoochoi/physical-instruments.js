@@ -40,6 +40,7 @@ The same discipline governs the PR body's **Agentic process trace** (below) and 
 
 ## GitHub workflow
 
+- **GitHub identity is fixed:** this personal repository permits only the `keunwoochoi` account for GitHub reads and mutations. Run every GitHub CLI operation through `scripts/github.sh`, which selects the stored `keunwoochoi` credential and verifies the resolved actor; never invoke bare `gh` or trust its mutable global active-account default. Do not use a GitHub connector or other API path unless it can prove the same actor before access.
 - Search existing issues and pull requests before creating a new work item.
 - Every implementation PR starts from or adopts a GitHub issue. Use a `type(scope): imperative summary` title; the issue body owns motivation, evidence, desired outcome, scope and constraints, acceptance criteria, and validation expectations. Use the forms in `.github/ISSUE_TEMPLATE/`.
 - The issue is the live control plane: assignment records ownership; comments record material decisions and blockers; checkboxes record acceptance. Do not create local TODO, backlog, plan-status, or per-PR decision-log files.

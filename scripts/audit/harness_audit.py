@@ -39,6 +39,7 @@ PR_HEADINGS = (
     "## Follow-up after merge",
     "## Agentic process trace",
 )
+GITHUB_ACTOR = "keunwoochoi"
 
 
 class Audit:
@@ -190,6 +191,25 @@ def check_github_templates(audit: Audit) -> None:
         audit.require("current-head or explicitly labeled historical" in content, "pull request template must gate evidence freshness")
 
 
+def check_github_identity(audit: Audit) -> None:
+    agents_text = text(ROOT / "AGENTS.md")
+    wrapper = ROOT / "scripts" / "github.sh"
+    audit.require(
+        f"permits only the `{GITHUB_ACTOR}` account" in agents_text,
+        f"AGENTS.md must name {GITHUB_ACTOR} as the only permitted GitHub actor",
+    )
+    audit.require("every GitHub CLI operation through `scripts/github.sh`" in agents_text, "AGENTS.md must route GitHub CLI operations through scripts/github.sh")
+    audit.require("never invoke bare `gh`" in agents_text, "AGENTS.md must forbid reliance on gh's mutable global account")
+    audit.require(wrapper.is_file(), "missing repository-owned GitHub identity wrapper scripts/github.sh")
+    audit.require(os.access(wrapper, os.X_OK), "scripts/github.sh must be executable")
+    if wrapper.is_file():
+        wrapper_text = text(wrapper)
+        audit.require(f'EXPECTED_GITHUB_ACTOR="{GITHUB_ACTOR}"' in wrapper_text, f"scripts/github.sh must pin {GITHUB_ACTOR}")
+        audit.require("auth token" in wrapper_text and '--user "$EXPECTED_GITHUB_ACTOR"' in wrapper_text, "scripts/github.sh must select the pinned actor credential explicitly")
+        audit.require("api user --jq .login" in wrapper_text, "scripts/github.sh must verify the resolved GitHub actor")
+        audit.require('exec "$gh_bin" "$@"' in wrapper_text, "scripts/github.sh must delegate only after identity verification")
+
+
 def check_owner_boundaries(audit: Audit) -> None:
     todo_files = sorted((ROOT / ".claude").glob("TODO-*.md"))
     audit.require(not todo_files, "live work belongs in GitHub; remove tracked .claude/TODO-*.md files")
@@ -247,6 +267,7 @@ def main() -> int:
     check_links(audit)
     check_authority(audit)
     check_github_templates(audit)
+    check_github_identity(audit)
     check_owner_boundaries(audit)
     check_domain_invariants(audit)
 
