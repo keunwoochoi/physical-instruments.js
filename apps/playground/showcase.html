@@ -28,8 +28,9 @@
   header{display:flex;align-items:center;gap:12px;padding:8px 18px;border-bottom:1px solid var(--line);flex:none}
   header h1{font-size:15px;margin:0;font-weight:400;letter-spacing:.01em;color:var(--tx2);line-height:1.25}
   header h1 b{color:var(--tx);font-weight:700}
-  header h1 .hl{color:var(--accent);font-weight:600;text-decoration:none}
-  header h1 a.hl:hover{text-decoration:underline}
+  header h1 .hl{color:var(--accent);font-weight:600;text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px}
+  header h1 a.hl:hover{text-decoration-thickness:2px}
+  header h1 .ext{font-size:.72em;margin-left:2px;text-decoration:none;display:inline-block}
   .midi-badge{font-size:13px;color:var(--good);border:1px solid rgba(89,212,153,.4);border-radius:12px;padding:3px 10px;white-space:nowrap}
   .midi-badge[hidden]{display:none}
   .status{margin-left:auto;font-family:ui-monospace,Menlo,monospace;font-size:14px;color:var(--tx2);white-space:nowrap}
@@ -116,7 +117,7 @@
 <body>
 <div class="app">
   <header>
-    <h1><b>DEMO</b> of <a class="hl" href="https://github.com/keunwoochoi/physical-instruments.js" target="_blank" rel="noopener">physical-instruments.js</a> — a lightweight js virtual instrument library (~82&nbsp;KB) by physical modeling of 29 instruments</h1>
+    <h1><b>DEMO</b> of <a class="hl" href="https://github.com/keunwoochoi/physical-instruments.js" target="_blank" rel="noopener">physical-instruments.js<span class="ext" aria-hidden="true">↗</span></a> — a lightweight js virtual instrument library (~82&nbsp;KB) by physical modeling of 29 instruments</h1>
     <span class="midi-badge" id="midi" hidden></span>
     <div class="status" id="status"></div>
   </header>
