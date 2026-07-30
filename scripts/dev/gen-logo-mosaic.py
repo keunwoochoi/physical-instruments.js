@@ -2,13 +2,18 @@
 """Generate assets/logo/logo.svg — a rounded-square-tile mosaic of the favicon.
 
 The favicon SVG stays the single owner of the mark; this script derives the
-logo from it by sampling a 24x24 grid and snapping every tile to a fixed
-two-tone amber palette (plus a lifted plate tone), so the logo reads as
-deliberate pixel art rather than a blurry downscale.
+logo from it by sampling a 24x24 grid, snapping every tile to a fixed
+two-tone amber palette (plus a lifted plate tone), then applying three
+pixel-artist cleanup passes. The favicon's carved shaft and barbs are thinner
+than one tile, so raw sampling shatters the vane into ragged islands; the
+passes close those accidental holes, re-carve the shaft as one deliberate
+dark staircase along the favicon's actual shaft segment, and drop stray
+orphan tiles.
 
 Requires rsvg-convert (brew install librsvg) and ImageMagick (brew install
 imagemagick). Stdlib-only Python.
 """
+import math
 import re
 import subprocess
 import sys
@@ -22,17 +27,14 @@ OUT = ROOT / "assets/logo/logo.svg"
 GRID = 24            # tiles across
 TILE_FRAC = 0.80     # tile side as a fraction of grid pitch (rest is grout)
 CORNER_FRAC = 0.26   # tile corner radius as a fraction of tile side
-PLATE = (18, 21, 28)         # favicon plate #12151c
 PLATE_TILE = (34, 40, 54)    # lifted so the tile texture reads against grout
 GROUT = "#0b0d11"
-
-
-def snap(c):
-    """Fixed palette: amber-ish hues -> light/dark amber, else plate tone."""
-    if c[0] - c[2] > 28:
-        lum = 0.30 * c[0] + 0.59 * c[1] + 0.11 * c[2]
-        return (246, 197, 90) if lum >= 140 else (196, 138, 44)
-    return PLATE_TILE
+LIGHT = (246, 197, 90)
+DARK = (196, 138, 44)
+SHAFT = (140, 95, 30)
+# The favicon's rachis: path "M44 18 L 12 52" in apps/playground/favicon.svg.
+SHAFT_SEG = ((44.0, 18.0), (12.0, 52.0))
+SHAFT_HALF_WIDTH = 1.15      # favicon units; keeps the carved line one tile wide
 
 
 def load_raster():
@@ -75,22 +77,88 @@ def sample(px, fx, fy, win):
     return (rs // as_, gs // as_, bs // as_, as_ // n)
 
 
+def seg_dist(p, a, b):
+    ax, ay = a
+    bx, by = b
+    vx, vy = bx - ax, by - ay
+    t = max(0.0, min(1.0, ((p[0] - ax) * vx + (p[1] - ay) * vy) / (vx * vx + vy * vy)))
+    return math.hypot(p[0] - (ax + t * vx), p[1] - (ay + t * vy))
+
+
 def main():
     px = load_raster()
     pitch = 64.0 / GRID
     side = pitch * TILE_FRAC
     win = max(1, int(side * 0.55))
+
+    # Pass 0 — classify: 'L'/'D' amber (hue-based, so blends with the carved
+    # details still count as glyph), 'P' plate, None outside the plate.
+    cls = [[None] * GRID for _ in range(GRID)]
+    for j in range(GRID):
+        for i in range(GRID):
+            cx, cy = (i + 0.5) * pitch, (j + 0.5) * pitch
+            c = sample(px, cx, cy, win)
+            if c[3] < 150:
+                continue
+            if c[0] - c[2] > 28:
+                lum = 0.30 * c[0] + 0.59 * c[1] + 0.11 * c[2]
+                cls[j][i] = "L" if lum >= 140 else "D"
+            else:
+                cls[j][i] = "P"
+
+    def neighbors(j, i):
+        out = []
+        for dj in (-1, 0, 1):
+            for di in (-1, 0, 1):
+                if dj == di == 0:
+                    continue
+                if 0 <= j + dj < GRID and 0 <= i + di < GRID:
+                    out.append(cls[j + dj][i + di])
+        return out
+
+    # Pass 1 — close holes: sub-tile carved details punch accidental plate
+    # holes through the vane; a plate tile mostly surrounded by amber joins
+    # the vane as dark amber. Two rounds to close two-tile runs.
+    for _ in range(2):
+        fill = [
+            (j, i)
+            for j in range(GRID)
+            for i in range(GRID)
+            if cls[j][i] == "P"
+            and sum(1 for n in neighbors(j, i) if n in ("L", "D")) >= 5
+        ]
+        for j, i in fill:
+            cls[j][i] = "D"
+
+    # Pass 2 — re-carve the shaft deliberately: one clean dark staircase
+    # along the favicon's rachis, instead of the ragged sampled channel.
+    for j in range(GRID):
+        for i in range(GRID):
+            if cls[j][i] in ("L", "D"):
+                cx, cy = (i + 0.5) * pitch, (j + 0.5) * pitch
+                if seg_dist((cx, cy), *SHAFT_SEG) < SHAFT_HALF_WIDTH:
+                    cls[j][i] = "S"
+
+    # Pass 3 — drop orphans: an amber tile with no amber neighbor is sampling
+    # noise, not part of the mark.
+    for j in range(GRID):
+        for i in range(GRID):
+            if cls[j][i] in ("L", "D") and not any(
+                n in ("L", "D", "S") for n in neighbors(j, i)
+            ):
+                cls[j][i] = "P"
+
+    colors = {"L": LIGHT, "D": DARK, "S": SHAFT, "P": PLATE_TILE}
     parts = [
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">',
         f'<rect width="64" height="64" rx="15" fill="{GROUT}"/>',
     ]
     for j in range(GRID):
         for i in range(GRID):
+            if cls[j][i] is None:
+                continue
             cx, cy = (i + 0.5) * pitch, (j + 0.5) * pitch
-            c = sample(px, cx, cy, win)
-            if c[3] < 150:
-                continue  # outside the rounded plate corners
-            r, g, b = snap(c)
+            r, g, b = colors[cls[j][i]]
             parts.append(
                 f'<rect x="{cx - side / 2:.2f}" y="{cy - side / 2:.2f}" '
                 f'width="{side:.2f}" height="{side:.2f}" rx="{side * CORNER_FRAC:.2f}" '
