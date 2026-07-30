@@ -2,7 +2,7 @@
   "name": "physical-instruments.js-monorepo",
   "private": true,
   "version": "0.0.0",
-  "description": "Beautiful physical-modeled instruments for the browser — monorepo root",
+  "description": "Beautiful physical-modeled instruments for the browser \u2014 monorepo root",
   "type": "module",
   "workspaces": [
     "packages/*",
@@ -27,7 +27,9 @@
     "loop:canonicalize-reference": "python3 scripts/dev/canonicalize_reference_receipt.py",
     "audit:harness": "scripts/audit/harness-audit.sh",
     "audit:bundle": "scripts/audit/bundle-size-audit.sh",
-    "bench:soundboard": "node scripts/dev/bench-soundboard.mjs"
+    "bench:soundboard": "node scripts/dev/bench-soundboard.mjs",
+    "check:install": "node scripts/dev/install-check.mjs",
+    "stage:package-files": "node scripts/dev/stage-package-files.mjs"
   },
   "devDependencies": {
     "playwright": "^1.61.1",

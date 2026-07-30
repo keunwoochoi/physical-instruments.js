@@ -12,3 +12,7 @@ __pycache__/
 evals/incumbents/renders/
 .claude/worktrees/
 .worktrees/
+
+# Staged into packages at build time; the repo root owns the originals.
+packages/*/LICENSE-MIT
+packages/*/LICENSE-APACHE

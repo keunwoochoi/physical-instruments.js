@@ -20,7 +20,9 @@
     "dist",
     "worklet",
     "wasm",
-    "README.md"
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
