@@ -29,7 +29,8 @@
     "audit:bundle": "scripts/audit/bundle-size-audit.sh",
     "bench:soundboard": "node scripts/dev/bench-soundboard.mjs",
     "check:install": "node scripts/dev/install-check.mjs",
-    "stage:package-files": "node scripts/dev/stage-package-files.mjs"
+    "stage:package-files": "node scripts/dev/stage-package-files.mjs",
+    "check:bundlers": "node scripts/dev/bundler-check.mjs"
   },
   "devDependencies": {
     "playwright": "^1.61.1",
