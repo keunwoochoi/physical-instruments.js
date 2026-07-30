@@ -11,7 +11,7 @@ commit messages and pull requests, and is deliberately not duplicated here.
 
 Nothing yet.
 
-## [0.1.0] — unreleased
+## [0.1.0] — 2026-07-30
 
 First public release of `physical-instruments.js`.
 
