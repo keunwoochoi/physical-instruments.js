@@ -6,6 +6,11 @@ description: Shared persona-review engine. Review a PR/diff/design through exact
 # review-as — persona review engine
 
 Ground rules:
+- **You are a USER of this package, not a contributor to it.** Review the product — the
+  instruments, the sound, the demo/UI, the API you would call, the page you would land on.
+  Never review harness scripts, CI, build tooling, or contributor docs; if the artifact is
+  one of those, say so and return no findings rather than inventing them. See
+  `skills/panel-review/SKILL.md` for the in-lane / out-of-lane table.
 - Load exactly ONE reference file: `skills/review-as/references/<persona>.md`. Do not load other personas.
 - Review the actual artifact (diff at head SHA / rendered audio / design doc), not its description.
 - Findings-first; blocking-by-default when a finding hits the persona's dismissal criteria.

@@ -1,20 +1,73 @@
-# physical-instruments.js (core)
+# physical-instruments.js
 
-The public API: engine lifecycle, worklet host, WASM handshake, voice/track management, scheduling, offline render.
+**Physical-modeling instruments for the browser.** 29 instruments in 81 KB gzipped, no
+samples to download, no CDN, works offline.
 
-Owner doc for API/packaging decisions. Contracts that must never break:
-- SSR-safe imports (nothing touches `window`/`AudioContext` at import time)
-- `sideEffects: false`, correct `exports` map, tree-shakeable ESM, first-class types
-- One shared worklet/WASM engine for all tracks (multi-track = PRINCIPLES #4)
-- The WASM payload counts in every published bundle-size number. **`scripts/audit/bundle-size-audit.sh`
-  owns these numbers — do not restate them from memory.** Measured at this commit: **74,119 B gz
-  all-in** (66,722 wasm + 4,715 core JS + 2,682 worklet), carrying **all 15 instruments**, against
-  the PRINCIPLES #2 budget of 102,400 B gz for core + *one* instrument. The audit also fails if the
-  committed `wasm/` binary drifts from what the Rust source builds.
+Physical modeling simulates the string, bar, or tube and computes the sound from the
+simulation. Nothing is recorded, so velocity changes *timbre* rather than just level, and
+the whole orchestra fits in less space than a single sampled piano note.
 
-Asset loading, honestly: default URLs resolve via `import.meta.url`. **Verified
-zero-config (headless, dev + production build): Vite 6, Next.js 15, and raw
-Webpack 5** — see `demos/bundler-matrix/` for the evidence table. For exotic setups the explicit
-`workletUrl`/`wasmUrl` options point at self-hosted copies (`./worklet` and
-`./wasm` subpath exports serve the files). `exports` points at `dist/`
-(built by `npm run build`).
+**[▶ Try it in your browser](https://keunwoochoi.github.io/physical-instruments.js/)**
+
+## Install
+
+```sh
+npm install physical-instruments.js
+```
+
+```ts
+import { createEngine } from "physical-instruments.js";
+
+const engine = await createEngine();          // lazy AudioContext, gesture-safe
+const piano  = engine.createTrack("piano");
+piano.noteOn(60, 96);                          // velocity changes timbre, not just volume
+```
+
+No bundler configuration and no files to copy. Verified on every CI run against the
+**published tarball** in Vite, webpack 5 and Next, and installed clean in both Chromium and
+WebKit. The snippet above is executed by CI too, so it is the snippet that ran.
+
+## Instruments
+
+Piano and electric piano, acoustic/steel/electric/distorted guitar, bass, violin, viola,
+cello, contrabass, strings, trumpet, trombone, brass, woodwind, voice, organ, marimba,
+vibraphone, xylophone, glockenspiel, music box, mallet, percussion, three drum kits, and
+synth pads — addressable by family name or General MIDI program.
+
+## Doing more
+
+```ts
+// Multi-track: one shared engine, up to 16 tracks, each with gain and pan.
+const strings = engine.createTrack("strings", { gain: 0.8, pan: -0.3 });
+
+// Play a timeline and await the end of it.
+await engine.play([
+  { midiPitch: 60, startSeconds: 0, endSeconds: 1.2, velocity: 100, instrumentGroup: "piano" },
+]);
+
+// Deterministic offline bounce to WAV bytes — no realtime playback needed.
+const wav = await engine.renderOffline(notes, { float32: true });
+
+// Shared reverb voicing: "off" | "room" (default) | "hall" | "plate" | "spring"
+engine.setReverb("hall");
+```
+
+`createEngine()` accepts `{ context }` to share your own `AudioContext` (e.g. with Tone.js),
+`{ connect: false }` to keep the engine out of `destination` and route `engine.output`
+yourself, and `{ workletUrl, wasmUrl }` if you host the assets somewhere unusual.
+
+Imports are SSR-safe: nothing touches `window` or `AudioContext` at import time, so it is
+safe to import from a Next server component and construct the engine on the client.
+
+TypeScript types are first-class and shipped.
+
+## Links
+
+- [Repository, tech report, and full API](https://github.com/keunwoochoi/physical-instruments.js)
+- [Changelog](https://github.com/keunwoochoi/physical-instruments.js/blob/main/CHANGELOG.md)
+- Contributor notes on the API and packaging contracts live in
+  [`PACKAGING.md`](https://github.com/keunwoochoi/physical-instruments.js/blob/main/packages/core/PACKAGING.md).
+
+## Licence
+
+MIT OR Apache-2.0, at your option.

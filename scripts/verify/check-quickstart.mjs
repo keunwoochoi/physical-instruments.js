@@ -45,10 +45,20 @@ const fail = (m) => { console.error("QUICKSTART FAIL: " + m); process.exit(1); }
 // rather than trusting it, because losing it would silently publish the harness lines.
 const src = readFileSync(join(ROOT, "examples/quickstart.js"), "utf8");
 if (!src.includes("// --8<--")) fail("examples/quickstart.js lost its --8<-- marker");
-const readme = readFileSync(join(ROOT, "README.md"), "utf8");
 const snippet = src.split("// --8<--")[0].trimEnd();
-if (!readme.includes(snippet)) {
-  fail("README's quickstart block does not match examples/quickstart.js — run: npm run docs");
+// BOTH READMEs. packages/core/README.md is the one npm renders on the package page, and
+// it used to be an internal owner doc -- no install command, no snippet, no demo link --
+// while this check happily validated the repo-root README and reported green. Found by
+// the panel review before v0.1.0 shipped. A check that verifies the surface nobody sees
+// is worse than no check, because it reports confidence about the wrong artefact.
+for (const rel of ["README.md", "packages/core/README.md"]) {
+  const readme = readFileSync(join(ROOT, rel), "utf8");
+  if (!readme.includes(snippet)) {
+    fail(`${rel} does not contain the quickstart from examples/quickstart.js verbatim`);
+  }
+  if (!/npm install physical-instruments\.js/.test(readme)) {
+    fail(`${rel} has no "npm install physical-instruments.js" line above its quickstart`);
+  }
 }
 
 console.log("packing…");

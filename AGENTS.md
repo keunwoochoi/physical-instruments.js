@@ -55,7 +55,7 @@ The same discipline governs the PR body's **Agentic process trace** (below) and 
 | Task | Always load | Load if triggered |
 |---|---|---|
 | Implementing DSP | `agentic-docs/design/2026-07-11-architecture.md` | `agentic-docs/licensing.md` when porting |
-| Public API / packaging | `packages/core/README.md` | `demos/bundler-matrix/README.md` |
+| Public API / packaging | `packages/core/PACKAGING.md` | `demos/bundler-matrix/README.md` |
 | Any instrument/API/packaging PR | `skills/finalize-pr/SKILL.md` | `skills/panel-review/SKILL.md` (required before merge) |
 | Evaluating sound | `skills/run-evals/SKILL.md` | `evals/README.md` |
 | Improving an instrument's quality | `skills/instrument-quality-matrix/SKILL.md` | the aspect skills: `audit-{stability,headroom,tune,envelope,dynamics,voice}` — run in that order |
