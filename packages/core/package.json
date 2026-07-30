@@ -1,7 +1,7 @@
 {
   "name": "physical-instruments.js",
   "version": "0.1.0",
-  "description": "Beautiful physical-modeled instruments for the browser. No samples, tiny bundle, one noteOn() call.",
+  "description": "Physical-modeling instruments for the browser. 29 instruments, no samples, ~81 KB gzipped.",
   "license": "MIT OR Apache-2.0",
   "type": "module",
   "sideEffects": false,
@@ -29,13 +29,26 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "keywords": [
-    "web-audio",
+    "audio",
+    "webaudio",
     "audioworklet",
     "physical-modeling",
     "synthesis",
     "instruments",
+    "piano",
+    "guitar",
+    "strings",
     "midi",
-    "music",
-    "wasm"
-  ]
+    "wasm",
+    "music"
+  ],
+  "homepage": "https://keunwoochoi.github.io/physical-instruments.js/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/keunwoochoi/physical-instruments.js.git",
+    "directory": "packages/core"
+  },
+  "bugs": {
+    "url": "https://github.com/keunwoochoi/physical-instruments.js/issues"
+  }
 }

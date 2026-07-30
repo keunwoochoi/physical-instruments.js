@@ -16,3 +16,6 @@ evals/incumbents/renders/
 # Staged into packages at build time; the repo root owns the originals.
 packages/*/LICENSE-MIT
 packages/*/LICENSE-APACHE
+
+# npm pack output from the release checks (they clean up unless killed mid-run)
+packages/*/*.tgz

@@ -83,6 +83,7 @@ jobs:
       # The README quickstart, run verbatim against the installed package on a live
       # context. A snippet nobody has executed is a bug report waiting.
       - run: node scripts/verify/check-quickstart.mjs
+      - run: BROWSER=webkit node scripts/verify/check-quickstart.mjs
 
   bundlers:
     # Separate job: it installs three real bundlers from the registry, so it is the

@@ -57,6 +57,15 @@ printf 'midi JS  %6s B gz\n' "$midi_gz"
 printf 'TOTAL    %6s B gz  (%s KB) — %s instruments, budget %s B\n' \
   "$total" "$((total / 1024))" "$instruments" "$BUDGET_GZ"
 
+# What a user actually downloads from `npm install physical-instruments.js`.
+# @instrumentsjs/midi is a SEPARATE, currently unpublished package, so counting its JS in
+# the number quoted to users overstates the download by its whole size. The panel review
+# caught the README and CHANGELOG doing exactly that (85,367 B claimed vs 82,476 B real).
+# Both totals are printed so neither can be quoted by accident.
+published=$((wasm_gz + core_gz + worklet_gz))
+printf 'PUBLISHED %5s B gz  (%s KB) — physical-instruments.js tarball, excludes midi JS\n' \
+  "$published" "$((published / 1024))"
+
 if [ "$total" -gt "$BUDGET_GZ" ]; then
   echo "BUNDLE AUDIT FAIL: $total B gz exceeds the $BUDGET_GZ B contract."
   exit 1

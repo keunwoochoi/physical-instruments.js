@@ -46,10 +46,11 @@ WASM engine in a single AudioWorklet serves every track.
 - **Install from the published tarball** renders audio in both Chromium and WebKit.
 - The README quickstart is executed against the installed package on every CI run, so the
   snippet a reader copies is the snippet that ran.
-- Size is enforced, not claimed: **85,367 B gzipped all-in** (74,386 wasm + 5,401 core JS
-  + 2,689 worklet + 2,891 midi JS) carrying all 29 instruments, against a 153,600 B
-  budget. `scripts/audit/bundle-size-audit.sh` owns this number and fails if the committed
-  WASM drifts from what the Rust source builds.
+- Size is enforced, not claimed: **82,476 B gzipped** (74,386 wasm + 5,401 core JS + 2,689
+  worklet) is what `npm install physical-instruments.js` delivers, carrying all 29
+  instruments. `scripts/audit/bundle-size-audit.sh` owns this number, prints it separately
+  from the workspace total, and fails if the committed WASM drifts from what the Rust
+  source builds.
 
 ### Not in this release
 

@@ -1,6 +1,6 @@
 # physical-instruments.js
 
-A physical-modeling instrument library for browsers. 29 instruments in 83 KB, MIT/Apache-2.0. 
+A physical-modeling instrument library for browsers. 29 instruments in 81 KB gzipped, MIT/Apache-2.0. 
 
 Demo: [https://keunwoochoi.github.io/physical-instruments.js/](https://keunwoochoi.github.io/physical-instruments.js/).
 
