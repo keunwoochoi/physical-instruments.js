@@ -9,14 +9,22 @@ commit messages and pull requests, and is deliberately not duplicated here.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.1.1] — 2026-07-30
+
 ### Fixed
 
-- iOS/Safari: the engine now resumes from WebKit's non-standard `"interrupted"`
-  `AudioContext` state, not only from `"suspended"`. An iOS context reports
-  `"interrupted"` at load and after any phone call, Siri invocation or backgrounding, so
-  the library's own resume path never fired on that platform — first touch worked only
-  because WebKit resumes on the user gesture itself, and an interruption arriving
-  mid-session left the engine silent with no recovery.
+- **iOS/Safari: recover from an audio interruption.** The engine now resumes from WebKit's
+  non-standard `"interrupted"` `AudioContext` state, not only from `"suspended"`. An iOS
+  context reports `"interrupted"` at load and after any phone call, Siri invocation, route
+  change or backgrounding, so the library's own resume path never fired on that platform.
+  First touch worked anyway — WebKit resumes on the user gesture itself — but an
+  interruption arriving mid-session left the engine silent with no way back.
+
+  Found by a new mobile-WebKit check (iPhone emulation, touch, no autoplay escape hatch),
+  which reported `state "interrupted", 44100 Hz` at load where every desktop browser
+  reports `"suspended"`.
 
 ## [0.1.0] — 2026-07-30
 
@@ -65,5 +73,6 @@ WASM engine in a single AudioWorklet serves every track.
 API settles. `@instrumentsjs/react` is deliberately deferred until demanded — a React app
 consuming the core directly is the intended stress test of the framework-free story.
 
-[Unreleased]: https://github.com/keunwoochoi/physical-instruments.js/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/keunwoochoi/physical-instruments.js/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/keunwoochoi/physical-instruments.js/releases/tag/v0.1.1
 [0.1.0]: https://github.com/keunwoochoi/physical-instruments.js/releases/tag/v0.1.0
