@@ -73,7 +73,13 @@ fi
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 [[ "$BRANCH" == "main" ]] && ok "on main" || warn "on '$BRANCH', not main"
 
-CI_STATE=$(scripts/gh-owner.sh run list --limit 1 --json headSha,status,conclusion \
+# --workflow ci.yml, NOT "the most recent run". This repo has two workflows, and the
+# Pages deploy usually finishes first -- so an unfiltered `run list --limit 1` returns
+# Pages and reports its conclusion as if it were CI. Observed while releasing 0.1.1: the
+# gate said green while the ci run at the same SHA was still in progress. A release gate
+# that can pass on the wrong workflow is worse than no gate, because it passes MORE often
+# than the truth.
+CI_STATE=$(scripts/gh-owner.sh run list --workflow ci.yml --limit 1 --json headSha,status,conclusion \
              --jq '.[0] | "\(.headSha) \(.status) \(.conclusion)"' 2>/dev/null || true)
 if [[ "$CI_STATE" == "$(git rev-parse HEAD)"*"completed success" ]]; then
   ok "CI is green at HEAD ($(git rev-parse --short HEAD))"
