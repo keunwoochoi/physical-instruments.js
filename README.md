@@ -1,8 +1,9 @@
 # physical-instruments.js
 
-A physical-modeling instrument library for browsers. 29 instruments in 81 KB gzipped, MIT/Apache-2.0. 
+[![npm](https://img.shields.io/npm/v/physical-instruments.js.svg)](https://www.npmjs.com/package/physical-instruments.js)
+[![license](https://img.shields.io/npm/l/physical-instruments.js.svg)](LICENSE-MIT)
 
-Demo: [https://keunwoochoi.github.io/physical-instruments.js/](https://keunwoochoi.github.io/physical-instruments.js/).
+A physical-modeling instrument library for browsers. 29 instruments in 81 KB gzipped, MIT/Apache-2.0.
 
 ```sh
 npm install physical-instruments.js
@@ -15,6 +16,11 @@ const engine = await createEngine();          // lazy AudioContext, gesture-safe
 const piano  = engine.createTrack("piano");
 piano.noteOn(60, 96);                          // velocity changes timbre, not just volume
 ```
+
+No bundler configuration, no files to copy. **[▶ Hear it in your
+browser](https://keunwoochoi.github.io/physical-instruments.js/)** —
+[npm](https://www.npmjs.com/package/physical-instruments.js) ·
+[changelog](CHANGELOG.md) · [API](packages/core/README.md)
 
 ---
 
