@@ -326,7 +326,21 @@ export async function createEngine(options: EngineOptions = {}): Promise<Engine>
 
   const post = (e: WorkletEvent) => node.port.postMessage(e);
   const resumeIfNeeded = () => {
-    if (context.state === "suspended") void context.resume();
+    // Resume whenever we are NOT running, rather than only when "suspended".
+    //
+    // Safari/WebKit has a fourth, non-standard AudioContext state: "interrupted". It is
+    // what a context becomes after a phone call, Siri, a route change, or the tab being
+    // backgrounded -- and it is also the state a freshly constructed context reports on
+    // iOS before any gesture. Measured on WebKit under iPhone emulation, the demo's
+    // context reads "interrupted" at load, not "suspended", so a check for "suspended"
+    // alone never fires and the library's own resume path is dead code on the platform
+    // where it matters most. First touch happens to work because WebKit resumes on the
+    // user gesture itself, but nothing recovers an interruption that arrives mid-session.
+    //
+    // "interrupted" is absent from TypeScript's AudioContextState union, so this is
+    // written as a negation rather than an added case -- which also future-proofs it
+    // against any further vendor state.
+    if (context.state !== "running" && context.state !== "closed") void context.resume();
   };
 
   function allocTrack(instrument: InstrumentGroup, opts: TrackOptions, at = 0): number {

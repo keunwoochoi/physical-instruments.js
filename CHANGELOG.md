@@ -9,7 +9,14 @@ commit messages and pull requests, and is deliberately not duplicated here.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- iOS/Safari: the engine now resumes from WebKit's non-standard `"interrupted"`
+  `AudioContext` state, not only from `"suspended"`. An iOS context reports
+  `"interrupted"` at load and after any phone call, Siri invocation or backgrounding, so
+  the library's own resume path never fired on that platform — first touch worked only
+  because WebKit resumes on the user gesture itself, and an interruption arriving
+  mid-session left the engine silent with no recovery.
 
 ## [0.1.0] — 2026-07-30
 

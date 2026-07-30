@@ -84,6 +84,10 @@ jobs:
       # context. A snippet nobody has executed is a bug report waiting.
       - run: node scripts/verify/check-quickstart.mjs
       - run: BROWSER=webkit node scripts/verify/check-quickstart.mjs
+      # Mobile WebKit with touch and no autoplay escape hatch. Desktop WebKit misses
+      # Safari's non-standard "interrupted" AudioContext state entirely — the state an
+      # iOS context is actually in at load. (#89)
+      - run: node scripts/dev/mobile-safari-check.mjs
 
   bundlers:
     # Separate job: it installs three real bundlers from the registry, so it is the
