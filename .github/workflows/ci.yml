@@ -80,6 +80,9 @@ jobs:
       # came to ship with no licence text at all and nothing noticed. (#82)
       - run: node scripts/dev/install-check.mjs
       - run: BROWSER=webkit node scripts/dev/install-check.mjs
+      # The README quickstart, run verbatim against the installed package on a live
+      # context. A snippet nobody has executed is a bug report waiting.
+      - run: node scripts/verify/check-quickstart.mjs
 
   bundlers:
     # Separate job: it installs three real bundlers from the registry, so it is the

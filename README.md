@@ -4,6 +4,10 @@ A physical-modeling instrument library for browsers. 29 instruments in 83 KB, MI
 
 Demo: [https://keunwoochoi.github.io/physical-instruments.js/](https://keunwoochoi.github.io/physical-instruments.js/).
 
+```sh
+npm install physical-instruments.js
+```
+
 ```ts
 import { createEngine } from "physical-instruments.js";
 
