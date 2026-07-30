@@ -8,11 +8,12 @@
     :root { color-scheme: light dark; --accent: #e07840; --key-w: 44px; }
     * { box-sizing: border-box; }
     body {
-      font-family: system-ui, -apple-system, sans-serif;
+      font: 13.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
       max-width: 46rem; margin: 2rem auto; padding: 0 1rem;
       background: light-dark(#faf7f2, #191512); color: light-dark(#2b2118, #ece4da);
     }
-    h1 { font-size: 1.5rem; margin-bottom: 0.2rem; }
+    h1 { font-size: 18px; font-weight: 600; letter-spacing: .01em; margin-bottom: 0.2rem; }
+    h1 .acc { color: var(--accent); }
     h1 .badge {
       font-size: 0.65rem; vertical-align: middle; background: var(--accent); color: #fff;
       border-radius: 999px; padding: 0.15rem 0.6rem; margin-left: 0.5rem; letter-spacing: 0.03em;
@@ -46,7 +47,7 @@
   </style>
 </head>
 <body>
-  <h1>physical-instruments.js <span class="badge" id="size-badge">…</span></h1>
+  <h1>physical<span class="acc">-instruments</span>.js <span class="badge" id="size-badge">…</span></h1>
   <p class="sub">Physical-modeled instruments in your browser. No samples were harmed — none exist.
     &nbsp;·&nbsp; <a href="./showcase.html" style="color:#f5b544">🎹 Showcase →</a> (falling-notes demos across genres)</p>
 

@@ -21,16 +21,17 @@
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--tx);
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.55;
     -webkit-font-smoothing:antialiased;overflow:hidden;
     text-size-adjust:100%;-webkit-text-size-adjust:100%;overscroll-behavior:none}
   .app{display:flex;flex-direction:column;height:100%;height:100dvh}
   header{display:flex;align-items:center;gap:12px;padding:8px 18px;border-bottom:1px solid var(--line);flex:none}
-  header h1{font-size:15px;margin:0;font-weight:400;letter-spacing:.01em;color:var(--tx2);line-height:1.25}
-  header h1 b{color:var(--tx);font-weight:700}
-  header h1 .hl{color:var(--accent);font-weight:600;text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px}
+  header h1{font-size:18px;margin:0;font-weight:600;letter-spacing:.01em;color:var(--tx);line-height:1.25}
+  header h1 .acc{color:var(--accent)}
+  header h1 .sub{color:var(--tx2);font-size:13px;font-weight:400;margin-left:10px}
+  header h1 a.hl{color:var(--tx);text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px}
   header h1 a.hl:hover{text-decoration-thickness:2px}
-  header h1 .ext{font-size:.72em;margin-left:2px;text-decoration:none;display:inline-block}
+  header h1 .ext{font-size:.72em;margin-left:2px;text-decoration:none;display:inline-block;color:var(--accent)}
   .midi-badge{font-size:13px;color:var(--good);border:1px solid rgba(89,212,153,.4);border-radius:12px;padding:3px 10px;white-space:nowrap}
   .midi-badge[hidden]{display:none}
   .status{margin-left:auto;font-family:ui-monospace,Menlo,monospace;font-size:14px;color:var(--tx2);white-space:nowrap}
@@ -92,7 +93,8 @@
   /* ---- phones (narrow) AND short/landscape viewports: compact the chrome ---- */
   @media (max-width: 700px), (max-height: 520px){
     header{padding:6px 12px;gap:8px}
-    header h1{font-size:11.5px;line-height:1.25}
+    header h1{font-size:13px;line-height:1.25}
+    header h1 .sub{display:none}
     .status{font-size:11px}
     .bar{padding:5px 10px;gap:6px}
     /* demos become a single swipeable row instead of many stacked rows */
@@ -117,7 +119,7 @@
 <body>
 <div class="app">
   <header>
-    <h1><b>DEMO</b> of <a class="hl" href="https://github.com/keunwoochoi/physical-instruments.js" target="_blank" rel="noopener">physical-instruments.js<span class="ext" aria-hidden="true">↗</span></a> — a lightweight js virtual instrument library (~82&nbsp;KB) by physical modeling of 29 instruments</h1>
+    <h1><a class="hl" href="https://github.com/keunwoochoi/physical-instruments.js" target="_blank" rel="noopener">physical<span class="acc">-instruments</span>.js<span class="ext" aria-hidden="true">↗</span></a><span class="sub">demo — 29 instruments by physical modeling, ~83&nbsp;KB gzipped</span></h1>
     <span class="midi-badge" id="midi" hidden></span>
     <div class="status" id="status"></div>
   </header>
