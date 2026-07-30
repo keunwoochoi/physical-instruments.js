@@ -80,3 +80,20 @@ jobs:
       # came to ship with no licence text at all and nothing noticed. (#82)
       - run: node scripts/dev/install-check.mjs
       - run: BROWSER=webkit node scripts/dev/install-check.mjs
+
+  bundlers:
+    # Separate job: it installs three real bundlers from the registry, so it is the
+    # slowest thing here and it fails for reasons unrelated to the DSP. Keeping it apart
+    # means a registry outage cannot mask an audio regression.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci || npm install
+      - run: npm run build --workspaces --if-present
+      - run: npx playwright install --with-deps chromium
+      # "Zero-config" measured instead of asserted: build the library into real Vite,
+      # webpack and Next apps and make each BUILT bundle render audio. (#85)
+      - run: node scripts/dev/bundler-check.mjs
