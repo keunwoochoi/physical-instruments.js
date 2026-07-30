@@ -36,6 +36,19 @@ const cleanup = [];
 process.on("exit", () => { for (const fn of cleanup) { try { fn(); } catch {} } });
 const fail = (m) => { console.error("MOBILE SAFARI FAIL: " + m); process.exit(1); };
 
+// GLOBAL WATCHDOG. Every await below has its own timeout except page.evaluate(), which
+// has NO default timeout in Playwright -- so a page that stops servicing its event loop
+// hangs this script forever. That is exactly what happened on the first CI run: every
+// other step passed and this one sat in_progress for twenty minutes until the run was
+// cancelled. It is the same defect this script's own header warns about, shipped again in
+// a different shape, so it now gets a hard bound that cannot be reasoned away.
+const BUDGET_MS = Number(process.env.MOBILE_CHECK_BUDGET_MS ?? 150_000);
+const watchdog = setTimeout(() => {
+  fail(`exceeded ${BUDGET_MS / 1000}s. A check that never returns is worse than one that ` +
+       `fails: a failure is information. Re-run locally to see which step stalls.`);
+}, BUDGET_MS);
+watchdog.unref?.();
+
 // Tap the engine's output without editing page source: wrap connect() so the first
 // AudioWorkletNode also feeds an analyser we can read.
 const PROBE = `
@@ -93,12 +106,23 @@ const box = await el.boundingBox();
 if (!box) fail("playable surface has no box");
 await page.touchscreen.tap(box.x + box.width * 0.35, box.y + box.height * 0.6);
 
+// One evaluate per iteration rather than two, each raced against a bound. Halving the
+// round trips matters on a slow runner, and the race means a wedged page surfaces here
+// with a useful message instead of at the watchdog.
+const bounded = (promise, ms, what) => Promise.race([
+  promise,
+  new Promise((_, rej) => setTimeout(() => rej(new Error(`${what} did not answer in ${ms}ms`)), ms)),
+]);
+
 let peak = 0, state = before.state;
 for (let i = 0; i < 50; i++) {
   await new Promise((r) => setTimeout(r, 20));
-  const v = await page.evaluate(() => window.__peak());
-  state = await page.evaluate(() => window.__probe.c.state);
-  if (v !== null && v > peak) peak = v;
+  const snap = await bounded(
+    page.evaluate(() => ({ peak: window.__peak(), state: window.__probe.c.state })),
+    5000, "the page",
+  ).catch((e) => fail(String(e.message)));
+  state = snap.state;
+  if (snap.peak !== null && snap.peak > peak) peak = snap.peak;
 }
 console.log(`  after one tap  : state "${state}", peak ${peak.toFixed(4)}`);
 
@@ -106,5 +130,6 @@ if (errs.length) fail("page errors: " + errs.slice(0, 3).join(" | "));
 if (state !== "running") fail(`the tap did not start audio — state "${state}"`);
 if (peak < 0.001) fail(`the tap produced no audio — peak ${peak}`);
 
+clearTimeout(watchdog);
 console.log(`MOBILE SAFARI OK [webkit, iPhone emulation] — "${before.state}" at load, ` +
             `one tap reached "running" and produced audio`);
