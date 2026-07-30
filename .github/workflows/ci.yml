@@ -74,3 +74,9 @@ jobs:
       - run: node scripts/dev/e2e-check.mjs
       - run: npm run audit:listening
       - run: LISTENING_BROWSER=webkit node scripts/dev/listening-e2e.mjs
+      # The release gate: pack, install into a clean project, and render real audio from
+      # the PUBLISHED files. Every other check here runs against the source tree, where
+      # the paths line up and nothing is missing from `files` — which is how the tarball
+      # came to ship with no licence text at all and nothing noticed. (#82)
+      - run: node scripts/dev/install-check.mjs
+      - run: BROWSER=webkit node scripts/dev/install-check.mjs

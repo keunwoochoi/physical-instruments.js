@@ -1,6 +1,7 @@
 {
   "name": "@instrumentsjs/midi",
   "version": "0.0.0",
+  "private": true,
   "description": "Standard MIDI File parsing, GM mapping, and pedal extraction for physical-instruments.js",
   "license": "MIT OR Apache-2.0",
   "type": "module",
@@ -13,7 +14,9 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",

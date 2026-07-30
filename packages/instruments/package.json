@@ -1,7 +1,8 @@
 {
   "name": "@instrumentsjs/instruments",
   "version": "0.0.0",
-  "description": "Instrument façades, presets, and the GM program map for physical-instruments.js",
+  "private": true,
+  "description": "Instrument fa\u00e7ades, presets, and the GM program map for physical-instruments.js",
   "license": "MIT OR Apache-2.0",
   "type": "module",
   "sideEffects": false,
