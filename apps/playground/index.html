@@ -48,13 +48,11 @@
 </head>
 <body>
   <h1>physical<span class="acc">-instruments</span>.js <span class="badge" id="size-badge">…</span></h1>
-  <p class="sub">Physical-modeled instruments in your browser. No samples were harmed — none exist.
-    &nbsp;·&nbsp; <a href="./showcase.html" style="color:#f5b544">🎹 Showcase →</a> (falling-notes demos across genres)</p>
+  <p class="sub">Physical-modeled instruments in your browser.
+    &nbsp;·&nbsp; <a href="./showcase.html" style="color:#f5b544">🎹 Showcase →</a></p>
 
   <div class="row">
     <button class="primary" id="play-song">▶ Play demo arrangement</button>
-    <button id="stop">■ Stop</button>
-    <button id="download">⬇ Render WAV offline</button>
   </div>
 
   <div class="row">
@@ -185,9 +183,9 @@
         await engine.ready;
         engine.onStats((s) =>
           s.droppedQuanta > 0
-            ? status(`engine live — voices: ${s.activeVoices} — ⚠ ${s.droppedQuanta} dropped quanta (processor fell behind)`, true)
-            : status(`engine live — voices: ${s.activeVoices}`));
-        status("engine live — play something");
+            ? status(`voices: ${s.activeVoices} — ⚠ ${s.droppedQuanta} dropped quanta (processor fell behind)`, true)
+            : status(`voices: ${s.activeVoices}`));
+        status("");
         $("reverb").addEventListener("change", () => engine.setReverb($("reverb").value));
       } catch (err) {
         status(`engine failed: ${err.message}`, true); // loud on failure
@@ -311,7 +309,7 @@
         pedalDown = false;
         if (engine && liveTrack) {
           liveTrack.pedal(false);
-          status("engine live — pedal up");
+          status("pedal up");
         }
         return;
       }
@@ -348,15 +346,24 @@
       keysEl.style.display = drums ? "none" : "flex";
     });
 
-    // ---------- demo song / offline render ----------
+    // ---------- demo song (one button: play ⇄ stop) ----------
+    // engine.play() resolves on the schedule's wall clock even after stop(), so
+    // the button flips back immediately on stop and a generation counter keeps
+    // the stale promise's cleanup from clobbering a newer playback's UI state.
+    let songPlaying = false, playGen = 0;
+    const setPlayBtn = (playing) => {
+      songPlaying = playing;
+      $("play-song").textContent = playing ? "■ Stop" : "▶ Play demo arrangement";
+    };
     $("play-song").addEventListener("click", async () => {
       if (!engine) return;
-      $("play-song").disabled = true;
+      if (songPlaying) { engine.stop(); playGen++; setPlayBtn(false); status("stopped"); return; }
+      const gen = ++playGen;
+      setPlayBtn(true);
       status("playing the arrangement — 5 tracks, one engine…");
-      try { await engine.play(demoSong(), { tracks: DEMO_MIX }); status("done — engine live"); }
-      finally { $("play-song").disabled = false; }
+      try { await engine.play(demoSong(), { tracks: DEMO_MIX }); if (gen === playGen) status("done"); }
+      finally { if (gen === playGen) setPlayBtn(false); }
     });
-    $("stop").addEventListener("click", () => engine?.stop());
 
     // ---------- stress test: saturate the voice pool, watch droppedQuanta ----------
     $("stress").addEventListener("click", async () => {
@@ -389,10 +396,13 @@
       const title = parsed.name || label;
       status(`playing "${title}" — ${parsed.notes.length} notes, ${parsed.durationSeconds.toFixed(1)}s, ${parsed.trackCount} tracks…`);
       engine.stop();
+      const gen = ++playGen;
+      setPlayBtn(true); // the merged button stops MIDI-file playback too
       try {
         await engine.play(parsed.notes, { pedals: parsed.pedals });
-        status(`finished "${title}" — engine live`);
+        if (gen === playGen) status(`finished "${title}"`);
       } catch (err) { status(`playback failed: ${err.message}`, true); }
+      finally { if (gen === playGen) setPlayBtn(false); }
     }
     $("midi-file-btn").addEventListener("click", () => $("midi-file").click());
     $("midi-file").addEventListener("change", async (e) => {
@@ -430,16 +440,6 @@
         access.onstatechange = (e) => { if (e.port.type === "input" && e.port.state === "connected") hook(e.port); };
         $("midi-info").textContent = names.length ? `MIDI in: ${names.join(", ")}` : "no MIDI devices found (plug one in — hot-plug works)";
       } catch (err) { status(`MIDI access denied: ${err.message}`, true); }
-    });
-    $("download").addEventListener("click", async () => {
-      if (!engine) return;
-      status("rendering offline…");
-      const wav = await engine.renderOffline(demoSong(), { tracks: DEMO_MIX });
-      const url = URL.createObjectURL(new Blob([wav], { type: "audio/wav" }));
-      const a = Object.assign(document.createElement("a"), { href: url, download: "instruments-js-demo.wav" });
-      a.click();
-      URL.revokeObjectURL(url);
-      status("WAV downloaded — engine live");
     });
   </script>
 </body>

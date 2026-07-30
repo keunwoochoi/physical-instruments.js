@@ -28,7 +28,6 @@
   header{display:flex;align-items:center;gap:12px;padding:8px 18px;border-bottom:1px solid var(--line);flex:none}
   header h1{font-size:18px;margin:0;font-weight:600;letter-spacing:.01em;color:var(--tx);line-height:1.25}
   header h1 .acc{color:var(--accent)}
-  header h1 .sub{color:var(--tx2);font-size:13px;font-weight:400;margin-left:10px}
   header h1 a.hl{color:var(--tx);text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px}
   header h1 a.hl:hover{text-decoration-thickness:2px}
   header h1 .ext{font-size:.72em;margin-left:2px;text-decoration:none;display:inline-block;color:var(--accent)}
@@ -94,7 +93,6 @@
   @media (max-width: 700px), (max-height: 520px){
     header{padding:6px 12px;gap:8px}
     header h1{font-size:13px;line-height:1.25}
-    header h1 .sub{display:none}
     .status{font-size:11px}
     .bar{padding:5px 10px;gap:6px}
     /* demos become a single swipeable row instead of many stacked rows */
@@ -119,7 +117,7 @@
 <body>
 <div class="app">
   <header>
-    <h1><a class="hl" href="https://github.com/keunwoochoi/physical-instruments.js" target="_blank" rel="noopener">physical<span class="acc">-instruments</span>.js<span class="ext" aria-hidden="true">↗</span></a><span class="sub">demo — 29 instruments by physical modeling, ~83&nbsp;KB gzipped</span></h1>
+    <h1><a class="hl" href="https://github.com/keunwoochoi/physical-instruments.js" target="_blank" rel="noopener">physical<span class="acc">-instruments</span>.js<span class="ext" aria-hidden="true">↗</span></a></h1>
     <span class="midi-badge" id="midi" hidden></span>
     <div class="status" id="status"></div>
   </header>
@@ -135,12 +133,10 @@
     </div>
     <div class="playglyph" id="playGlyph">▶</div>
     <div class="ctl ctl-inst">
-      <label for="instSel">Click keys → play</label>
-      <select id="instSel" title="instrument the keys play"></select>
+      <select id="instSel" title="instrument the keys play" aria-label="instrument the keys play"></select>
     </div>
     <div class="ctl ctl-kit" id="kitCtl">
-      <label for="kitSel">Drum kit</label>
-      <select id="kitSel" title="kit for the drum pads and playback"></select>
+      <select id="kitSel" title="kit for the drum pads and playback" aria-label="kit for the drum pads and playback"></select>
     </div>
     <div class="hint" id="hint">Pick a tune — then click anywhere on the stage to play. ← → seek 10s. Click the keys or drum pads to play them yourself.</div>
   </div>
@@ -450,7 +446,7 @@ window.addEventListener("pagehide", ()=>{ if(playing) stop(); });
 function fmtTime(s){ s=Math.max(0,Math.round(s)); const m=Math.floor(s/60),ss=s%60; return `${m}:${ss<10?"0":""}${ss}`; }
 function updateTransport(){ timeEl.textContent=`${fmtTime(playOffset)} / ${fmtTime(dur)}`; }
 function updateYtLink(){ if(current?.youtube){ ytlinkEl.href=current.youtube; ytlinkEl.hidden=false; } else ytlinkEl.hidden=true; }
-function updateCombo(){ comboEl.innerHTML = current ? `<b>${current.name}</b> · ${current.combo ?? current.genre ?? ""}` : ""; }
+function updateCombo(){ const d=current?(current.combo ?? current.genre):""; comboEl.innerHTML = current ? `<b>${current.name}</b>${d?` (${d})`:""}` : ""; }
 
 // ---- interaction: click the stage ----------------------------------------
 // Above the keybed = the "video" → play/pause. On the keybed = instruments you
