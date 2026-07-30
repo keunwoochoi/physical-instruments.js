@@ -26,8 +26,9 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-FAVICON = ROOT / "apps/playground/favicon.svg"
+FAVICON = ROOT / "apps/playground/favicon.svg"          # source mark (input)
 OUT = ROOT / "assets/logo/logo.svg"
+FAVICON_OUT = ROOT / "apps/playground/favicon-pixel.svg"  # generated pixel-art favicon
 
 GRID = 24            # tiles across
 TILE_FRAC = 0.80     # tile side as a fraction of grid pitch (rest is grout)
@@ -198,6 +199,26 @@ def main():
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text("\n".join(parts) + "\n")
     print(f"wrote {OUT.relative_to(ROOT)} ({GRID}x{GRID} grid)")
+
+    # The favicon: the same tile grid as true pixel art - one full-bleed hard
+    # pixel per tile, no grout, no corner rounding - so the tab icon matches
+    # the mosaic logo instead of being a blurry miniature of it.
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {GRID} {GRID}" '
+        'shape-rendering="crispEdges">',
+        f'<rect width="{GRID}" height="{GRID}" rx="{GRID * 15 / 64:.2f}" fill="{GROUT}"/>',
+    ]
+    for j in range(GRID):
+        for i in range(GRID):
+            if cls[j][i] is None:
+                continue
+            r, g, b = colors[cls[j][i]]
+            parts.append(
+                f'<rect x="{i}" y="{j}" width="1" height="1" fill="#{r:02x}{g:02x}{b:02x}"/>'
+            )
+    parts.append("</svg>")
+    FAVICON_OUT.write_text("\n".join(parts) + "\n")
+    print(f"wrote {FAVICON_OUT.relative_to(ROOT)} ({GRID}x{GRID} px)")
 
 
 if __name__ == "__main__":
