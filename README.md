@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo/logo-256.png" width="140" alt="physical-instruments.js — feather tile-mosaic logo">
+</p>
+
 # physical-instruments.js
 
 [![npm](https://img.shields.io/npm/v/physical-instruments.js.svg)](https://www.npmjs.com/package/physical-instruments.js)
