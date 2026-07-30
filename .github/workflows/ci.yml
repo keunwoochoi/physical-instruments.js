@@ -84,10 +84,14 @@ jobs:
       # context. A snippet nobody has executed is a bug report waiting.
       - run: node scripts/verify/check-quickstart.mjs
       - run: BROWSER=webkit node scripts/verify/check-quickstart.mjs
-      # Mobile WebKit with touch and no autoplay escape hatch. Desktop WebKit misses
-      # Safari's non-standard "interrupted" AudioContext state entirely — the state an
-      # iOS context is actually in at load. (#89)
-      - run: node scripts/dev/mobile-safari-check.mjs
+      # NOT RUN IN CI YET — see #90. scripts/dev/mobile-safari-check.mjs passes locally in
+      # ~30 s (macOS WebKit) and hung this job twice on ubuntu-22.04, surviving a 150 s
+      # in-process watchdog, which means the stall is below the JS layer and is not
+      # diagnosable by adding more timeouts to the script. Run it locally:
+      #     npm run check:mobile
+      # It stays out of CI until the Linux behaviour is understood. A gate that hangs is
+      # worse than a missing gate: it blocks every unrelated change and teaches people to
+      # cancel runs.
 
   bundlers:
     # Separate job: it installs three real bundlers from the registry, so it is the
