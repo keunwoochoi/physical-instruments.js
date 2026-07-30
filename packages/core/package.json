@@ -1,6 +1,6 @@
 {
   "name": "physical-instruments.js",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Physical-modeling instruments for the browser. 29 instruments, no samples, ~81 KB gzipped.",
   "license": "MIT OR Apache-2.0",
   "type": "module",
