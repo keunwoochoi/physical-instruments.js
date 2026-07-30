@@ -3,12 +3,17 @@
 
 The favicon SVG stays the single owner of the mark; this script derives the
 logo from it by sampling a 24x24 grid, snapping every tile to a fixed
-two-tone amber palette (plus a lifted plate tone), then applying three
-pixel-artist cleanup passes. The favicon's carved shaft and barbs are thinner
-than one tile, so raw sampling shatters the vane into ragged islands; the
-passes close those accidental holes, re-carve the shaft as one deliberate
-dark staircase along the favicon's actual shaft segment, and drop stray
-orphan tiles.
+two-tone amber palette (plus a lifted plate tone), then applying pixel-artist
+cleanup passes. The favicon's carved shaft and barbs are thinner than one
+tile, so raw sampling shatters the vane into ragged islands; the passes close
+those accidental holes, re-carve the shaft as one deliberate dark staircase
+along the favicon's actual shaft segment, and drop stray orphan tiles.
+
+The favicon composes the feather for a tiny square with generous air; at
+logo size that air reads as wasted space, so sampling looks at the favicon
+through a fit transform (FIT_SCALE about FIT_CENTER) that enlarges and
+re-centers the mark on the plate. Tile presence still follows the unzoomed
+favicon alpha, so the plate silhouette is unchanged by the zoom.
 
 Requires rsvg-convert (brew install librsvg) and ImageMagick (brew install
 imagemagick). Stdlib-only Python.
@@ -35,6 +40,10 @@ SHAFT = (140, 95, 30)
 # The favicon's rachis: path "M44 18 L 12 52" in apps/playground/favicon.svg.
 SHAFT_SEG = ((44.0, 18.0), (12.0, 52.0))
 SHAFT_HALF_WIDTH = 1.15      # favicon units; keeps the carved line one tile wide
+# Fit transform: the feather's bounding box centers near (28.5, 35.2) in
+# favicon space; show that point at plate center, enlarged 1.15x.
+FIT_CENTER = (28.5, 35.2)
+FIT_SCALE = 1.15
 
 
 def load_raster():
@@ -77,6 +86,14 @@ def sample(px, fx, fy, win):
     return (rs // as_, gs // as_, bs // as_, as_ // n)
 
 
+def zoom(cx, cy):
+    """Logo-space tile center -> favicon-space sampling point."""
+    return (
+        FIT_CENTER[0] + (cx - 32.0) / FIT_SCALE,
+        FIT_CENTER[1] + (cy - 32.0) / FIT_SCALE,
+    )
+
+
 def seg_dist(p, a, b):
     ax, ay = a
     bx, by = b
@@ -93,13 +110,16 @@ def main():
 
     # Pass 0 — classify: 'L'/'D' amber (hue-based, so blends with the carved
     # details still count as glyph), 'P' plate, None outside the plate.
+    # Presence comes from the unzoomed favicon alpha; color from the zoomed
+    # sample.
     cls = [[None] * GRID for _ in range(GRID)]
     for j in range(GRID):
         for i in range(GRID):
             cx, cy = (i + 0.5) * pitch, (j + 0.5) * pitch
-            c = sample(px, cx, cy, win)
-            if c[3] < 150:
+            if sample(px, cx, cy, win)[3] < 150:
                 continue
+            fx, fy = zoom(cx, cy)
+            c = sample(px, fx, fy, win)
             if c[0] - c[2] > 28:
                 lum = 0.30 * c[0] + 0.59 * c[1] + 0.11 * c[2]
                 cls[j][i] = "L" if lum >= 140 else "D"
@@ -116,30 +136,40 @@ def main():
                     out.append(cls[j + dj][i + di])
         return out
 
+    def close_holes(glyph):
+        """Fill plate tiles mostly surrounded by glyph, to fixpoint."""
+        while True:
+            fill = [
+                (j, i)
+                for j in range(GRID)
+                for i in range(GRID)
+                if cls[j][i] == "P"
+                and sum(1 for n in neighbors(j, i) if n in glyph) >= 5
+            ]
+            if not fill:
+                return
+            for j, i in fill:
+                cls[j][i] = "D"
+
     # Pass 1 — close holes: sub-tile carved details punch accidental plate
     # holes through the vane; a plate tile mostly surrounded by amber joins
-    # the vane as dark amber. Two rounds to close two-tile runs.
-    for _ in range(2):
-        fill = [
-            (j, i)
-            for j in range(GRID)
-            for i in range(GRID)
-            if cls[j][i] == "P"
-            and sum(1 for n in neighbors(j, i) if n in ("L", "D")) >= 5
-        ]
-        for j, i in fill:
-            cls[j][i] = "D"
+    # the vane as dark amber.
+    close_holes(("L", "D"))
 
     # Pass 2 — re-carve the shaft deliberately: one clean dark staircase
     # along the favicon's rachis, instead of the ragged sampled channel.
     for j in range(GRID):
         for i in range(GRID):
             if cls[j][i] in ("L", "D"):
-                cx, cy = (i + 0.5) * pitch, (j + 0.5) * pitch
-                if seg_dist((cx, cy), *SHAFT_SEG) < SHAFT_HALF_WIDTH:
+                if seg_dist(zoom((i + 0.5) * pitch, (j + 0.5) * pitch), *SHAFT_SEG) \
+                        < SHAFT_HALF_WIDTH:
                     cls[j][i] = "S"
 
-    # Pass 3 — drop orphans: an amber tile with no amber neighbor is sampling
+    # Pass 3 — close again counting the shaft as glyph: holes flanking the
+    # carved line are enclosed by the vane and must not stay uncolored.
+    close_holes(("L", "D", "S"))
+
+    # Pass 4 — drop orphans: an amber tile with no amber neighbor is sampling
     # noise, not part of the mark.
     for j in range(GRID):
         for i in range(GRID):
