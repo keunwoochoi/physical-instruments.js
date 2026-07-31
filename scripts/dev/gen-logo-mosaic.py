@@ -33,6 +33,7 @@ FAVICON_OUT = ROOT / "apps/playground/favicon-pixel.svg"  # generated pixel-art 
 GRID = 24            # tiles across
 TILE_FRAC = 0.80     # tile side as a fraction of grid pitch (rest is grout)
 CORNER_FRAC = 0.26   # tile corner radius as a fraction of tile side
+PLATE_RX = 15.0      # plate corner radius, favicon units (matches favicon and grout rect)
 PLATE_TILE = (34, 40, 54)    # lifted so the tile texture reads against grout
 GROUT = "#0b0d11"
 LIGHT = (246, 197, 90)
@@ -95,6 +96,25 @@ def zoom(cx, cy):
     )
 
 
+def cell_on_plate(i, j, pitch):
+    """Whole grid cell inside the rounded plate — not just the cell center.
+
+    Presence by center-alpha alone lets a tile straddle the plate's corner
+    arc: the center clears the alpha threshold while the tile's outer half
+    pokes past the curve, leaving stray nubs outside the silhouette. Tiles
+    are drawn unclipped, so the cell must fit entirely inside the rx-15
+    rounded rect; testing the cell (not the smaller tile) keeps the
+    full-bleed favicon pixels inside their rounded plate too.
+    """
+    x0, y0 = i * pitch, j * pitch
+    for x, y in ((x0, y0), (x0 + pitch, y0), (x0, y0 + pitch), (x0 + pitch, y0 + pitch)):
+        dx = max(PLATE_RX - x, x - (64.0 - PLATE_RX), 0.0)
+        dy = max(PLATE_RX - y, y - (64.0 - PLATE_RX), 0.0)
+        if dx * dx + dy * dy > PLATE_RX * PLATE_RX:
+            return False
+    return True
+
+
 def seg_dist(p, a, b):
     ax, ay = a
     bx, by = b
@@ -116,6 +136,8 @@ def main():
     cls = [[None] * GRID for _ in range(GRID)]
     for j in range(GRID):
         for i in range(GRID):
+            if not cell_on_plate(i, j, pitch):
+                continue
             cx, cy = (i + 0.5) * pitch, (j + 0.5) * pitch
             if sample(px, cx, cy, win)[3] < 150:
                 continue
