@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Commit messages are the primary research output of this project (AGENTS.md).
+# An unenforced checklist decays into boilerplate, so the five required elements are
+# checked here rather than remembered. Merge/revert/fixup commits are exempt.
+set -euo pipefail
+MSG_FILE="$1"
+SUBJECT=$(head -1 "$MSG_FILE")
+
+case "$SUBJECT" in
+  Merge*|Revert*|fixup!*|squash!*) exit 0 ;;
+esac
+
+# Trivial commits opt out explicitly and visibly, never silently.
+if grep -qiE '^\s*trivial:\s*yes' "$MSG_FILE"; then exit 0; fi
+
+BODY=$(tail -n +2 "$MSG_FILE" | grep -v '^#' || true)
+[ "$(printf '%s' "$BODY" | wc -w | tr -d ' ')" -lt 30 ] && {
+  echo "commit-msg: body is too short to carry the required record."
+  echo "  Required: the defect and how it was found; before/after with units;"
+  echo "  the root cause; what was abandoned and why; the cost."
+  echo "  Genuinely trivial? Add a line 'Trivial: yes' and say why."
+  exit 1
+}
+
+missing=()
+# 'reverted' is how an abandoned route is most often described once it has already
+# been written; the first vocabulary list missed it and blocked a commit whose
+# entire middle section was an abandoned approach.
+grep -qiE 'abandon|rejected|revert|tried|did not work|discarded|backed out' <<<"$BODY" \
+  || missing+=("what was tried and abandoned (the row that exists nowhere else)")
+grep -qiE 'cost|bundle|cpu|memory|zero runtime|no runtime' <<<"$BODY" \
+  || missing+=("the cost (CPU / memory / bundle)")
+
+if [ ${#missing[@]} -gt 0 ]; then
+  echo "commit-msg: missing required element(s):"
+  printf '  - %s\n' "${missing[@]}"
+  exit 1
+fi
+exit 0
