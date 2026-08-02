@@ -12,8 +12,19 @@
  *   event frame offsets). LIVE input (noteOn with no timestamp) lands at the next
  *   quantum boundary — up to 2.67 ms of timing jitter on live playing.
  * - Some GM families are placeholders until their physical models land (see
- *   GROUP_TO_INSTRUMENT): piano→electric piano, strings→synth pad, etc.
+ *   GROUP_TO_INSTRUMENT in instrument-ids.generated.ts): strings→synth pad, etc.
+ * - Instrument ids and the group map are generated from
+ *   crates/dsp/instruments.catalog.json — do not hand-edit the tables.
  */
+
+export type { InstrumentGroup, InstrumentId } from "./instrument-ids.generated.js";
+export {
+  GROUP_TO_INSTRUMENT,
+  INST,
+  INSTRUMENT_KEY_BY_ID,
+} from "./instrument-ids.generated.js";
+import { GROUP_TO_INSTRUMENT } from "./instrument-ids.generated.js";
+import type { InstrumentGroup } from "./instrument-ids.generated.js";
 
 export interface NoteEvent {
   midiPitch: number;
@@ -26,130 +37,6 @@ export interface NoteEvent {
    *  producers (e.g. @instrumentsjs/midi) interoperate without a cast. */
   instrumentGroup?: InstrumentGroup | (string & {});
 }
-
-export type InstrumentGroup =
-  | "piano"
-  | "guitar"
-  | "bass"
-  | "strings"
-  | "brass"
-  | "woodwind"
-  | "voice"
-  | "percussion"
-  | "synth"
-  | "mallet"
-  | "marimba"
-  | "vibraphone"
-  | "glockenspiel"
-  | "musicbox"
-  | "epiano"
-  | "drums"
-  | "drums-rock"
-  | "drums-jazz"
-  | "synthpad"
-  | "guitar-steel"
-  | "guitar-electric"
-  | "guitar-distorted"
-  | "cello"
-  | "trombone"
-  | "violin"
-  | "viola"
-  | "contrabass"
-  | "trumpet"
-  | "organ"
-  | "xylophone"
-  | "tubularbells"
-  | "celesta"
-  | "harp"
-  | "pizzicato"
-  // naming aliases (Keunwoo 2026-07-12): resolve to the same engines
-  | "guitar-acoustic"
-  | "guitar-acoustic-nylon"
-  | "guitar-acoustic-steel"
-  | "bass-electric"
-  | "electric-bass"
-  | "unknown";
-
-/** Engine-side instrument ids (crates/dsp kernels::Instrument). */
-const INST = {
-  marimba: 0,
-  vibraphone: 1,
-  glockenspiel: 2,
-  musicbox: 3,
-  guitar: 4,
-  bass: 5,
-  epiano: 6,
-  drums: 7,
-  drumsRock: 13,
-  drumsJazz: 14,
-  synthpad: 8,
-  piano: 9,
-  guitarSteel: 10,
-  guitarElectric: 11,
-  guitarDistorted: 12,
-  cello: 15,
-  trombone: 16,
-  violin: 17,
-  viola: 18,
-  contrabass: 19,
-  trumpet: 20,
-  organ: 23,
-  xylophone: 24,
-  tubularBells: 25,
-  celesta: 26,
-  harp: 27,
-  pizzicato: 28,
-} as const;
-
-/**
- * GM-ish family → engine instrument. Entries marked (placeholder) are honest stand-ins
- * until their physical models land (roadmap Q2–Q4); they are the best-sounding current
- * mapping, not a claim of realism.
- */
-const GROUP_TO_INSTRUMENT: Record<InstrumentGroup, number> = {
-  marimba: INST.marimba,
-  mallet: INST.marimba,
-  vibraphone: INST.vibraphone,
-  glockenspiel: INST.glockenspiel,
-  musicbox: INST.musicbox,
-  guitar: INST.guitar,
-  bass: INST.bass,
-  epiano: INST.epiano,
-  drums: INST.drums,
-  synthpad: INST.synthpad,
-  piano: INST.piano, // multi-string waveguide acoustic piano
-  "drums-rock": INST.drumsRock,
-  "drums-jazz": INST.drumsJazz,
-  "guitar-steel": INST.guitarSteel,
-  "guitar-electric": INST.guitarElectric,
-  "guitar-distorted": INST.guitarDistorted,
-  // continuously-excited voices (spikes, #50): the bow and the lip never stop driving
-  cello: INST.cello,
-  trombone: INST.trombone,
-  violin: INST.violin,
-  viola: INST.viola,
-  contrabass: INST.contrabass,
-  trumpet: INST.trumpet,
-  organ: INST.organ,
-  xylophone: INST.xylophone,
-  tubularbells: INST.tubularBells,
-  celesta: INST.celesta,
-  harp: INST.harp,
-  pizzicato: INST.pizzicato,
-  // "acoustic"/"electric bass" naming aliases (Keunwoo 2026-07-12) — canonical names above stay
-  "guitar-acoustic": INST.guitar,
-  "guitar-acoustic-nylon": INST.guitar,
-  "guitar-acoustic-steel": INST.guitarSteel,
-  "bass-electric": INST.bass,
-  "electric-bass": INST.bass,
-  strings: INST.synthpad, // (placeholder — bowed string is Q3)
-  brass: INST.trumpet, // GM brass now maps to trumpet/trombone individually; this is the fallback
-  woodwind: INST.organ, // flute/reed stand-in (a sustained sine-ish voice) until real winds land
-  voice: INST.synthpad, // (placeholder)
-  synth: INST.synthpad,
-  percussion: INST.drums,
-  unknown: INST.marimba,
-};
 
 export interface TrackOptions {
   gain?: number;
