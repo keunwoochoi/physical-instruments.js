@@ -766,22 +766,7 @@ impl Engine {
                     v.pedal_held = true; // defer the release until pedal-up
                 } else {
                     v.releasing = true;
-                    match &mut v.kernel {
-                        Kernel::Modal(m) => m.damp(sr),
-                        Kernel::Pluck(p) => p.damp(),
-                        Kernel::EPluck(p) => p.damp(),
-                        Kernel::Synth(s) => s.release(),
-                        Kernel::Piano(p) => p.damp(),
-                    Kernel::Bowed(b) => b.damp(sr),
-                    Kernel::Brass(b) => b.damp(sr),
-                    Kernel::Reed(b) => b.damp(sr),
-                    Kernel::Organ(o) => o.release(),
-                        Kernel::Bowed(b) => b.damp(sr),
-                    Kernel::Brass(b) => b.damp(sr),
-                    Kernel::Reed(b) => b.damp(sr),
-                    Kernel::Organ(o) => o.release(),
-                        _ => {}
-                    }
+                    v.kernel.release(sr);
                 }
             }
         }
@@ -814,18 +799,7 @@ impl Engine {
             if v.active() && v.track as usize == track && v.pedal_held && !v.releasing {
                 v.pedal_held = false;
                 v.releasing = true;
-                match &mut v.kernel {
-                    Kernel::Modal(m) => m.damp(sr),
-                    Kernel::Pluck(p) => p.damp(),
-                    Kernel::EPluck(p) => p.damp(),
-                    Kernel::Synth(s) => s.release(),
-                    Kernel::Piano(p) => p.damp(),
-                    Kernel::Bowed(b) => b.damp(sr),
-                    Kernel::Brass(b) => b.damp(sr),
-                    Kernel::Reed(b) => b.damp(sr),
-                    Kernel::Organ(o) => o.release(),
-                    _ => {}
-                }
+                v.kernel.release(sr);
             }
         }
     }
@@ -835,19 +809,7 @@ impl Engine {
         for v in self.voices.iter_mut() {
             if v.active() && !v.releasing {
                 v.releasing = true;
-                match &mut v.kernel {
-                    Kernel::Modal(m) => m.damp(sr),
-                    Kernel::Pluck(p) => p.damp(),
-                    Kernel::EPluck(p) => p.damp(),
-                    Kernel::Synth(s) => s.release(),
-                    Kernel::Piano(p) => p.damp(),
-                    Kernel::Bowed(b) => b.damp(sr),
-                    Kernel::Brass(b) => b.damp(sr),
-                    Kernel::Reed(b) => b.damp(sr),
-                    Kernel::Organ(o) => o.release(),
-                    Kernel::Drum(_) => {} // short one-shots; let them ring out
-                    Kernel::Off => {}
-                }
+                v.kernel.release(sr);
             }
         }
     }
@@ -876,19 +838,7 @@ impl Engine {
                 }
                 any = true;
                 self.voice_buf[..frames].fill(0.0);
-                let alive = match &mut v.kernel {
-                    Kernel::Modal(m) => m.render(&mut self.voice_buf[..frames]),
-                    Kernel::Pluck(p) => p.render(&mut self.voice_buf[..frames]),
-                    Kernel::EPluck(p) => p.render(&mut self.voice_buf[..frames]),
-                    Kernel::Drum(d) => d.render(&mut self.voice_buf[..frames], sr),
-                    Kernel::Synth(s) => s.render(&mut self.voice_buf[..frames]),
-                    Kernel::Piano(pn) => pn.render(&mut self.voice_buf[..frames]),
-                    Kernel::Bowed(b) => b.render(&mut self.voice_buf[..frames]),
-                    Kernel::Brass(b) => b.render(&mut self.voice_buf[..frames]),
-                    Kernel::Reed(b) => b.render(&mut self.voice_buf[..frames]),
-                    Kernel::Organ(o) => o.render(&mut self.voice_buf[..frames]),
-                    Kernel::Off => false,
-                };
+                let alive = v.kernel.render(&mut self.voice_buf[..frames], sr);
                 let th = (v.pan.clamp(-1.0, 1.0) + 1.0) * core::f32::consts::FRAC_PI_4;
                 let (vgl, vgr) = (th.cos(), th.sin());
                 for i in 0..frames {
