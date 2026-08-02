@@ -21,6 +21,7 @@
 ## Commit messages own the engineering record
 
 **This is not style guidance. It is the primary research output of this project.**
+**Enforced by `.githooks/commit-msg`** (not remembered): a body under 30 words, or missing the abandoned-route / cost elements, is rejected. Merge/revert/fixup commits are exempt; genuinely trivial commits opt out with an explicit `Trivial: yes` line.
 
 The diff shows *what* changed. It can never show what was wrong, how we knew, what we measured, what we tried that failed, or what caught the error — and that is the part that is unrecoverable once the session ends. A commit message is the only artifact that carries that reasoning **permanently attached to the code it explains**. Issues get closed, PRs get squashed out of memory, chat transcripts vanish. `git log` does not.
 
