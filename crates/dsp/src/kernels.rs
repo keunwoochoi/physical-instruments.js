@@ -6544,6 +6544,46 @@ pub enum Kernel {
     Piano(PianoVoice),
 }
 
+/// Uniform voice-kernel surface (issue #102). Call sites must not match on
+/// Kernel with `_ => {}` wildcards — a new variant is a compile error here.
+impl Kernel {
+    /// Render up to `out.len()` samples into `out`. Returns whether the voice is still alive.
+    #[inline]
+    pub fn render(&mut self, out: &mut [f32], sr: f32) -> bool {
+        match self {
+            Kernel::Modal(m) => m.render(out),
+            Kernel::Pluck(p) => p.render(out),
+            Kernel::EPluck(p) => p.render(out),
+            Kernel::Drum(d) => d.render(out, sr),
+            Kernel::Synth(s) => s.render(out),
+            Kernel::Piano(pn) => pn.render(out),
+            Kernel::Bowed(b) => b.render(out),
+            Kernel::Brass(b) => b.render(out),
+            Kernel::Reed(b) => b.render(out),
+            Kernel::Organ(o) => o.render(out),
+            Kernel::Off => false,
+        }
+    }
+
+    /// Begin release / damp. Drum one-shots intentionally ring out (no-op).
+    #[inline]
+    pub fn release(&mut self, sr: f32) {
+        match self {
+            Kernel::Modal(m) => m.damp(sr),
+            Kernel::Pluck(p) => p.damp(),
+            Kernel::EPluck(p) => p.damp(),
+            Kernel::Synth(s) => s.release(),
+            Kernel::Piano(p) => p.damp(),
+            Kernel::Bowed(b) => b.damp(sr),
+            Kernel::Brass(b) => b.damp(sr),
+            Kernel::Reed(b) => b.damp(sr),
+            Kernel::Organ(o) => o.release(),
+            Kernel::Drum(_) => {}
+            Kernel::Off => {}
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Voice {
     pub kernel: Kernel,
