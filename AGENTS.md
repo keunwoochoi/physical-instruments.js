@@ -70,16 +70,4 @@ The same discipline governs the PR body's **Agentic process trace** (below) and 
 | Strings / horns (issue #50) | `agentic-docs/design/2026-07-13-string-and-horn-families.md` | `skills/port-audit/SKILL.md` before touching STK |
 | Ending a session or campaign | journey log — issue #51 (append one comment; never edit the body) | — |
 
-## Repo map
-
-| Path | Owns |
-|---|---|
-| `crates/dsp/` | Rust DSP core → WASM (voice bank, all instruments, mixing). **The bank is AoS and scalar today** — `Vec<Voice>`, enum-dispatched, no SIMD. The architecture doc's "SoA voice bank" is an unrealized intent, not a description; budget accordingly (#62). |
-| `packages/core` | TS public API, worklet host, voice/track management |
-| `packages/instruments` | Instrument façades, presets, GM program map |
-| `packages/midi` | Note-list scheduler, MIDI file parsing, GM drum map, Web MIDI |
-| `apps/playground` | Daily does-it-sound-good surface |
-| `evals/` | Corpus, incumbent renders, listening tests, regression tripwires |
-| `skills/` | Canonical tool-neutral agent workflows, exposed through `.agents/skills` and `.claude/skills` |
-| `.github/` | Issue forms, PR template, and CI workflows |
-| `agentic-docs/` | Design docs, reports, licensing ledger, persona profiles |
+> **No repo map here, deliberately.** Path→ownership tables drift (this one claimed `packages/midi` owned the note-list scheduler and Web MIDI; the scheduler lives in `packages/core`, and Web MIDI does not exist in the tree). Agents read the tree. Non-inferable budget note that used to live in the map: the voice bank is AoS and scalar today (`Vec<Voice>`, enum-dispatched, no SIMD) — the architecture doc's "SoA voice bank" is unrealized intent (#62).
