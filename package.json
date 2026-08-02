@@ -25,6 +25,8 @@
     "listening:analyze": "python3 scripts/dev/listening.py analyze",
     "audit:listening": "scripts/audit/listening-evidence-audit.sh",
     "loop:canonicalize-reference": "python3 scripts/dev/canonicalize_reference_receipt.py",
+    "gen:instrument-ids": "python3 scripts/gen/gen_instrument_ids.py",
+    "check:instrument-ids": "python3 scripts/gen/gen_instrument_ids.py --check && python3 scripts/gen/test_gen_instrument_ids.py",
     "audit:harness": "scripts/audit/harness-audit.sh",
     "audit:bundle": "scripts/audit/bundle-size-audit.sh",
     "bench:soundboard": "node scripts/dev/bench-soundboard.mjs",
