@@ -1,7 +1,7 @@
 # Shared engine extraction (`@instrumentsjs/engine`)
 
 Date: 2026-08-02
-Status: draft — lays out options and a recommendation for issue #103. **Does not authorize code extraction or any publish.** Owner decision is required before any implementation PR.
+Status: accepted — option **(a)** keep the siblings separate. No shared-engine extraction, no monorepo. Owner call quoted in the Decision record.
 
 ## Motivation
 
@@ -95,9 +95,7 @@ If the ABIs have already diverged, (b) starts with an alignment PR in each repo 
 
 ## Decision record
 
-Status remains **draft** until the owner records a call below.
-
-- Owner decision: _pending_
-- Date: _pending_
-- Verbatim quote: _pending_
-- If (b): licensing ledger clean-diff path confirmed: _pending_
+- Owner decision: **(a) keep them separate** — no shared `@instrumentsjs/engine` extraction, no monorepo. The siblings keep copying instrument-agnostic plumbing; revisit only if drift cost dominates.
+- Date: 2026-08-02
+- Verbatim quote: *"ok let's keep them separate. that is my decision."*
+- If (b): N/A — decision is (a)
