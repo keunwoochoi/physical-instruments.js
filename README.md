@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo/logo-256.png" width="140" alt="physical-instruments.js — feather tile-mosaic logo">
+  <img src="https://raw.githubusercontent.com/keunwoochoi/physical-instruments.js/main/assets/logo/logo-256.png" width="140" alt="physical-instruments.js — feather tile-mosaic logo">
 </p>
 
 # physical-instruments.js
@@ -8,6 +8,8 @@
 [![license](https://img.shields.io/npm/l/physical-instruments.js.svg)](LICENSE-MIT)
 
 A physical-modeling instrument library for browsers. 29 instruments in 81 KB gzipped, MIT/Apache-2.0.
+
+[npm package](https://www.npmjs.com/package/physical-instruments.js) | [Demo](https://keunwoochoi.github.io/physical-instruments.js/) | [API](https://github.com/keunwoochoi/physical-instruments.js/blob/main/packages/core/README.md) | [Changelog](https://github.com/keunwoochoi/physical-instruments.js/blob/main/CHANGELOG.md)
 
 ```sh
 npm install physical-instruments.js
@@ -21,10 +23,7 @@ const piano  = engine.createTrack("piano");
 piano.noteOn(60, 96);                          // velocity changes timbre, not just volume
 ```
 
-No bundler configuration, no files to copy. **[▶ Hear it in your
-browser](https://keunwoochoi.github.io/physical-instruments.js/)** —
-[npm](https://www.npmjs.com/package/physical-instruments.js) ·
-[changelog](CHANGELOG.md) · [API](packages/core/README.md)
+No bundler configuration, no files to copy.
 
 ---
 
