@@ -4,6 +4,23 @@ on:
   push:
     branches: [main]
 jobs:
+  release-impact:
+    # The package is on npm, so every PR states whether it changes what a user installs
+    # and, if it does, leaves the changelog entry behind. Its own job: no toolchain, no
+    # dependencies, seconds, and it reports while the heavy jobs are still queued.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }   # the gate diffs against the PR's base commit
+      - name: Release impact is declared
+        env:
+          # Through the environment, never interpolated into the shell: a PR body is
+          # arbitrary text written by whoever opened the PR.
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          python3 scripts/release/check_release_impact.py \
+            --base "${{ github.event.pull_request.base.sha }}" --body-env PR_BODY
   harness:
     runs-on: ubuntu-latest
     steps:
