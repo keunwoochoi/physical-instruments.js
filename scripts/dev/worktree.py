@@ -281,7 +281,13 @@ def cmd_finish(args: argparse.Namespace, cwd: Path) -> int:
         die(out.strip())
     print(f"  {GREEN}ok{RESET}    removed {match.path}")
 
-    code, out = git("branch", "-D" if args.force else "-d", branch, cwd=trees[0].path)
+    # `-D`, not `-d`, and the safety came earlier. `git branch -d` refuses on ANCESTRY,
+    # which a rebase or squash merge always breaks: GitHub rewrote the commits, so the
+    # local branch is not an ancestor of main even though every patch of it is upstream.
+    # Observed on the PR that introduced this file — the worktree went, the branch stayed,
+    # which is the exact litter the rule exists to prevent. The patch-id check above is
+    # the real gate; repeating a weaker one here only leaves work half done.
+    code, out = git("branch", "-D", branch, cwd=trees[0].path)
     print(f"  {GREEN}ok{RESET}    deleted branch {branch}" if code == 0
           else f"  {YELLOW}warn{RESET}  branch {branch} kept: {out.strip()}")
 

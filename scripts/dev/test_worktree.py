@@ -145,6 +145,18 @@ class WorktreeLifecycle(unittest.TestCase):
         self.assertFalse(self.fx.worktree_path("feat/thing").exists())
         self.assertNotIn("feat/thing", self.fx.git(self.fx.repo, "branch", "--list"))
 
+    def test_finish_deletes_the_branch_after_a_squash_merge(self) -> None:
+        """`git branch -d` refuses here — a squash or rebase merge rewrites the commits,
+        so ancestry says unmerged while every patch is upstream. Observed for real: the
+        worktree was removed and the branch was left behind."""
+        self.fx.tool("start", "feat/thing")
+        self.fx.commit_in(self.fx.worktree_path("feat/thing"), "work.txt")
+        self.fx.squash_to_main("feat/thing")
+        out = self.fx.tool("finish", "feat/thing")
+        self.assertEqual(out.returncode, 0, out.stdout)
+        self.assertIn("deleted branch feat/thing", out.stdout)
+        self.assertNotIn("feat/thing", self.fx.git(self.fx.repo, "branch", "--list"))
+
     def test_audit_fails_while_a_merged_worktree_survives(self) -> None:
         """The rule, stated as a gate: merged means gone."""
         self.fx.tool("start", "feat/thing")
