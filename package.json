@@ -35,6 +35,9 @@
     "check:bundlers": "node scripts/dev/bundler-check.mjs",
     "check:quickstart": "node scripts/verify/check-quickstart.mjs",
     "check:release": "scripts/release/check-release-ready.sh",
+    "worktree": "python3 scripts/dev/worktree.py",
+    "check:release-impact": "python3 scripts/release/check_release_impact.py",
+    "test:release-impact": "python3 scripts/release/test_check_release_impact.py",
     "check:mobile": "node scripts/dev/mobile-safari-check.mjs"
   },
   "devDependencies": {

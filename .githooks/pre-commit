@@ -6,4 +6,17 @@ if [ "$branch" = "main" ] && [ "${ALLOW_MAIN:-0}" != "1" ]; then
   echo "pre-commit: direct commits to main are blocked (AGENTS.md git rules). Branch first." >&2
   exit 1
 fi
+
+# Work happens in a linked worktree, never the primary checkout (AGENTS.md). The primary
+# tree is what `npm run dev`, a render and a bench read; a branch parked there makes every
+# measurement ambiguous after the fact, and nothing downstream can tell the difference.
+# ALLOW_PRIMARY_WORKTREE=1 exists for the emergency, and leaves a trace in the shell
+# history that `--no-verify` would not.
+if [ "$(git rev-parse --git-dir)" = "$(git rev-parse --git-common-dir)" ] \
+   && [ "${ALLOW_PRIMARY_WORKTREE:-0}" != "1" ]; then
+  echo "pre-commit: this is the primary checkout, not a place to commit from." >&2
+  echo "    python3 scripts/dev/worktree.py start <branch>" >&2
+  exit 1
+fi
+
 exec scripts/audit/harness-audit.sh
